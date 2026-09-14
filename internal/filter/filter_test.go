@@ -159,6 +159,55 @@ func TestFocusMatchesLogReceivedComponent(t *testing.T) {
 	})
 }
 
+func TestFocusGlobMatchesSlashInSpanName(t *testing.T) {
+	factory := func(t *testing.T) *filter.Filter {
+		t.Helper()
+
+		f, err := filter.New(filter.Query{Focus: []string{"GET*"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return f
+	}
+
+	sweet.Run(t, "star glob matches HTTP span names that contain a slash", factory, func(t *testing.T, f *filter.Filter) {
+		ids := play(f,
+			domain.SpanUpserted{SpanID: "s1", Name: "GET /orders"},
+			domain.SpanUpserted{SpanID: "s2", Name: "POST /pay"},
+			domain.LogReceived{ID: "L1", SpanID: "s1"},
+			domain.LogReceived{ID: "L2", SpanID: "s2"},
+		)
+		if !equalIDs(ids, []string{"L1"}) {
+			t.Fatalf("admitted=%v", ids)
+		}
+	})
+}
+
+func TestOTLPComponentOnSyntheticOrphanDoesNotAdmitUntagged(t *testing.T) {
+	factory := func(t *testing.T) *filter.Filter {
+		t.Helper()
+
+		f, err := filter.New(filter.Query{Focus: []string{"helper-svc"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return f
+	}
+
+	sweet.Run(t, "OTLP service.name on a synthetic orphan does not admit later untagged lines", factory, func(t *testing.T, f *filter.Filter) {
+		ids := play(f,
+			domain.SpanUpserted{SpanID: "orphan", Name: "orphan", Synthetic: true},
+			domain.LogReceived{ID: "Lotlp", SpanID: "orphan", Component: "helper-svc", Synthetic: true},
+			domain.LogReceived{ID: "Lstdout", SpanID: "orphan", Synthetic: true},
+		)
+		if !equalIDs(ids, []string{"Lotlp"}) {
+			t.Fatalf("admitted=%v", ids)
+		}
+	})
+}
+
 func TestLateParentLinkAdmitsHeldLine(t *testing.T) {
 	factory := func(t *testing.T) *filter.Filter {
 		t.Helper()

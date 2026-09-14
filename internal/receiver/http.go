@@ -62,3 +62,21 @@ func writeProtobuf(w http.ResponseWriter, msg proto.Message) {
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
 }
+
+func limitHTTPInflight(next http.Handler, n uint32) http.Handler {
+	if n == 0 {
+		return next
+	}
+
+	sem := make(chan struct{}, n)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+			next.ServeHTTP(w, req)
+		default:
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		}
+	})
+}

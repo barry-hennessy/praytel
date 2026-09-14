@@ -109,7 +109,7 @@ func Listen(lt observability.LoggingTracer, ports Ports, spans chan<- domain.Spa
 	mux.Handle("/v1/logs", otlpLogs)
 
 	hs := &http.Server{
-		Handler:           mux,
+		Handler:           limitHTTPInflight(mux, maxOTLPStreams),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
