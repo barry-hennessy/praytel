@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"regexp"
+	"strings"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/filter"
 )
 
 type printed struct {
@@ -17,20 +21,27 @@ type printed struct {
 	spanID    string
 	spanName  string
 	synthetic bool
+	emitted   bool
 }
 
 // Stream is the append-only renderer. See ARCHITECTURE.md.
 type Stream struct {
 	lt     observability.LoggingTracer
 	events <-chan domain.Event
+	filt   *filter.Filter
 	out    io.Writer
 	color  bool
 }
 
-func New(lt observability.LoggingTracer, events <-chan domain.Event, out io.Writer) Stream {
+func New(lt observability.LoggingTracer, events <-chan domain.Event, out io.Writer, filt *filter.Filter) Stream {
+	if filt == nil {
+		filt, _ = filter.New(filter.Query{})
+	}
+
 	return Stream{
 		lt:     lt.Name("stream"),
 		events: events,
+		filt:   filt,
 		out:    out,
 		color:  colorEnabled(out),
 	}
@@ -51,44 +62,85 @@ func (s Stream) Run(ctx context.Context) error {
 				return nil
 			}
 
-			if err := s.handle(ev, seen); err != nil {
+			if err := s.handle(log, ev, seen); err != nil {
 				log.Error("write stream", "err", err)
 			}
 		}
 	}
 }
 
-func (s Stream) handle(ev domain.Event, seen map[string]printed) error {
-	switch e := ev.(type) {
-	case domain.LogReceived:
-		if err := s.writeLine(e.Source, e.SpanName, e.TraceID, e.SpanID, e.Body); err != nil {
+func (s Stream) handle(log *slog.Logger, ev domain.Event, seen map[string]printed) error {
+	switch ev.(type) {
+	case domain.ForestEvicted:
+		log.Warn("evicted oldest closed trace")
+
+		return nil
+	case domain.ForestShed:
+		log.Warn("shed newest inbound data")
+
+		return nil
+	}
+
+	var prev printed
+	var hadPrev bool
+
+	as, isAssigned := ev.(domain.LogAssigned)
+	if isAssigned {
+		prev, hadPrev = seen[as.ID]
+	}
+
+	if rec, ok := ev.(domain.LogReceived); ok {
+		seen[rec.ID] = printed{
+			body:      rec.Body,
+			source:    rec.Source,
+			traceID:   rec.TraceID,
+			spanID:    rec.SpanID,
+			spanName:  rec.SpanName,
+			synthetic: rec.Synthetic,
+		}
+	}
+
+	if isAssigned {
+		if p, ok := seen[as.ID]; ok {
+			p.traceID = as.TraceID
+			p.spanID = as.SpanID
+			p.spanName = as.SpanName
+			p.synthetic = as.Synthetic
+			seen[as.ID] = p
+		}
+	}
+
+	admitted := s.filt.Observe(ev)
+	just := make(map[string]struct{}, len(admitted))
+	for _, id := range admitted {
+		just[id] = struct{}{}
+
+		p, ok := seen[id]
+		if !ok {
+			continue
+		}
+
+		if err := s.writeLine(p.source, p.spanName, p.traceID, p.spanID, p.body); err != nil {
 			return err
 		}
 
-		seen[e.ID] = printed{
-			body:      e.Body,
-			source:    e.Source,
-			traceID:   e.TraceID,
-			spanID:    e.SpanID,
-			spanName:  e.SpanName,
-			synthetic: e.Synthetic,
-		}
+		p.emitted = true
+		seen[id] = p
+	}
 
-		return nil
-	case domain.LogAssigned:
-		prev, ok := seen[e.ID]
-		if !ok {
-			return nil
-		}
-
-		if !needsHydrate(prev, e) {
-			return nil
-		}
-
-		return s.writeLine(prev.source, e.SpanName, e.TraceID, e.SpanID, prev.body)
-	default:
+	if !isAssigned || !hadPrev || !prev.emitted {
 		return nil
 	}
+
+	if _, ok := just[as.ID]; ok {
+		return nil
+	}
+
+	if !needsHydrate(prev, as) {
+		return nil
+	}
+
+	return s.writeLine(prev.source, as.SpanName, as.TraceID, as.SpanID, prev.body)
 }
 
 func needsHydrate(prev printed, as domain.LogAssigned) bool {
@@ -100,6 +152,13 @@ func needsHydrate(prev printed, as domain.LogAssigned) bool {
 }
 
 func (s Stream) writeLine(source domain.Source, spanName, traceID, spanID, body string) error {
+	spanName = sanitizeField(spanName)
+	traceID = sanitizeField(traceID)
+	spanID = sanitizeField(spanID)
+	if source == domain.SourceOTLP {
+		body = sanitizeField(body)
+	}
+
 	prefix := fmt.Sprintf("%s %s %s %s ", source, spanName, traceID, spanID)
 	if s.color {
 		prefix = ansiWrap(prefix, colorCode(traceID))
@@ -108,6 +167,31 @@ func (s Stream) writeLine(source domain.Source, spanName, traceID, spanID, body 
 	_, err := fmt.Fprint(s.out, prefix, body, "\n")
 
 	return err
+}
+
+var ctlSeq = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+
+func sanitizeField(s string) string {
+	if s == "" {
+		return s
+	}
+
+	s = ctlSeq.ReplaceAllString(s, "")
+
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\t' || r == '\n' || r == '\r':
+			b.WriteByte(' ')
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+
+	return b.String()
 }
 
 func colorEnabled(w io.Writer) bool {

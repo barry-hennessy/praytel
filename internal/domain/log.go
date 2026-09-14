@@ -11,9 +11,10 @@ const (
 
 // LogLine is one captured or ingested log. Join logic lives in the correlator.
 type LogLine struct {
-	ID      string
-	Body    string
-	Source  Source
-	TraceID string
-	SpanID  string
+	ID        string
+	Body      string
+	Source    Source
+	Component string
+	TraceID   string
+	SpanID    string
 }

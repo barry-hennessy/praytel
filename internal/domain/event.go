@@ -11,6 +11,7 @@ type (
 		TraceID   string
 		SpanID    string
 		Name      string
+		Component string
 		Synthetic bool
 	}
 	SpanParentLinked struct {
@@ -26,6 +27,7 @@ type (
 		ID        string
 		Body      string
 		Source    Source
+		Component string
 		TraceID   string
 		SpanID    string
 		SpanName  string

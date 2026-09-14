@@ -4,25 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/barry-hennessy/bones"
 	"github.com/barry-hennessy/bones/observability"
+	"github.com/barry-hennessy/praytel/internal/domain"
 	colllog "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	colltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/proto"
 )
 
 const (
 	DefaultGRPCPort = 4317
 	DefaultHTTPPort = 4318
 
-	shutdownTimeout = 3 * time.Second
+	maxOTLPMessageBytes = 4 << 20
+	maxOTLPStreams      = 256
+	shutdownTimeout     = 3 * time.Second
 )
 
 // Errors returned by this package can be tested with [errors.Is].
@@ -36,7 +38,8 @@ type Ports struct {
 }
 
 // Receiver is an in-process OTLP listener (gRPC + HTTP traces and logs).
-// Payloads are discarded until ingest tickets land. There is no metrics surface.
+// Wire payloads are cast to [domain.Span] / [domain.LogLine] at this edge.
+// There is no metrics surface.
 type Receiver struct {
 	lt observability.LoggingTracer
 
@@ -47,9 +50,11 @@ type Receiver struct {
 
 	grpcPort int
 	httpPort int
+
+	drop *atomic.Bool
 }
 
-func Listen(lt observability.LoggingTracer, ports Ports) (*Receiver, error) {
+func Listen(lt observability.LoggingTracer, ports Ports, spans chan<- domain.Span, logs chan<- domain.LogLine) (*Receiver, error) {
 	lt = lt.Name("receiver")
 
 	grpcLis, err := net.Listen("tcp", listenAddr(ports.GRPC))
@@ -80,17 +85,35 @@ func Listen(lt observability.LoggingTracer, ports Ports) (*Receiver, error) {
 		return nil, err
 	}
 
-	gs := grpc.NewServer()
-	colltrace.RegisterTraceServiceServer(gs, discardTraces{})
-	colllog.RegisterLogsServiceServer(gs, discardLogs{})
+	drop := &atomic.Bool{}
+	traces := ingestTraces{
+		lt:    lt,
+		spans: spans,
+		drop:  drop,
+	}
+	otlpLogs := ingestLogs{
+		lt:   lt,
+		logs: logs,
+		drop: drop,
+	}
+
+	gs := grpc.NewServer(
+		grpc.MaxRecvMsgSize(maxOTLPMessageBytes),
+		grpc.MaxConcurrentStreams(maxOTLPStreams),
+	)
+	colltrace.RegisterTraceServiceServer(gs, traces)
+	colllog.RegisterLogsServiceServer(gs, otlpLogs)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/traces", discardHTTP(&colltrace.ExportTraceServiceResponse{}))
-	mux.HandleFunc("/v1/logs", discardHTTP(&colllog.ExportLogsServiceResponse{}))
+	mux.Handle("/v1/traces", traces)
+	mux.Handle("/v1/logs", otlpLogs)
 
 	hs := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	return &Receiver{
@@ -101,7 +124,17 @@ func Listen(lt observability.LoggingTracer, ports Ports) (*Receiver, error) {
 		http:     hs,
 		grpcPort: grpcPort,
 		httpPort: httpPort,
+		drop:     drop,
 	}, nil
+}
+
+// Drop warns and discards further OTLP instead of sending it into the correlator.
+func (r *Receiver) Drop() {
+	if r == nil || r.drop == nil {
+		return
+	}
+
+	r.drop.Store(true)
 }
 
 func listenAddr(port int) string {
@@ -171,39 +204,8 @@ func (r *Receiver) Serve(ctx context.Context) error {
 }
 
 var (
-	_ colltrace.TraceServiceServer = discardTraces{}
-	_ colllog.LogsServiceServer    = discardLogs{}
+	_ colltrace.TraceServiceServer = ingestTraces{}
+	_ colllog.LogsServiceServer    = ingestLogs{}
+	_ http.Handler                 = ingestTraces{}
+	_ http.Handler                 = ingestLogs{}
 )
-
-type discardTraces struct {
-	colltrace.UnimplementedTraceServiceServer
-}
-
-func (discardTraces) Export(context.Context, *colltrace.ExportTraceServiceRequest) (*colltrace.ExportTraceServiceResponse, error) {
-	return &colltrace.ExportTraceServiceResponse{}, nil
-}
-
-type discardLogs struct {
-	colllog.UnimplementedLogsServiceServer
-}
-
-func (discardLogs) Export(context.Context, *colllog.ExportLogsServiceRequest) (*colllog.ExportLogsServiceResponse, error) {
-	return &colllog.ExportLogsServiceResponse{}, nil
-}
-
-func discardHTTP(resp proto.Message) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		_, _ = io.Copy(io.Discard, req.Body)
-		_ = req.Body.Close()
-
-		body, err := proto.Marshal(resp)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/x-protobuf")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(body)
-	}
-}
