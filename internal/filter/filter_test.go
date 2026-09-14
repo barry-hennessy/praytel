@@ -322,6 +322,9 @@ func TestPassAllWithNoFocus(t *testing.T) {
 		if !equalIDs(ids, []string{"a", "b"}) {
 			t.Fatalf("admitted=%v", ids)
 		}
+		if !f.InFocus("s1") || !f.InFocus("") {
+			t.Fatal("pass-all query should report every span in focus")
+		}
 	})
 }
 
