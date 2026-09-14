@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -48,25 +49,18 @@ func New(lt observability.LoggingTracer, events <-chan domain.Event, out io.Writ
 }
 
 func (s Stream) Run(ctx context.Context) error {
-	ctx, log, span := s.lt.Start(ctx)
+	_, log, span := s.lt.Start(ctx)
 	defer span.End()
 
 	seen := make(map[string]printed)
 
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case ev, ok := <-s.events:
-			if !ok {
-				return nil
-			}
-
-			if err := s.handle(log, ev, seen); err != nil {
-				log.Error("write stream", "err", err)
-			}
+	for ev, ok := <-s.events; ok; ev, ok = <-s.events {
+		if err := s.handle(log, ev, seen); err != nil {
+			log.Error("write stream", "err", err)
 		}
 	}
+
+	return nil
 }
 
 func (s Stream) handle(log *slog.Logger, ev domain.Event, seen map[string]printed) error {
@@ -169,7 +163,7 @@ func (s Stream) writeLine(source domain.Source, spanName, traceID, spanID, body 
 	return err
 }
 
-var ctlSeq = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
+var ctlSeq = regexp.MustCompile(`\x1b\[[?-]*[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
 
 func sanitizeField(s string) string {
 	if s == "" {
@@ -185,6 +179,8 @@ func sanitizeField(s string) string {
 		case r == '\t' || r == '\n' || r == '\r':
 			b.WriteByte(' ')
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+			continue
+		case unicode.Is(unicode.Bidi_Control, r):
 			continue
 		default:
 			b.WriteRune(r)

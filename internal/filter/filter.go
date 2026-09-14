@@ -3,6 +3,7 @@ package filter
 import (
 	"fmt"
 	"path"
+	"strings"
 
 	"github.com/barry-hennessy/praytel/internal/domain"
 )
@@ -35,9 +36,10 @@ type spanNode struct {
 }
 
 type logRec struct {
-	id       string
-	spanID   string
-	admitted bool
+	id        string
+	spanID    string
+	component string
+	admitted  bool
 }
 
 func New(q Query) (*Filter, error) {
@@ -107,7 +109,7 @@ func (f *Filter) apply(ev domain.Event) {
 		if e.Name != "" {
 			n.name = e.Name
 		}
-		if e.Component != "" {
+		if e.Component != "" && !e.Synthetic {
 			n.component = e.Component
 		}
 	case domain.SpanParentLinked:
@@ -126,18 +128,18 @@ func (f *Filter) apply(ev domain.Event) {
 		child.parent = e.ParentSpanID
 		parent.children[child.id] = struct{}{}
 	case domain.LogReceived:
-		f.rememberLog(e.ID, e.SpanID)
+		f.rememberLog(e.ID, e.SpanID, e.Component)
 		if e.SpanID != "" {
 			n := f.ensureSpan(e.SpanID)
 			if e.SpanName != "" && n.name == "" {
 				n.name = e.SpanName
 			}
-			if e.Component != "" {
+			if e.Component != "" && !e.Synthetic {
 				n.component = e.Component
 			}
 		}
 	case domain.LogAssigned:
-		f.rememberLog(e.ID, e.SpanID)
+		f.rememberLog(e.ID, e.SpanID, "")
 		if e.SpanID != "" {
 			n := f.ensureSpan(e.SpanID)
 			if e.SpanName != "" {
@@ -147,7 +149,7 @@ func (f *Filter) apply(ev domain.Event) {
 	}
 }
 
-func (f *Filter) rememberLog(id, spanID string) {
+func (f *Filter) rememberLog(id, spanID, component string) {
 	if id == "" {
 		return
 	}
@@ -161,6 +163,9 @@ func (f *Filter) rememberLog(id, spanID string) {
 
 	if spanID != "" {
 		rec.spanID = spanID
+	}
+	if component != "" {
+		rec.component = component
 	}
 }
 
@@ -277,6 +282,14 @@ func (f *Filter) excluded(n *spanNode) bool {
 }
 
 func nameMatches(glob, name string) bool {
+	if matchOne(glob, name) {
+		return true
+	}
+
+	return matchOne(strings.ReplaceAll(glob, "/", "\x1f"), strings.ReplaceAll(name, "/", "\x1f"))
+}
+
+func matchOne(glob, name string) bool {
 	ok, err := path.Match(glob, name)
 	if err != nil {
 		return false
@@ -309,6 +322,10 @@ func (f *Filter) shouldAdmit(rec *logRec) bool {
 		return true
 	}
 
+	if rec.component != "" && f.matchesAny(f.focus, rec.component) && !f.matchesAny(f.exclude, rec.component) {
+		return true
+	}
+
 	if rec.spanID == "" {
 		return len(f.focus) == 0
 	}
@@ -316,4 +333,18 @@ func (f *Filter) shouldAdmit(rec *logRec) bool {
 	_, ok := f.inFocus[rec.spanID]
 
 	return ok
+}
+
+func (f *Filter) matchesAny(globs []string, name string) bool {
+	if len(globs) == 0 || name == "" {
+		return false
+	}
+
+	for _, g := range globs {
+		if nameMatches(g, name) {
+			return true
+		}
+	}
+
+	return false
 }

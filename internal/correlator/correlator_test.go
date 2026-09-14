@@ -524,6 +524,33 @@ func TestEvictOldestClosedTrace(t *testing.T) {
 	})
 }
 
+func TestEndedChildDoesNotCloseLiveParentTrace(t *testing.T) {
+	factory := func(t *testing.T) corrDeps {
+		t.Helper()
+
+		return correlatorWithLimits(t, correlator.Limits{MaxSpans: 2, MaxLogLines: 100})
+	}
+
+	sweet.Run(t, "ended child does not mark a live parent trace closed for eviction", factory, func(t *testing.T, d corrDeps) {
+		d.c.Spans() <- domain.Span{TraceID: "t1", SpanID: "parent", Name: "parent"}
+		_ = mustUpserted(t, d.out)
+
+		d.c.Spans() <- domain.Span{TraceID: "t1", SpanID: "child", ParentSpanID: "parent", Name: "child", Ended: true}
+		_ = mustUpserted(t, d.out)
+		_ = mustParentLinked(t, d.out)
+		_ = mustClosed(t, d.out)
+
+		d.c.Spans() <- domain.Span{TraceID: "t2", SpanID: "other", Name: "other", Ended: true}
+		_ = mustShed(t, d.out)
+
+		d.c.Logs() <- domain.LogLine{Body: "parent-still-here", Source: domain.SourceStdout, TraceID: "t1", SpanID: "parent"}
+		rec := mustReceived(t, d.out)
+		if rec.SpanID != "parent" || rec.Body != "parent-still-here" {
+			t.Fatalf("parent should still join: %#v", rec)
+		}
+	})
+}
+
 func TestShedNewestWhenAllLive(t *testing.T) {
 	factory := func(t *testing.T) corrDeps {
 		t.Helper()

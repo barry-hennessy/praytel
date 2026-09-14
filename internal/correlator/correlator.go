@@ -365,7 +365,7 @@ func (c *Correlator) handleSpan(ctx context.Context, in domain.Span) {
 
 	if in.TraceID != "" {
 		c.ensureTrace(in.TraceID)
-		c.noteRealSpanAdded(sp, in.Ended)
+		c.noteRealSpanAdded(sp)
 	}
 
 	c.emitSpanUpserted(ctx, sp)
@@ -580,20 +580,12 @@ func (c *Correlator) logCount() int {
 	return n
 }
 
-func (c *Correlator) noteRealSpanAdded(sp *forestSpan, ended bool) {
+func (c *Correlator) noteRealSpanAdded(sp *forestSpan) {
 	if sp.synthetic || sp.traceID == "" {
 		return
 	}
 
 	tr := c.ensureTrace(sp.traceID)
-	if ended {
-		if tr.openReal == 0 {
-			tr.closed = true
-		}
-
-		return
-	}
-
 	tr.openReal++
 	tr.closed = false
 }
