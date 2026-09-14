@@ -20,9 +20,10 @@ type Filter struct {
 	focus   []string
 	exclude []string
 
-	spans map[string]*spanNode
-	logs  map[string]*logRec
-	order []string
+	spans        map[string]*spanNode
+	logs         map[string]*logRec
+	order        []string
+	pendingAdmit []string
 
 	inFocus map[string]struct{}
 }
@@ -82,15 +83,21 @@ func (f *Filter) passAll() bool {
 // that entered the live-admit set for the first time.
 func (f *Filter) Observe(ev domain.Event) []string {
 	f.apply(ev)
-	f.recomputeFocus()
+	if !f.passAll() {
+		f.recomputeFocus()
+	}
 
 	return f.collectNewAdmits()
 }
 
 // InFocus reports whether spanID is in the current expanded (then excluded) set.
 func (f *Filter) InFocus(spanID string) bool {
+	if f.passAll() {
+		return true
+	}
+
 	if spanID == "" {
-		return f.passAll() || len(f.focus) == 0
+		return len(f.focus) == 0
 	}
 
 	_, ok := f.inFocus[spanID]
@@ -159,6 +166,7 @@ func (f *Filter) rememberLog(id, spanID, component string) {
 		rec = &logRec{id: id}
 		f.logs[id] = rec
 		f.order = append(f.order, id)
+		f.pendingAdmit = append(f.pendingAdmit, id)
 	}
 
 	if spanID != "" {
@@ -300,19 +308,23 @@ func matchOne(glob, name string) bool {
 
 func (f *Filter) collectNewAdmits() []string {
 	var out []string
-	for _, id := range f.order {
+	held := f.pendingAdmit
+	next := make([]string, 0, len(held))
+	for _, id := range held {
 		rec := f.logs[id]
-		if rec.admitted {
+		if rec == nil || rec.admitted {
 			continue
 		}
 
 		if !f.shouldAdmit(rec) {
+			next = append(next, id)
 			continue
 		}
 
 		rec.admitted = true
 		out = append(out, id)
 	}
+	f.pendingAdmit = next
 
 	return out
 }

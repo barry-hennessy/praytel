@@ -105,12 +105,9 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 	<-corrDone
 	rec.Drop()
 
-	// Keep the OTLP listener in drop mode long enough for a late export to
-	// hit the warn path instead of a closed port (issue 07).
-	hold := cfg.drainIdle
-	if hold < 50*time.Millisecond {
-		hold = 50 * time.Millisecond
-	}
+	// Keep the listener in drop mode briefly so a late export hits warn
+	// instead of a closed port (issue 07). Drain idle/hard-cap already ran.
+	hold := 50 * time.Millisecond
 	if cfg.drainTimeout > 0 && hold > cfg.drainTimeout {
 		hold = cfg.drainTimeout
 	}

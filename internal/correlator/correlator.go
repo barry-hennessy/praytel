@@ -384,8 +384,12 @@ func (c *Correlator) updateSpan(ctx context.Context, sp *forestSpan, in domain.S
 			sp.name = in.Name
 		}
 		if in.TraceID != "" {
+			hadTrace := sp.traceID != ""
 			sp.traceID = in.TraceID
 			c.ensureTrace(in.TraceID)
+			if !hadTrace {
+				c.noteRealSpanAdded(sp)
+			}
 		}
 		if in.ParentSpanID != "" {
 			sp.parentSpanID = in.ParentSpanID
@@ -457,6 +461,10 @@ func (c *Correlator) resolvePending(ctx context.Context) {
 
 		for _, line := range waiting {
 			sp := c.assignmentAtDrain(ctx, line)
+			if sp == nil {
+				continue
+			}
+
 			sp.logs = append(sp.logs, line)
 			c.emit(ctx, domain.LogAssigned{
 				ID:        line.ID,
@@ -475,9 +483,23 @@ func (c *Correlator) assignmentAtDrain(ctx context.Context, line domain.LogLine)
 	}
 
 	if line.TraceID != "" {
-		if _, ok := c.forest.traces[line.TraceID]; ok {
+		if tr, ok := c.forest.traces[line.TraceID]; ok {
+			if tr.orphan != nil {
+				return tr.orphan
+			}
+			if !c.admit(ctx, 1, 0) {
+				return nil
+			}
+
 			return c.ensureTraceOrphan(ctx, line.TraceID)
 		}
+	}
+
+	if c.forest.globalOrphan != nil {
+		return c.forest.globalOrphan
+	}
+	if !c.admit(ctx, 1, 0) {
+		return nil
 	}
 
 	return c.ensureGlobalOrphan(ctx)

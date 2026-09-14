@@ -312,7 +312,7 @@ func TestOTLPControlCharsStripped(t *testing.T) {
 
 		d.ch <- domain.LogReceived{
 			ID:       "1",
-			Body:     "ok\x1b[31mhid\nnext",
+			Body:     "ok\x1b[31mhid\nnext\u2028more",
 			Source:   domain.SourceOTLP,
 			TraceID:  "t1",
 			SpanID:   "s1",
@@ -333,10 +333,13 @@ func TestOTLPControlCharsStripped(t *testing.T) {
 		if strings.Contains(got, "\x1b") || strings.Contains(got, "[31m") || strings.Contains(got, "[0m") {
 			t.Fatalf("escape leaked: %q", got)
 		}
+		if strings.ContainsRune(got, '\u2028') || strings.ContainsRune(got, '\u2029') {
+			t.Fatalf("unicode line break leaked: %q", got)
+		}
 		if strings.Count(got, "\n") != 1 {
 			t.Fatalf("want one output line, got %q", got)
 		}
-		if !strings.Contains(got, "ok") || !strings.Contains(got, "hid") || !strings.Contains(got, "next") {
+		if !strings.Contains(got, "ok") || !strings.Contains(got, "hid") || !strings.Contains(got, "next") || !strings.Contains(got, "more") {
 			t.Fatalf("sanitized body missing text: %q", got)
 		}
 	})

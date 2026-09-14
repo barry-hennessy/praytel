@@ -178,6 +178,8 @@ func sanitizeField(s string) string {
 		switch {
 		case r == '\t' || r == '\n' || r == '\r':
 			b.WriteByte(' ')
+		case unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r):
+			b.WriteByte(' ')
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
 			continue
 		case unicode.Is(unicode.Bidi_Control, r):
