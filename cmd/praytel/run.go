@@ -7,13 +7,17 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/capture"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/filter"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
 	"golang.org/x/sync/errgroup"
@@ -23,17 +27,30 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 	ctx, log, span := lt.Start(ctx)
 	defer span.End()
 
+	filt, err := filter.New(filter.Query{Focus: cfg.focus, Exclude: cfg.exclude})
+	if err != nil {
+		return 1, fmt.Errorf("filter: %w", err)
+	}
+
+	events := make(chan domain.Event, 64)
+	corr := correlator.New(lt, events, correlator.Drain{
+		Idle:    cfg.drainIdle,
+		Timeout: cfg.drainTimeout,
+	}, correlator.Limits{
+		MaxSpans:    cfg.maxSpans,
+		MaxLogLines: cfg.maxLogLines,
+	})
+	st := stream.New(lt, events, stdout, filt)
+
 	rec, err := receiver.Listen(lt, receiver.Ports{
 		GRPC: cfg.grpcPort,
 		HTTP: cfg.httpPort,
-	})
+	}, corr.Spans(), corr.Logs())
 	if err != nil {
 		return 1, fmt.Errorf("bind otlp: %w", err)
 	}
 
-	events := make(chan domain.Event, 64)
-	corr := correlator.New(lt, events)
-	st := stream.New(lt, events, stdout)
+	corr.DropIngest(rec.Drop)
 
 	outR, outW, err := os.Pipe()
 	if err != nil {
@@ -50,15 +67,17 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 
 	gate := capture.NewWarnGate(0)
 
-	runCtx, stopRun := context.WithCancel(ctx)
+	runCtx, stopRun := context.WithCancel(context.Background())
 	defer stopRun()
 
 	gg, gctx := errgroup.WithContext(runCtx)
+	corrDone := make(chan struct{})
 	gg.Go(func() error {
-		return corr.Run(ctx)
+		defer close(corrDone)
+		return corr.Run(gctx)
 	})
 	gg.Go(func() error {
-		return st.Run(ctx)
+		return st.Run(gctx)
 	})
 	gg.Go(func() error {
 		return rec.Serve(gctx)
@@ -69,12 +88,12 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 	go func() {
 		defer capWG.Done()
 		defer outR.Close()
-		_ = capture.Copy(ctx, lt, domain.SourceStdout, outR, corr.Logs(), gate)
+		_ = capture.Copy(gctx, lt, domain.SourceStdout, outR, corr.Logs(), gate)
 	}()
 	go func() {
 		defer capWG.Done()
 		defer errR.Close()
-		_ = capture.Copy(ctx, lt, domain.SourceStderr, errR, corr.Logs(), gate)
+		_ = capture.Copy(gctx, lt, domain.SourceStderr, errR, corr.Logs(), gate)
 	}()
 
 	code, started, err := startChild(cfg.command, rec.ChildEnv(), stdin, outW, errW)
@@ -83,6 +102,20 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 	_ = errW.Close()
 	capWG.Wait()
 	corr.Stop()
+	<-corrDone
+	rec.Drop()
+
+	// Keep the OTLP listener in drop mode long enough for a late export to
+	// hit the warn path instead of a closed port (issue 07).
+	hold := cfg.drainIdle
+	if hold < 50*time.Millisecond {
+		hold = 50 * time.Millisecond
+	}
+	if cfg.drainTimeout > 0 && hold > cfg.drainTimeout {
+		hold = cfg.drainTimeout
+	}
+	holdTimer := time.NewTimer(hold)
+	<-holdTimer.C
 	stopRun()
 
 	waitErr := gg.Wait()
@@ -119,6 +152,9 @@ func startChild(command []string, extraEnv []string, stdin io.Reader, stdout, st
 	_ = stdout.Close()
 	_ = stderr.Close()
 
+	stopFwd := forwardSignals(cmd.Process, syscall.SIGINT, syscall.SIGTERM)
+	defer stopFwd()
+
 	err := cmd.Wait()
 	if err == nil {
 		return 0, true, nil
@@ -130,6 +166,38 @@ func startChild(command []string, extraEnv []string, stdin io.Reader, stdout, st
 	}
 
 	return 1, true, err
+}
+
+// forwardSignals delivers SIGINT/SIGTERM received by praytel to proc.
+// Lifecycle (correlator drain, stream, OTLP listener) uses a context that is
+// not cancelled by those signals, so post-child idle drain still runs.
+func forwardSignals(proc *os.Process, sigs ...os.Signal) func() {
+	if proc == nil || len(sigs) == 0 {
+		return func() {}
+	}
+
+	ch := make(chan os.Signal, len(sigs))
+	signal.Notify(ch, sigs...)
+
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case sig := <-ch:
+				_ = proc.Signal(sig)
+			case <-done:
+				return
+			}
+		}
+	}()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			signal.Stop(ch)
+			close(done)
+		})
+	}
 }
 
 func withOTelExporterEnv(base, extra []string) []string {

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
+	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 )
 
@@ -15,9 +17,27 @@ var (
 )
 
 type config struct {
-	command  []string
-	grpcPort int
-	httpPort int
+	command      []string
+	grpcPort     int
+	httpPort     int
+	drainIdle    time.Duration
+	drainTimeout time.Duration
+	maxSpans     int
+	maxLogLines  int
+	focus        []string
+	exclude      []string
+}
+
+type stringList []string
+
+func (s *stringList) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+
+	return nil
 }
 
 func parseArgs(args []string, errOut io.Writer) (config, error) {
@@ -38,6 +58,14 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 
 	grpcPort := fs.Int("grpc-port", receiver.DefaultGRPCPort, "OTLP gRPC listen port")
 	httpPort := fs.Int("http-port", receiver.DefaultHTTPPort, "OTLP HTTP listen port")
+	drainIdle := fs.Duration("drain-idle", 250*time.Millisecond, "idle time with no OTLP after child exit before drain completes")
+	drainTimeout := fs.Duration("drain-timeout", 2*time.Second, "hard cap on drain after child exit")
+	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
+	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
+	var focus stringList
+	var exclude stringList
+	fs.Var(&focus, "focus", "admit the span path matching this glob (repeatable, union)")
+	fs.Var(&exclude, "exclude", "drop matching names after focus expansion (repeatable)")
 
 	if err := fs.Parse(flags); err != nil {
 		return config{}, err
@@ -47,10 +75,25 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 		return config{}, ErrUsage
 	}
 
+	idle := *drainIdle
+	if idle < 0 {
+		idle = 0
+	}
+	hard := *drainTimeout
+	if hard < 0 {
+		hard = 0
+	}
+
 	return config{
-		command:  command,
-		grpcPort: *grpcPort,
-		httpPort: *httpPort,
+		command:      command,
+		grpcPort:     *grpcPort,
+		httpPort:     *httpPort,
+		drainIdle:    idle,
+		drainTimeout: hard,
+		maxSpans:     *maxSpans,
+		maxLogLines:  *maxLogLines,
+		focus:        append([]string(nil), focus...),
+		exclude:      append([]string(nil), exclude...),
 	}, nil
 }
 

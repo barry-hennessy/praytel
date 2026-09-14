@@ -6,4 +6,8 @@ type Span struct {
 	SpanID       string
 	ParentSpanID string
 	Name         string
+	Component    string
+	// Ended is true when the span has finished. A trace is closed when every
+	// real (non-synthetic) span in it has ended.
+	Ended bool
 }

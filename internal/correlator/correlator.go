@@ -6,12 +6,31 @@ import (
 	"encoding/hex"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 )
 
-const globalOrphanName = "orphan"
+const (
+	globalOrphanName = "orphan"
+
+	DefaultMaxSpans    = 1_000_000
+	DefaultMaxLogLines = 1_000_000
+)
+
+// Drain is the post-child wait: idle with no inbound, bounded by Timeout.
+// Zero Idle skips the wait. Timeout is a hard cap from Stop; if unset, Idle is used.
+type Drain struct {
+	Idle    time.Duration
+	Timeout time.Duration
+}
+
+// Limits bound correlator-retained spans and log lines (pending and orphans included).
+type Limits struct {
+	MaxSpans    int
+	MaxLogLines int
+}
 
 // Correlator owns the private forest and outbound events. See ARCHITECTURE.md.
 type Correlator struct {
@@ -24,8 +43,13 @@ type Correlator struct {
 	stopOnce sync.Once
 	outOnce  sync.Once
 
-	forest forest
-	logSeq uint64
+	drain      Drain
+	limits     Limits
+	dropIngest func()
+
+	forest   forest
+	logSeq   uint64
+	traceSeq uint64
 }
 
 type forest struct {
@@ -36,7 +60,10 @@ type forest struct {
 }
 
 type traceNode struct {
-	orphan *forestSpan
+	orphan   *forestSpan
+	seq      uint64
+	closed   bool
+	openReal int
 }
 
 type forestSpan struct {
@@ -44,23 +71,40 @@ type forestSpan struct {
 	spanID       string
 	parentSpanID string
 	name         string
+	component    string
 	synthetic    bool
 	linked       bool
+	ended        bool
+	logs         []domain.LogLine
 }
 
-func New(lt observability.LoggingTracer, out chan<- domain.Event) *Correlator {
+func New(lt observability.LoggingTracer, out chan<- domain.Event, drain Drain, limits Limits) *Correlator {
+	if limits.MaxSpans <= 0 {
+		limits.MaxSpans = DefaultMaxSpans
+	}
+	if limits.MaxLogLines <= 0 {
+		limits.MaxLogLines = DefaultMaxLogLines
+	}
+
 	return &Correlator{
-		lt:    lt.Name("correlator"),
-		out:   out,
-		logs:  make(chan domain.LogLine, 64),
-		spans: make(chan domain.Span, 64),
-		stop:  make(chan struct{}),
+		lt:     lt.Name("correlator"),
+		out:    out,
+		logs:   make(chan domain.LogLine, 64),
+		spans:  make(chan domain.Span, 64),
+		stop:   make(chan struct{}),
+		drain:  drain,
+		limits: limits,
 		forest: forest{
 			traces:  make(map[string]*traceNode),
 			spans:   make(map[string]*forestSpan),
 			pending: make(map[string][]domain.LogLine),
 		},
 	}
+}
+
+// DropIngest is called once drain finishes, before Run returns, so late OTLP is not blocked on unread channels.
+func (c *Correlator) DropIngest(fn func()) {
+	c.dropIngest = fn
 }
 
 func (c *Correlator) Logs() chan<- domain.LogLine {
@@ -83,19 +127,16 @@ func (c *Correlator) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			c.drainInbound(ctx, logs, spans)
-			c.resolvePending(ctx)
+			c.finishDrain(ctx, logs, spans)
 
 			return nil
 		case <-c.stop:
-			c.drainInbound(ctx, logs, spans)
-			c.resolvePending(ctx)
+			c.waitIdleOrCap(ctx, logs, spans)
 
 			return nil
 		case line, ok := <-logs:
 			if !ok {
-				c.drainInbound(ctx, nil, spans)
-				c.resolvePending(ctx)
+				c.waitIdleOrCap(ctx, nil, spans)
 
 				return nil
 			}
@@ -122,6 +163,83 @@ func (c *Correlator) closeOut() {
 	c.outOnce.Do(func() {
 		close(c.out)
 	})
+}
+
+func (c *Correlator) waitIdleOrCap(ctx context.Context, logs <-chan domain.LogLine, spans <-chan domain.Span) {
+	if c.drain.Idle <= 0 {
+		c.finishDrain(ctx, logs, spans)
+		return
+	}
+
+	idle := c.drain.Idle
+	hard := c.drain.Timeout
+	if hard <= 0 {
+		hard = idle
+	}
+
+	hardTimer := time.NewTimer(hard)
+	defer hardTimer.Stop()
+
+	idleTimer := time.NewTimer(idle)
+	defer idleTimer.Stop()
+
+	resetIdle := func() {
+		if !idleTimer.Stop() {
+			select {
+			case <-idleTimer.C:
+			default:
+			}
+		}
+		idleTimer.Reset(idle)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			c.finishDrain(ctx, logs, spans)
+			return
+		case <-hardTimer.C:
+			c.finishDrain(ctx, logs, spans)
+			return
+		case <-idleTimer.C:
+			c.finishDrain(ctx, logs, spans)
+			return
+		case line, ok := <-logs:
+			if !ok {
+				logs = nil
+				if spans == nil {
+					c.finishDrain(ctx, logs, spans)
+					return
+				}
+				continue
+			}
+
+			c.handleLog(ctx, line)
+			resetIdle()
+		case sp, ok := <-spans:
+			if !ok {
+				spans = nil
+				if logs == nil {
+					c.finishDrain(ctx, logs, spans)
+					return
+				}
+				continue
+			}
+
+			c.handleSpan(ctx, sp)
+			resetIdle()
+		}
+	}
+}
+
+func (c *Correlator) finishDrain(ctx context.Context, logs <-chan domain.LogLine, spans <-chan domain.Span) {
+	c.drainInbound(ctx, logs, spans)
+	if c.dropIngest != nil {
+		c.dropIngest()
+	}
+	c.drainInbound(ctx, logs, spans)
+	c.resolvePending(ctx)
+	c.emit(ctx, domain.DrainComplete{})
 }
 
 func (c *Correlator) drainInbound(ctx context.Context, logs <-chan domain.LogLine, spans <-chan domain.Span) {
@@ -164,17 +282,38 @@ func (c *Correlator) handleLog(ctx context.Context, line domain.LogLine) {
 
 	line.ID = id
 
+	needSpans := 0
+	if line.SpanID == "" {
+		if line.TraceID != "" {
+			if tr, ok := c.forest.traces[line.TraceID]; ok {
+				if tr.orphan == nil {
+					needSpans = 1
+				}
+			} else if c.forest.globalOrphan == nil {
+				needSpans = 1
+			}
+		} else if c.forest.globalOrphan == nil {
+			needSpans = 1
+		}
+	}
+
+	if !c.admit(ctx, needSpans, 1) {
+		return
+	}
+
 	if line.SpanID != "" {
 		if sp, ok := c.forest.spans[line.SpanID]; ok {
+			sp.logs = append(sp.logs, line)
 			c.emitReceivedAssigned(ctx, line, sp)
 			return
 		}
 
 		c.forest.pending[line.SpanID] = append(c.forest.pending[line.SpanID], line)
 		c.emit(ctx, domain.LogReceived{
-			ID:     id,
-			Body:   line.Body,
-			Source: line.Source,
+			ID:        id,
+			Body:      line.Body,
+			Source:    line.Source,
+			Component: line.Component,
 		})
 
 		return
@@ -182,16 +321,22 @@ func (c *Correlator) handleLog(ctx context.Context, line domain.LogLine) {
 
 	if line.TraceID != "" {
 		if _, ok := c.forest.traces[line.TraceID]; ok {
-			c.emitReceivedAssigned(ctx, line, c.ensureTraceOrphan(ctx, line.TraceID))
+			sp := c.ensureTraceOrphan(ctx, line.TraceID)
+			sp.logs = append(sp.logs, line)
+			c.emitReceivedAssigned(ctx, line, sp)
 			return
 		}
 
-		c.emitReceivedAssigned(ctx, line, c.ensureGlobalOrphan(ctx))
+		sp := c.ensureGlobalOrphan(ctx)
+		sp.logs = append(sp.logs, line)
+		c.emitReceivedAssigned(ctx, line, sp)
 
 		return
 	}
 
-	c.emitReceivedAssigned(ctx, line, c.ensureGlobalOrphan(ctx))
+	sp := c.ensureGlobalOrphan(ctx)
+	sp.logs = append(sp.logs, line)
+	c.emitReceivedAssigned(ctx, line, sp)
 }
 
 func (c *Correlator) handleSpan(ctx context.Context, in domain.Span) {
@@ -200,39 +345,64 @@ func (c *Correlator) handleSpan(ctx context.Context, in domain.Span) {
 	}
 
 	sp, ok := c.forest.spans[in.SpanID]
-	if !ok {
-		sp = &forestSpan{
-			traceID:      in.TraceID,
-			spanID:       in.SpanID,
-			parentSpanID: in.ParentSpanID,
-			name:         in.Name,
-		}
-		c.forest.spans[in.SpanID] = sp
-	} else if !sp.synthetic {
+	if ok {
+		c.updateSpan(ctx, sp, in)
+		return
+	}
+
+	if !c.admit(ctx, 1, 0) {
+		return
+	}
+
+	sp = &forestSpan{
+		traceID:      in.TraceID,
+		spanID:       in.SpanID,
+		parentSpanID: in.ParentSpanID,
+		name:         in.Name,
+		component:    in.Component,
+	}
+	c.forest.spans[in.SpanID] = sp
+
+	if in.TraceID != "" {
+		c.ensureTrace(in.TraceID)
+		c.noteRealSpanAdded(sp, in.Ended)
+	}
+
+	c.emitSpanUpserted(ctx, sp)
+
+	c.flushPending(ctx, sp)
+	c.linkParents(ctx, sp)
+
+	if in.Ended {
+		c.closeSpan(ctx, sp)
+	}
+}
+
+func (c *Correlator) updateSpan(ctx context.Context, sp *forestSpan, in domain.Span) {
+	if !sp.synthetic {
 		if in.Name != "" {
 			sp.name = in.Name
 		}
 		if in.TraceID != "" {
 			sp.traceID = in.TraceID
+			c.ensureTrace(in.TraceID)
 		}
 		if in.ParentSpanID != "" {
 			sp.parentSpanID = in.ParentSpanID
 		}
+		if in.Component != "" {
+			sp.component = in.Component
+		}
 	}
 
-	if in.TraceID != "" {
-		c.ensureTrace(in.TraceID)
-	}
-
-	c.emit(ctx, domain.SpanUpserted{
-		TraceID:   sp.traceID,
-		SpanID:    sp.spanID,
-		Name:      sp.name,
-		Synthetic: sp.synthetic,
-	})
+	c.emitSpanUpserted(ctx, sp)
 
 	c.flushPending(ctx, sp)
 	c.linkParents(ctx, sp)
+
+	if in.Ended {
+		c.closeSpan(ctx, sp)
+	}
 }
 
 func (c *Correlator) flushPending(ctx context.Context, sp *forestSpan) {
@@ -244,6 +414,7 @@ func (c *Correlator) flushPending(ctx context.Context, sp *forestSpan) {
 	delete(c.forest.pending, sp.spanID)
 
 	for _, line := range waiting {
+		sp.logs = append(sp.logs, line)
 		c.emit(ctx, domain.LogAssigned{
 			ID:        line.ID,
 			TraceID:   sp.traceID,
@@ -286,6 +457,7 @@ func (c *Correlator) resolvePending(ctx context.Context) {
 
 		for _, line := range waiting {
 			sp := c.assignmentAtDrain(ctx, line)
+			sp.logs = append(sp.logs, line)
 			c.emit(ctx, domain.LogAssigned{
 				ID:        line.ID,
 				TraceID:   sp.traceID,
@@ -316,6 +488,7 @@ func (c *Correlator) emitReceivedAssigned(ctx context.Context, line domain.LogLi
 		ID:        line.ID,
 		Body:      line.Body,
 		Source:    line.Source,
+		Component: line.Component,
 		TraceID:   sp.traceID,
 		SpanID:    sp.spanID,
 		SpanName:  sp.name,
@@ -334,13 +507,129 @@ func (c *Correlator) emit(_ context.Context, ev domain.Event) {
 	c.out <- ev
 }
 
+func (c *Correlator) admit(ctx context.Context, needSpans, needLogs int) bool {
+	c.evictUntilFit(ctx, needSpans, needLogs)
+	if c.spanCount()+needSpans <= c.limits.MaxSpans && c.logCount()+needLogs <= c.limits.MaxLogLines {
+		return true
+	}
+
+	c.emit(ctx, domain.ForestShed{})
+
+	return false
+}
+
+func (c *Correlator) evictUntilFit(ctx context.Context, needSpans, needLogs int) {
+	for c.spanCount()+needSpans > c.limits.MaxSpans || c.logCount()+needLogs > c.limits.MaxLogLines {
+		id := c.oldestClosedTrace()
+		if id == "" {
+			return
+		}
+
+		c.evictTrace(ctx, id)
+	}
+}
+
+func (c *Correlator) oldestClosedTrace() string {
+	var (
+		bestID  string
+		bestSeq uint64
+		found   bool
+	)
+
+	for id, tr := range c.forest.traces {
+		if !tr.closed {
+			continue
+		}
+		if !found || tr.seq < bestSeq {
+			bestID = id
+			bestSeq = tr.seq
+			found = true
+		}
+	}
+
+	return bestID
+}
+
+func (c *Correlator) evictTrace(ctx context.Context, traceID string) {
+	for spanID, sp := range c.forest.spans {
+		if sp.traceID != traceID {
+			continue
+		}
+
+		delete(c.forest.pending, spanID)
+		delete(c.forest.spans, spanID)
+	}
+
+	delete(c.forest.traces, traceID)
+	c.emit(ctx, domain.ForestEvicted{})
+}
+
+func (c *Correlator) spanCount() int {
+	return len(c.forest.spans)
+}
+
+func (c *Correlator) logCount() int {
+	n := 0
+	for _, lines := range c.forest.pending {
+		n += len(lines)
+	}
+	for _, sp := range c.forest.spans {
+		n += len(sp.logs)
+	}
+
+	return n
+}
+
+func (c *Correlator) noteRealSpanAdded(sp *forestSpan, ended bool) {
+	if sp.synthetic || sp.traceID == "" {
+		return
+	}
+
+	tr := c.ensureTrace(sp.traceID)
+	if ended {
+		if tr.openReal == 0 {
+			tr.closed = true
+		}
+
+		return
+	}
+
+	tr.openReal++
+	tr.closed = false
+}
+
+func (c *Correlator) closeSpan(ctx context.Context, sp *forestSpan) {
+	if sp.ended || sp.synthetic {
+		return
+	}
+
+	sp.ended = true
+	c.emit(ctx, domain.SpanClosed{
+		TraceID: sp.traceID,
+		SpanID:  sp.spanID,
+	})
+
+	if sp.traceID == "" {
+		return
+	}
+
+	tr := c.ensureTrace(sp.traceID)
+	if tr.openReal > 0 {
+		tr.openReal--
+	}
+	if tr.openReal == 0 {
+		tr.closed = true
+	}
+}
+
 func (c *Correlator) ensureTrace(traceID string) *traceNode {
 	tr, ok := c.forest.traces[traceID]
 	if ok {
 		return tr
 	}
 
-	tr = &traceNode{}
+	c.traceSeq++
+	tr = &traceNode{seq: c.traceSeq}
 	c.forest.traces[traceID] = tr
 
 	return tr
@@ -388,6 +677,7 @@ func (c *Correlator) emitSpanUpserted(ctx context.Context, sp *forestSpan) {
 		TraceID:   sp.traceID,
 		SpanID:    sp.spanID,
 		Name:      sp.name,
+		Component: sp.component,
 		Synthetic: sp.synthetic,
 	})
 }
