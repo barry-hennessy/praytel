@@ -81,6 +81,97 @@ func TestMalformedJSONWarnsRateLimited(t *testing.T) {
 	})
 }
 
+func TestLogfmtExtractsIDsWithoutWarn(t *testing.T) {
+	sweet.Run(t, "slog-shaped logfmt trace_id and span_id are parsed", capFactory, func(t *testing.T, d capDeps) {
+		out := make(chan domain.LogLine, 1)
+		body := `time=2026-01-01T00:00:00Z level=INFO msg="ok" trace_id=aaa span_id=bbb`
+		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		if err != nil {
+			t.Fatalf("Copy: %v", err)
+		}
+
+		line := recvLine(t, out)
+		if line.TraceID != "aaa" || line.SpanID != "bbb" {
+			t.Fatalf("ids %#v", line)
+		}
+		if line.Body != body {
+			t.Fatalf("body=%q", line.Body)
+		}
+		if strings.Contains(d.logs.String(), "malformed") {
+			t.Fatalf("valid logfmt warned: %s", d.logs.String())
+		}
+	})
+}
+
+func TestLogfmtQuotedValuesExtractIDs(t *testing.T) {
+	sweet.Run(t, "quoted logfmt values still extract ids", capFactory, func(t *testing.T, d capDeps) {
+		out := make(chan domain.LogLine, 1)
+		body := `msg="hello world" trace_id=aaa span_id=bbb`
+		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		if err != nil {
+			t.Fatalf("Copy: %v", err)
+		}
+
+		line := recvLine(t, out)
+		if line.TraceID != "aaa" || line.SpanID != "bbb" {
+			t.Fatalf("ids %#v", line)
+		}
+	})
+}
+
+func TestLogfmtTraceIDOnly(t *testing.T) {
+	sweet.Run(t, "logfmt trace_id only leaves span empty", capFactory, func(t *testing.T, d capDeps) {
+		out := make(chan domain.LogLine, 1)
+		body := `msg=ok trace_id=aaa`
+		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		if err != nil {
+			t.Fatalf("Copy: %v", err)
+		}
+
+		line := recvLine(t, out)
+		if line.TraceID != "aaa" || line.SpanID != "" {
+			t.Fatalf("ids %#v", line)
+		}
+	})
+}
+
+func TestLogfmtWithoutIDsIsPlainText(t *testing.T) {
+	sweet.Run(t, "logfmt without ids is unstructured and does not warn", capFactory, func(t *testing.T, d capDeps) {
+		out := make(chan domain.LogLine, 2)
+		input := "foo=bar\nbaz=qux\n"
+		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(input), out, capture.NewWarnGate(time.Hour))
+		if err != nil {
+			t.Fatalf("Copy: %v", err)
+		}
+
+		for i := 0; i < 2; i++ {
+			line := recvLine(t, out)
+			if line.TraceID != "" || line.SpanID != "" {
+				t.Fatalf("unexpected ids %#v", line)
+			}
+		}
+		if strings.Contains(d.logs.String(), "malformed") {
+			t.Fatalf("logfmt without ids warned: %s", d.logs.String())
+		}
+	})
+}
+
+func TestJSONPrecedenceOverLogfmt(t *testing.T) {
+	sweet.Run(t, "JSON lines are not parsed as logfmt", capFactory, func(t *testing.T, d capDeps) {
+		out := make(chan domain.LogLine, 1)
+		body := `{"msg":"ok","trace_id":"aaa","span_id":"bbb"}`
+		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		if err != nil {
+			t.Fatalf("Copy: %v", err)
+		}
+
+		line := recvLine(t, out)
+		if line.TraceID != "aaa" || line.SpanID != "bbb" {
+			t.Fatalf("ids %#v", line)
+		}
+	})
+}
+
 func TestValidJSONExtractsIDsWithoutWarn(t *testing.T) {
 	sweet.Run(t, "JSON trace_id and span_id are parsed", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)
