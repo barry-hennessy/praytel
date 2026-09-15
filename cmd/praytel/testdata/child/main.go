@@ -34,6 +34,7 @@ func main() {
 	marker := flag.String("marker", "", "create this file on start")
 	printOtel := flag.Bool("print-otel-env", false, "print OTEL_EXPORTER_OTLP_* assignments")
 	exportGRPC := flag.Bool("export-grpc-span", false, "export one OTLP/gRPC span and print JSON with those IDs")
+	exportGRPCLogfmt := flag.Bool("export-grpc-span-logfmt", false, "export one OTLP/gRPC span and print logfmt with those IDs")
 	exportHTTP := flag.Bool("export-http-span", false, "export one OTLP HTTP/protobuf span and print JSON with those IDs")
 	exportOTLPLog := flag.String("export-otlp-log", "", "emit this body as an OTLP log")
 	serviceName := flag.String("service-name", "", "resource service.name for OTLP logs")
@@ -73,7 +74,7 @@ func main() {
 	if *loopExport {
 		fails := 0
 		for {
-			if err := exportGRPCSpan(*spanName, *traceID, *spanID); err != nil {
+			if err := exportGRPCSpan(*spanName, *traceID, *spanID, false); err != nil {
 				fails++
 				if fails > 15 {
 					os.Exit(0)
@@ -119,8 +120,8 @@ func main() {
 		time.Sleep(*delay)
 	}
 
-	if *exportGRPC {
-		if err := exportGRPCSpan(*spanName, *traceID, *spanID); err != nil {
+	if *exportGRPC || *exportGRPCLogfmt {
+		if err := exportGRPCSpan(*spanName, *traceID, *spanID, *exportGRPCLogfmt); err != nil {
 			fmt.Fprint(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -171,7 +172,7 @@ func main() {
 	os.Exit(*exit)
 }
 
-func exportGRPCSpan(name, traceID, spanID string) error {
+func exportGRPCSpan(name, traceID, spanID string, logfmtOut bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -180,7 +181,7 @@ func exportGRPCSpan(name, traceID, spanID string) error {
 		return fmt.Errorf("otlp grpc exporter: %w", err)
 	}
 
-	return exportSpan(ctx, name, "grpc-span", traceID, spanID, exp)
+	return exportSpan(ctx, name, "grpc-span", traceID, spanID, exp, logfmtOut)
 }
 
 func exportHTTPSpan(name, traceID, spanID string) error {
@@ -201,10 +202,10 @@ func exportHTTPSpan(name, traceID, spanID string) error {
 		return fmt.Errorf("otlp http exporter: %w", err)
 	}
 
-	return exportSpan(ctx, name, "http-span", traceID, spanID, exp)
+	return exportSpan(ctx, name, "http-span", traceID, spanID, exp, false)
 }
 
-func exportSpan(ctx context.Context, name, msg, traceID, spanID string, exp sdktrace.SpanExporter) error {
+func exportSpan(ctx context.Context, name, msg, traceID, spanID string, exp sdktrace.SpanExporter, logfmtOut bool) error {
 	opts := []sdktrace.TracerProviderOption{sdktrace.WithSyncer(exp)}
 	gen, err := idGenerator(traceID, spanID)
 	if err != nil {
@@ -219,7 +220,11 @@ func exportSpan(ctx context.Context, name, msg, traceID, spanID string, exp sdkt
 
 	_, span := tp.Tracer("praytel-helper").Start(ctx, name)
 	sc := span.SpanContext()
-	fmt.Fprintf(os.Stdout, `{"msg":%q,"trace_id":%q,"span_id":%q}`+"\n", msg, sc.TraceID().String(), sc.SpanID().String())
+	if logfmtOut {
+		fmt.Fprintf(os.Stdout, "level=INFO msg=%q trace_id=%s span_id=%s\n", msg, sc.TraceID().String(), sc.SpanID().String())
+	} else {
+		fmt.Fprintf(os.Stdout, `{"msg":%q,"trace_id":%q,"span_id":%q}`+"\n", msg, sc.TraceID().String(), sc.SpanID().String())
+	}
 	span.End()
 
 	if err := tp.ForceFlush(ctx); err != nil {

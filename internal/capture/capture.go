@@ -11,6 +11,7 @@ import (
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/go-logfmt/logfmt"
 )
 
 const defaultWarnEvery = time.Second
@@ -90,10 +91,18 @@ func parseLine(source domain.Source, body string) parsed {
 	}
 
 	trim := strings.TrimSpace(body)
-	if !looksLikeJSON(trim) {
+	if trim == "" {
 		return out
 	}
 
+	if looksLikeJSON(trim) {
+		return parseJSON(out, trim)
+	}
+
+	return parseLogfmt(out, trim)
+}
+
+func parseJSON(out parsed, trim string) parsed {
 	if !json.Valid([]byte(trim)) {
 		out.malformed = true
 
@@ -112,6 +121,42 @@ func parseLine(source domain.Source, body string) parsed {
 	out.SpanID = meta.SpanID
 
 	return out
+}
+
+func parseLogfmt(out parsed, trim string) parsed {
+	traceID, spanID, ok := logfmtIDs(trim)
+	if !ok {
+		return out
+	}
+
+	out.TraceID = traceID
+	out.SpanID = spanID
+
+	return out
+}
+
+func logfmtIDs(s string) (traceID, spanID string, ok bool) {
+	dec := logfmt.NewDecoder(strings.NewReader(s))
+	if !dec.ScanRecord() {
+		return "", "", false
+	}
+
+	for dec.ScanKeyval() {
+		key := string(dec.Key())
+		val := string(dec.Value())
+		switch key {
+		case "trace_id":
+			traceID = val
+		case "span_id":
+			spanID = val
+		}
+	}
+
+	if traceID == "" && spanID == "" {
+		return "", "", false
+	}
+
+	return traceID, spanID, true
 }
 
 func looksLikeJSON(s string) bool {

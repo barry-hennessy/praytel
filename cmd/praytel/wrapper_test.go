@@ -16,6 +16,7 @@ import (
 
 	"github.com/barry-hennessy/praytel/internal/receiver"
 	"github.com/barry-hennessy/test/sweet"
+	"github.com/go-logfmt/logfmt"
 )
 
 var (
@@ -285,6 +286,44 @@ func TestGRPCExportingChildJoinsJSONLog(t *testing.T) {
 
 			traceID, spanID := jsonTraceSpan(t, line)
 			prefix := line[:brace]
+			if !strings.Contains(prefix, "child-work") {
+				continue
+			}
+			if !strings.Contains(prefix, traceID) || !strings.Contains(prefix, spanID) {
+				t.Fatalf("stream prefix missing joined ids: %q", line)
+			}
+			joined = true
+		}
+		if !joined {
+			t.Fatalf("expected hydrated stream line for child-work, stdout=%q stderr=%q", res.stdout, res.stderr)
+		}
+
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
+func TestGRPCExportingChildJoinsLogfmtLog(t *testing.T) {
+	sweet.Run(t, "gRPC span hydrate appears on the stream with the logfmt log", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "--", childBin, "-export-grpc-span-logfmt", "-span-name", "child-work")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q stdout=%q", res.exit, res.stderr, res.stdout)
+		}
+
+		joined := false
+		for _, line := range strings.Split(res.stdout, "\n") {
+			if !strings.Contains(line, "msg=grpc-span") && !strings.Contains(line, `msg="grpc-span"`) {
+				continue
+			}
+
+			traceID, spanID := logfmtTraceSpan(t, line)
+			bodyStart := strings.Index(line, "level=INFO")
+			if bodyStart < 0 {
+				bodyStart = strings.Index(line, "msg=")
+			}
+			if bodyStart < 0 {
+				t.Fatalf("no logfmt body in %q", line)
+			}
+			prefix := line[:bodyStart]
 			if !strings.Contains(prefix, "child-work") {
 				continue
 			}
@@ -733,6 +772,41 @@ func mustFreePort(t *testing.T) int {
 	}
 
 	return port
+}
+
+func logfmtTraceSpan(t *testing.T, line string) (traceID, spanID string) {
+	t.Helper()
+
+	for _, start := range []string{"level=", "msg=", "trace_id="} {
+		i := strings.Index(line, start)
+		if i < 0 {
+			continue
+		}
+
+		dec := logfmt.NewDecoder(strings.NewReader(line[i:]))
+		if !dec.ScanRecord() {
+			continue
+		}
+
+		var tid, sid string
+		for dec.ScanKeyval() {
+			key := string(dec.Key())
+			val := string(dec.Value())
+			switch key {
+			case "trace_id":
+				tid = val
+			case "span_id":
+				sid = val
+			}
+		}
+		if tid != "" && sid != "" {
+			return tid, sid
+		}
+	}
+
+	t.Fatalf("missing logfmt ids in %q", line)
+
+	return "", ""
 }
 
 func jsonTraceSpan(t *testing.T, line string) (traceID, spanID string) {

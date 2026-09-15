@@ -5,6 +5,7 @@ go 1.26.0
 require (
 	github.com/barry-hennessy/bones v0.0.0
 	github.com/barry-hennessy/test/sweet v0.0.0-20250910120900-6006d6657c2c
+	github.com/go-logfmt/logfmt v0.6.1
 	go.opentelemetry.io/proto/otlp v1.11.0
 	golang.org/x/sync v0.22.0
 	google.golang.org/grpc v1.83.2
