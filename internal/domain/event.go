@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 // Event is a value-copy message from the correlator to renderers.
 // See ARCHITECTURE.md.
 type Event interface {
@@ -13,6 +15,9 @@ type (
 		Name      string
 		Component string
 		Synthetic bool
+		StartTime time.Time
+		EndTime   time.Time
+		Status    SpanStatus
 	}
 	SpanParentLinked struct {
 		TraceID      string
@@ -32,6 +37,9 @@ type (
 		SpanID    string
 		SpanName  string
 		Synthetic bool
+		// Declared IDs are the context carried by the log before final assignment.
+		DeclaredTraceID string
+		DeclaredSpanID  string
 	}
 	LogAssigned struct {
 		ID        string
@@ -41,8 +49,10 @@ type (
 		Synthetic bool
 	}
 	DrainComplete struct{}
-	ForestEvicted struct{}
-	ForestShed    struct{}
+	ForestEvicted struct {
+		TraceID string
+	}
+	ForestShed struct{}
 )
 
 func (SpanUpserted) isEvent()     {}

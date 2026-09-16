@@ -26,6 +26,7 @@ type config struct {
 	maxLogLines  int
 	focus        []string
 	exclude      []string
+	tui          bool
 }
 
 type stringList []string
@@ -62,6 +63,7 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 	drainTimeout := fs.Duration("drain-timeout", 2*time.Second, "hard cap on drain after child exit")
 	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
 	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
+	tuiMode := fs.Bool("tui", false, "render an interactive live trace tree")
 	var focus stringList
 	var exclude stringList
 	fs.Var(&focus, "focus", "admit the span path matching this glob (repeatable, union)")
@@ -94,6 +96,7 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 		maxLogLines:  *maxLogLines,
 		focus:        append([]string(nil), focus...),
 		exclude:      append([]string(nil), exclude...),
+		tui:          *tuiMode,
 	}, nil
 }
 

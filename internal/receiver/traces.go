@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	colltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
 type ingestTraces struct {
@@ -117,6 +119,9 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 					ParentSpanID: hex.EncodeToString(sp.GetParentSpanId()),
 					Name:         sp.GetName(),
 					Component:    component,
+					StartTime:    unixNano(sp.GetStartTimeUnixNano()),
+					EndTime:      unixNano(sp.GetEndTimeUnixNano()),
+					Status:       spanStatus(sp.GetStatus().GetCode()),
 					Ended:        sp.GetEndTimeUnixNano() != 0,
 				})
 			}
@@ -124,4 +129,23 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 	}
 
 	return out
+}
+
+func unixNano(n uint64) time.Time {
+	if n == 0 {
+		return time.Time{}
+	}
+
+	return time.Unix(0, int64(n))
+}
+
+func spanStatus(status tracev1.Status_StatusCode) domain.SpanStatus {
+	switch status {
+	case tracev1.Status_STATUS_CODE_OK:
+		return domain.SpanStatusOK
+	case tracev1.Status_STATUS_CODE_ERROR:
+		return domain.SpanStatusError
+	default:
+		return domain.SpanStatusUnset
+	}
 }

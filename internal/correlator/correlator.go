@@ -75,6 +75,9 @@ type forestSpan struct {
 	synthetic    bool
 	linked       bool
 	ended        bool
+	startTime    time.Time
+	endTime      time.Time
+	status       domain.SpanStatus
 	logs         []domain.LogLine
 }
 
@@ -310,10 +313,12 @@ func (c *Correlator) handleLog(ctx context.Context, line domain.LogLine) {
 
 		c.forest.pending[line.SpanID] = append(c.forest.pending[line.SpanID], line)
 		c.emit(ctx, domain.LogReceived{
-			ID:        id,
-			Body:      line.Body,
-			Source:    line.Source,
-			Component: line.Component,
+			ID:              id,
+			Body:            line.Body,
+			Source:          line.Source,
+			Component:       line.Component,
+			DeclaredTraceID: line.TraceID,
+			DeclaredSpanID:  line.SpanID,
 		})
 
 		return
@@ -360,6 +365,9 @@ func (c *Correlator) handleSpan(ctx context.Context, in domain.Span) {
 		parentSpanID: in.ParentSpanID,
 		name:         in.Name,
 		component:    in.Component,
+		startTime:    in.StartTime,
+		endTime:      in.EndTime,
+		status:       in.Status,
 	}
 	c.forest.spans[in.SpanID] = sp
 
@@ -396,6 +404,15 @@ func (c *Correlator) updateSpan(ctx context.Context, sp *forestSpan, in domain.S
 		}
 		if in.Component != "" {
 			sp.component = in.Component
+		}
+		if !in.StartTime.IsZero() {
+			sp.startTime = in.StartTime
+		}
+		if !in.EndTime.IsZero() {
+			sp.endTime = in.EndTime
+		}
+		if in.Status != domain.SpanStatusUnset {
+			sp.status = in.Status
 		}
 	}
 
@@ -507,14 +524,16 @@ func (c *Correlator) assignmentAtDrain(ctx context.Context, line domain.LogLine)
 
 func (c *Correlator) emitReceivedAssigned(ctx context.Context, line domain.LogLine, sp *forestSpan) {
 	c.emit(ctx, domain.LogReceived{
-		ID:        line.ID,
-		Body:      line.Body,
-		Source:    line.Source,
-		Component: line.Component,
-		TraceID:   sp.traceID,
-		SpanID:    sp.spanID,
-		SpanName:  sp.name,
-		Synthetic: sp.synthetic,
+		ID:              line.ID,
+		Body:            line.Body,
+		Source:          line.Source,
+		Component:       line.Component,
+		TraceID:         sp.traceID,
+		SpanID:          sp.spanID,
+		SpanName:        sp.name,
+		Synthetic:       sp.synthetic,
+		DeclaredTraceID: line.TraceID,
+		DeclaredSpanID:  line.SpanID,
 	})
 	c.emit(ctx, domain.LogAssigned{
 		ID:        line.ID,
@@ -583,7 +602,7 @@ func (c *Correlator) evictTrace(ctx context.Context, traceID string) {
 	}
 
 	delete(c.forest.traces, traceID)
-	c.emit(ctx, domain.ForestEvicted{})
+	c.emit(ctx, domain.ForestEvicted{TraceID: traceID})
 }
 
 func (c *Correlator) spanCount() int {
@@ -693,6 +712,9 @@ func (c *Correlator) emitSpanUpserted(ctx context.Context, sp *forestSpan) {
 		Name:      sp.name,
 		Component: sp.component,
 		Synthetic: sp.synthetic,
+		StartTime: sp.startTime,
+		EndTime:   sp.endTime,
+		Status:    sp.status,
 	})
 }
 

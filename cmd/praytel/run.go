@@ -20,8 +20,13 @@ import (
 	"github.com/barry-hennessy/praytel/internal/filter"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
+	"github.com/barry-hennessy/praytel/internal/render/tui"
 	"golang.org/x/sync/errgroup"
 )
+
+type renderer interface {
+	Run(context.Context) error
+}
 
 func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	ctx, log, span := lt.Start(ctx)
@@ -40,7 +45,13 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 		MaxSpans:    cfg.maxSpans,
 		MaxLogLines: cfg.maxLogLines,
 	})
-	st := stream.New(lt, events, stdout, filt)
+	var view renderer
+	if cfg.tui {
+		view = tui.New(lt, events, stdin, stdout, filt)
+	} else {
+		st := stream.New(lt, events, stdout, filt)
+		view = st
+	}
 
 	rec, err := receiver.Listen(lt, receiver.Ports{
 		GRPC: cfg.grpcPort,
@@ -76,8 +87,10 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 		defer close(corrDone)
 		return corr.Run(gctx)
 	})
+	rendererDone := make(chan struct{})
 	gg.Go(func() error {
-		return st.Run(gctx)
+		defer close(rendererDone)
+		return view.Run(gctx)
 	})
 	gg.Go(func() error {
 		return rec.Serve(gctx)
@@ -96,7 +109,12 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 		_ = capture.Copy(gctx, lt, domain.SourceStderr, errR, corr.Logs(), gate)
 	}()
 
-	code, started, err := startChild(cfg.command, rec.ChildEnv(), stdin, outW, errW)
+	childIn := stdin
+	if cfg.tui {
+		// The terminal belongs to Bubble Tea in interactive mode.
+		childIn = nil
+	}
+	code, started, err := startChild(cfg.command, rec.ChildEnv(), childIn, outW, errW)
 
 	_ = outW.Close()
 	_ = errW.Close()
@@ -113,6 +131,10 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 	}
 	holdTimer := time.NewTimer(hold)
 	<-holdTimer.C
+	if !started {
+		stopRun()
+	}
+	<-rendererDone
 	stopRun()
 
 	waitErr := gg.Wait()
