@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
-	"regexp"
-	"strings"
-	"unicode"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	"github.com/barry-hennessy/praytel/internal/render/format"
 )
 
 type printed struct {
@@ -44,7 +41,7 @@ func New(lt observability.LoggingTracer, events <-chan domain.Event, out io.Writ
 		events: events,
 		filt:   filt,
 		out:    out,
-		color:  colorEnabled(out),
+		color:  format.ColorEnabled(out),
 	}
 }
 
@@ -146,79 +143,19 @@ func needsHydrate(prev printed, as domain.LogAssigned) bool {
 }
 
 func (s Stream) writeLine(source domain.Source, spanName, traceID, spanID, body string) error {
-	spanName = sanitizeField(spanName)
-	traceID = sanitizeField(traceID)
-	spanID = sanitizeField(spanID)
+	spanName = format.SanitizeField(spanName)
+	traceID = format.SanitizeField(traceID)
+	spanID = format.SanitizeField(spanID)
 	if source == domain.SourceOTLP {
-		body = sanitizeField(body)
+		body = format.SanitizeField(body)
 	}
 
 	prefix := fmt.Sprintf("%s %s %s %s ", source, spanName, traceID, spanID)
 	if s.color {
-		prefix = ansiWrap(prefix, colorCode(traceID))
+		prefix = format.ANSIWrap(prefix, format.ColorCode(traceID))
 	}
 
 	_, err := fmt.Fprint(s.out, prefix, body, "\n")
 
 	return err
-}
-
-var ctlSeq = regexp.MustCompile(`\x1b\[[?-]*[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
-
-func sanitizeField(s string) string {
-	if s == "" {
-		return s
-	}
-
-	s = ctlSeq.ReplaceAllString(s, "")
-
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case r == '\t' || r == '\n' || r == '\r':
-			b.WriteByte(' ')
-		case unicode.Is(unicode.Zl, r) || unicode.Is(unicode.Zp, r):
-			b.WriteByte(' ')
-		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
-			continue
-		case unicode.Is(unicode.Bidi_Control, r):
-			continue
-		default:
-			b.WriteRune(r)
-		}
-	}
-
-	return b.String()
-}
-
-func colorEnabled(w io.Writer) bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-
-	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-
-	st, err := f.Stat()
-	if err != nil {
-		return false
-	}
-
-	return st.Mode()&os.ModeCharDevice != 0
-}
-
-func colorCode(id string) int {
-	var h uint32
-	for i := 0; i < len(id); i++ {
-		h = 31*h + uint32(id[i])
-	}
-
-	return int(h%6) + 31
-}
-
-func ansiWrap(s string, code int) string {
-	return fmt.Sprintf("\x1b[%dm%s\x1b[0m", code, s)
 }

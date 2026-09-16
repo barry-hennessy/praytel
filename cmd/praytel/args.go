@@ -18,6 +18,7 @@ var (
 
 type config struct {
 	command      []string
+	tree         bool
 	grpcPort     int
 	httpPort     int
 	drainIdle    time.Duration
@@ -62,6 +63,7 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 	drainTimeout := fs.Duration("drain-timeout", 2*time.Second, "hard cap on drain after child exit")
 	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
 	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
+	tree := fs.Bool("tree", false, "render an indented call-graph tree instead of the append-only stream")
 	var focus stringList
 	var exclude stringList
 	fs.Var(&focus, "focus", "admit the span path matching this glob (repeatable, union)")
@@ -86,6 +88,7 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 
 	return config{
 		command:      command,
+		tree:         *tree,
 		grpcPort:     *grpcPort,
 		httpPort:     *httpPort,
 		drainIdle:    idle,

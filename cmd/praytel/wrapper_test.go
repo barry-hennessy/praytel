@@ -270,6 +270,27 @@ func TestOccupiedDefaultPortDoesNotExecChild(t *testing.T) {
 	})
 }
 
+func TestTreeModePrintsIndentedTrace(t *testing.T) {
+	sweet.Run(t, "--tree prints an indented trace for a gRPC-exporting child", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "--tree", "--", childBin, "-export-grpc-span", "-span-name", "child-work")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q stdout=%q", res.exit, res.stderr, res.stdout)
+		}
+
+		if !strings.Contains(res.stdout, "=== trace") {
+			t.Fatalf("missing trace header: stdout=%q stderr=%q", res.stdout, res.stderr)
+		}
+		if !strings.Contains(res.stdout, "child-work") {
+			t.Fatalf("missing span name: stdout=%q stderr=%q", res.stdout, res.stderr)
+		}
+		if !strings.Contains(res.stdout, "grpc-span") {
+			t.Fatalf("missing joined log body: stdout=%q stderr=%q", res.stdout, res.stderr)
+		}
+
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
 func TestGRPCExportingChildJoinsJSONLog(t *testing.T) {
 	sweet.Run(t, "gRPC span hydrate appears on the stream with the JSON log", wrapFactory, func(t *testing.T, d wrapDeps) {
 		res := runPraytel(t, d.dir, "--", childBin, "-export-grpc-span", "-span-name", "child-work")

@@ -79,6 +79,11 @@ func (f *Filter) passAll() bool {
 	return len(f.focus) == 0 && len(f.exclude) == 0
 }
 
+// PassAll reports whether focus and exclude are both unset.
+func (f *Filter) PassAll() bool {
+	return f.passAll()
+}
+
 // Observe updates the projection from an event and returns log IDs
 // that entered the live-admit set for the first time.
 func (f *Filter) Observe(ev domain.Event) []string {

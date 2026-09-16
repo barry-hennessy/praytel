@@ -20,6 +20,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/filter"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
+	"github.com/barry-hennessy/praytel/internal/render/tree"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -41,6 +42,7 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 		MaxLogLines: cfg.maxLogLines,
 	})
 	st := stream.New(lt, events, stdout, filt)
+	tr := tree.New(lt, events, stdout, filt)
 
 	rec, err := receiver.Listen(lt, receiver.Ports{
 		GRPC: cfg.grpcPort,
@@ -77,6 +79,10 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 		return corr.Run(gctx)
 	})
 	gg.Go(func() error {
+		if cfg.tree {
+			return tr.Run(gctx)
+		}
+
 		return st.Run(gctx)
 	})
 	gg.Go(func() error {
