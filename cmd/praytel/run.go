@@ -20,10 +20,22 @@ import (
 	"github.com/barry-hennessy/praytel/internal/filter"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
+	"github.com/barry-hennessy/praytel/internal/render/tui"
 	"golang.org/x/sync/errgroup"
 )
 
-func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+type renderer interface {
+	Run(context.Context) error
+}
+
+func run(
+	ctx context.Context,
+	lt observability.LoggingTracer,
+	cfg config,
+	stdin io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+) (int, error) {
 	ctx, log, span := lt.Start(ctx)
 	defer span.End()
 
@@ -40,7 +52,13 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 		MaxSpans:    cfg.maxSpans,
 		MaxLogLines: cfg.maxLogLines,
 	})
-	st := stream.New(lt, events, stdout, filt)
+	var view renderer
+	if cfg.tui {
+		view = tui.New(lt, events, stdin, stdout, filt)
+	} else {
+		st := stream.New(lt, events, stdout, filt)
+		view = st
+	}
 
 	rec, err := receiver.Listen(lt, receiver.Ports{
 		GRPC: cfg.grpcPort,
@@ -67,20 +85,27 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 
 	gate := capture.NewWarnGate(0)
 
-	runCtx, stopRun := context.WithCancel(context.Background())
+	// SIGINT and SIGTERM cancel the root context while they are forwarded to
+	// the child. Keep data collection alive long enough to capture its shutdown
+	// output and drain OTLP. The renderer still receives the root context.
+	runCtx, stopRun := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopRun()
 
-	gg, gctx := errgroup.WithContext(runCtx)
-	corrDone := make(chan struct{})
-	gg.Go(func() error {
-		defer close(corrDone)
-		return corr.Run(gctx)
+	var corrGroup errgroup.Group
+	corrGroup.Go(func() error {
+		return corr.Run(runCtx)
 	})
-	gg.Go(func() error {
-		return st.Run(gctx)
+
+	renderCtx, stopRender := context.WithCancel(ctx)
+	defer stopRender()
+	var renderGroup errgroup.Group
+	renderGroup.Go(func() error {
+		return view.Run(renderCtx)
 	})
-	gg.Go(func() error {
-		return rec.Serve(gctx)
+
+	var receiverGroup errgroup.Group
+	receiverGroup.Go(func() error {
+		return rec.Serve(runCtx)
 	})
 
 	var capWG sync.WaitGroup
@@ -88,21 +113,46 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 	go func() {
 		defer capWG.Done()
 		defer outR.Close()
-		_ = capture.Copy(gctx, lt, domain.SourceStdout, outR, corr.Logs(), gate)
+		_ = capture.Copy(
+			runCtx,
+			lt,
+			domain.SourceStdout,
+			outR,
+			corr.Logs(),
+			gate,
+		)
 	}()
 	go func() {
 		defer capWG.Done()
 		defer errR.Close()
-		_ = capture.Copy(gctx, lt, domain.SourceStderr, errR, corr.Logs(), gate)
+		_ = capture.Copy(
+			runCtx,
+			lt,
+			domain.SourceStderr,
+			errR,
+			corr.Logs(),
+			gate,
+		)
 	}()
 
-	code, started, err := startChild(cfg.command, rec.ChildEnv(), stdin, outW, errW)
+	childIn := stdin
+	if cfg.tui {
+		// The terminal belongs to Bubble Tea in interactive mode.
+		childIn = nil
+	}
+	code, started, err := startChild(
+		cfg.command,
+		rec.ChildEnv(),
+		childIn,
+		outW,
+		errW,
+	)
 
 	_ = outW.Close()
 	_ = errW.Close()
 	capWG.Wait()
 	corr.Stop()
-	<-corrDone
+	corrErr := corrGroup.Wait()
 	rec.Drop()
 
 	// Keep the listener in drop mode briefly so a late export hits warn
@@ -114,10 +164,16 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 	holdTimer := time.NewTimer(hold)
 	<-holdTimer.C
 	stopRun()
+	receiverErr := receiverGroup.Wait()
+	if !started {
+		stopRender()
+	}
+	renderErr := renderGroup.Wait()
 
-	waitErr := gg.Wait()
-	if waitErr != nil {
-		log.Error("lifecycle error", "err", waitErr)
+	for _, lifecycleErr := range []error{corrErr, receiverErr, renderErr} {
+		if lifecycleErr != nil {
+			log.Error("lifecycle error", "err", lifecycleErr)
+		}
 	}
 
 	if !started {
@@ -135,7 +191,13 @@ func run(ctx context.Context, lt observability.LoggingTracer, cfg config, stdin 
 	return code, nil
 }
 
-func startChild(command []string, extraEnv []string, stdin io.Reader, stdout, stderr *os.File) (int, bool, error) {
+func startChild(
+	command []string,
+	extraEnv []string,
+	stdin io.Reader,
+	stdout *os.File,
+	stderr *os.File,
+) (int, bool, error) {
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout

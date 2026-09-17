@@ -28,3 +28,13 @@ func TestParseRepeatableFocusExclude(t *testing.T) {
 		}
 	})
 }
+
+func TestParseTUI(t *testing.T) {
+	cfg, err := parseArgs([]string{"--tui", "--", "true"}, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.tui {
+		t.Fatal("--tui was not enabled")
+	}
+}

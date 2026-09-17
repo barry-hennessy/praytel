@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"net/http"
 	"sync/atomic"
+	"time"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	colltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
 type ingestTraces struct {
@@ -19,7 +21,10 @@ type ingestTraces struct {
 	drop  *atomic.Bool
 }
 
-func (s ingestTraces) Export(ctx context.Context, req *colltrace.ExportTraceServiceRequest) (*colltrace.ExportTraceServiceResponse, error) {
+func (s ingestTraces) Export(
+	ctx context.Context,
+	req *colltrace.ExportTraceServiceRequest,
+) (*colltrace.ExportTraceServiceResponse, error) {
 	ctx, log, span := s.lt.Start(ctx)
 	defer span.End()
 
@@ -58,7 +63,11 @@ func (s ingestTraces) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if err := s.forward(ctx, &in); err != nil {
-		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		http.Error(
+			w,
+			http.StatusText(http.StatusServiceUnavailable),
+			http.StatusServiceUnavailable,
+		)
 		return
 	}
 
@@ -69,7 +78,10 @@ func (s ingestTraces) dropping() bool {
 	return s.drop != nil && s.drop.Load()
 }
 
-func (s ingestTraces) forward(ctx context.Context, req *colltrace.ExportTraceServiceRequest) error {
+func (s ingestTraces) forward(
+	ctx context.Context,
+	req *colltrace.ExportTraceServiceRequest,
+) error {
 	if s.spans == nil {
 		return nil
 	}
@@ -110,6 +122,13 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 				if sp == nil || len(sp.GetSpanId()) == 0 {
 					continue
 				}
+				var startTime, endTime time.Time
+				if n := sp.GetStartTimeUnixNano(); n != 0 {
+					startTime = time.Unix(0, int64(n))
+				}
+				if n := sp.GetEndTimeUnixNano(); n != 0 {
+					endTime = time.Unix(0, int64(n))
+				}
 
 				out = append(out, domain.Span{
 					TraceID:      hex.EncodeToString(sp.GetTraceId()),
@@ -117,6 +136,9 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 					ParentSpanID: hex.EncodeToString(sp.GetParentSpanId()),
 					Name:         sp.GetName(),
 					Component:    component,
+					StartTime:    startTime,
+					EndTime:      endTime,
+					Status:       spanStatus(sp.GetStatus().GetCode()),
 					Ended:        sp.GetEndTimeUnixNano() != 0,
 				})
 			}
@@ -124,4 +146,15 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 	}
 
 	return out
+}
+
+func spanStatus(status tracev1.Status_StatusCode) domain.SpanStatus {
+	switch status {
+	case tracev1.Status_STATUS_CODE_OK:
+		return domain.SpanStatusOK
+	case tracev1.Status_STATUS_CODE_ERROR:
+		return domain.SpanStatusError
+	default:
+		return domain.SpanStatusUnset
+	}
 }

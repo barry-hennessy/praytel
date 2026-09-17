@@ -154,6 +154,8 @@ func TestGRPCTracesBecomeDomainSpans(t *testing.T) {
 		traceID := bytes.Repeat([]byte{0xab}, 16)
 		spanID := bytes.Repeat([]byte{0xcd}, 8)
 		parentID := bytes.Repeat([]byte{0xef}, 8)
+		start := uint64(1_000_000_000)
+		end := start + uint64(25*time.Millisecond)
 
 		_, err = colltrace.NewTraceServiceClient(conn).Export(ctx, &colltrace.ExportTraceServiceRequest{
 			ResourceSpans: []*tracev1.ResourceSpans{{
@@ -167,11 +169,13 @@ func TestGRPCTracesBecomeDomainSpans(t *testing.T) {
 				},
 				ScopeSpans: []*tracev1.ScopeSpans{{
 					Spans: []*tracev1.Span{{
-						TraceId:         traceID,
-						SpanId:          spanID,
-						ParentSpanId:    parentID,
-						Name:            "unit-span",
-						EndTimeUnixNano: 1,
+						TraceId:           traceID,
+						SpanId:            spanID,
+						ParentSpanId:      parentID,
+						Name:              "unit-span",
+						StartTimeUnixNano: start,
+						EndTimeUnixNano:   end,
+						Status:            &tracev1.Status{Code: tracev1.Status_STATUS_CODE_ERROR},
 					}},
 				}},
 			}},
@@ -199,6 +203,12 @@ func TestGRPCTracesBecomeDomainSpans(t *testing.T) {
 			}
 			if sp.Component != "helper-svc" {
 				t.Fatalf("component=%q", sp.Component)
+			}
+			if sp.StartTime.UnixNano() != int64(start) || sp.EndTime.UnixNano() != int64(end) {
+				t.Fatalf("times=%s..%s", sp.StartTime, sp.EndTime)
+			}
+			if sp.Status != domain.SpanStatusError {
+				t.Fatalf("status=%v", sp.Status)
 			}
 		case <-ctx.Done():
 			t.Fatal("timed out waiting for domain span")
