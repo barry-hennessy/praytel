@@ -82,7 +82,8 @@ type Model struct {
 	quitting bool
 }
 
-// NewModel constructs a model. It is exported to support embedding and deterministic tests.
+// NewModel constructs a model. It is exported for embedding and deterministic
+// tests.
 func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
 	if filt == nil {
 		filt, _ = filter.New(filter.Query{})
@@ -111,7 +112,9 @@ func waitEvent(events <-chan domain.Event) tea.Cmd {
 }
 
 func tick() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -214,7 +217,9 @@ func (m *Model) apply(ev domain.Event) {
 			old := log.spanID
 			log.spanID = ev.SpanID
 			m.attachLog(ev.ID, old, ev.SpanID)
-			if sp := m.spans[old]; old != ev.SpanID && sp != nil && sp.declared && len(sp.logs) == 0 {
+			sp := m.spans[old]
+			if old != ev.SpanID && sp != nil &&
+				sp.declared && len(sp.logs) == 0 {
 				delete(m.spans, old)
 			}
 		}
@@ -305,13 +310,19 @@ func (m Model) treeLines() []string {
 		if !m.filt.InFocus(sp.id) {
 			continue
 		}
-		if parent := m.spans[sp.parentID]; sp.parentID != "" && parent != nil && m.filt.InFocus(parent.id) {
+		parent := m.spans[sp.parentID]
+		if sp.parentID != "" && parent != nil &&
+			m.filt.InFocus(parent.id) {
 			children[sp.parentID] = append(children[sp.parentID], sp)
 		} else {
 			roots = append(roots, sp)
 		}
 	}
-	byOrder := func(s []*spanView) { sort.SliceStable(s, func(i, j int) bool { return s[i].order < s[j].order }) }
+	byOrder := func(s []*spanView) {
+		sort.SliceStable(s, func(i, j int) bool {
+			return s[i].order < s[j].order
+		})
+	}
 	byOrder(roots)
 	for id := range children {
 		byOrder(children[id])
@@ -326,7 +337,12 @@ func (m Model) treeLines() []string {
 			if m.mode == searchTraces && !traceMatches[root.traceID] {
 				continue
 			}
-			if m.mode == searchLogs && !m.branchHasLog(root, children, logMatches, make(map[string]bool)) {
+			if m.mode == searchLogs && !m.branchHasLog(
+				root,
+				children,
+				logMatches,
+				make(map[string]bool),
+			) {
 				continue
 			}
 		}
@@ -334,25 +350,51 @@ func (m Model) treeLines() []string {
 	}
 	if len(lines) == 0 {
 		if m.query == "" {
-			return []string{lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  Waiting for traces and logs…")}
+			return []string{
+				lipgloss.NewStyle().
+					Foreground(lipgloss.Color("245")).
+					Render("  Waiting for traces and logs…"),
+			}
 		}
-		return []string{lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("  No matches")}
+		return []string{
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color("245")).
+				Render("  No matches"),
+		}
 	}
 	return lines
 }
 
-func (m Model) renderSpan(lines *[]string, sp *spanView, depth int, children map[string][]*spanView, logMatches map[string]bool, visited map[string]bool) {
+func (m Model) renderSpan(
+	lines *[]string,
+	sp *spanView,
+	depth int,
+	children map[string][]*spanView,
+	logMatches map[string]bool,
+	visited map[string]bool,
+) {
 	if visited[sp.id] {
 		return
 	}
 	visited[sp.id] = true
-	if m.mode == searchLogs && m.query != "" && !m.branchHasLog(sp, children, logMatches, make(map[string]bool)) {
+	if m.mode == searchLogs && m.query != "" && !m.branchHasLog(
+		sp,
+		children,
+		logMatches,
+		make(map[string]bool),
+	) {
 		return
 	}
 
 	prefix := m.bars(depth, sp.closed)
 	symbol, style := m.state(sp)
-	header := fmt.Sprintf("%s%s %s %s", prefix, spanLabel(sp), style.Render(symbol), m.duration(sp))
+	header := fmt.Sprintf(
+		"%s%s %s %s",
+		prefix,
+		spanLabel(sp),
+		style.Render(symbol),
+		m.duration(sp),
+	)
 	*lines = append(*lines, header)
 	for _, id := range sp.logs {
 		log := m.logs[id]
@@ -360,7 +402,11 @@ func (m Model) renderSpan(lines *[]string, sp *spanView, depth int, children map
 			continue
 		}
 		body := clean(log.body)
-		*lines = append(*lines, m.bars(depth, sp.closed)+"   "+lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render(body))
+		line := m.bars(depth, sp.closed) + "   " +
+			lipgloss.NewStyle().
+				Foreground(lipgloss.Color("252")).
+				Render(body)
+		*lines = append(*lines, line)
 	}
 	for _, child := range children[sp.id] {
 		m.renderSpan(lines, child, depth+1, children, logMatches, visited)
@@ -374,7 +420,11 @@ func (m Model) bars(depth int, closed bool) string {
 		if closed && i == depth {
 			bar = "┃"
 		}
-		b.WriteString(lipgloss.NewStyle().Foreground(depthColors[i%len(depthColors)]).Render(bar))
+		b.WriteString(
+			lipgloss.NewStyle().
+				Foreground(depthColors[i%len(depthColors)]).
+				Render(bar),
+		)
 		b.WriteByte(' ')
 	}
 	return b.String()
@@ -389,7 +439,9 @@ func (m Model) state(sp *spanView) (string, lipgloss.Style) {
 	}
 	spinner := []string{"◐", "◓", "◑", "◒"}
 	i := int(m.now.UnixMilli()/150) % len(spinner)
-	return spinner[i], lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true)
+	return spinner[i], lipgloss.NewStyle().
+		Foreground(lipgloss.Color("214")).
+		Bold(true)
 }
 
 func (m Model) duration(sp *spanView) string {
@@ -470,7 +522,12 @@ func (m Model) matchingLogs() map[string]bool {
 	return out
 }
 
-func (m Model) branchHasLog(sp *spanView, children map[string][]*spanView, matches map[string]bool, seen map[string]bool) bool {
+func (m Model) branchHasLog(
+	sp *spanView,
+	children map[string][]*spanView,
+	matches map[string]bool,
+	seen map[string]bool,
+) bool {
 	if seen[sp.id] {
 		return false
 	}
@@ -531,13 +588,29 @@ func (m Model) panel() string {
 	if m.done {
 		state = "complete"
 	}
-	line := fmt.Sprintf(" %s  %s   › %s", traceStyle.Render("traces"), logStyle.Render("logs"), m.query)
-	help := fmt.Sprintf(" tab mode • ↑/↓ scroll • esc clear • ctrl+q quit • %s", state)
+	line := fmt.Sprintf(
+		" %s  %s   › %s",
+		traceStyle.Render("traces"),
+		logStyle.Render("logs"),
+		m.query,
+	)
+	help := fmt.Sprintf(
+		" tab mode • ↑/↓ scroll • esc clear • ctrl+q quit • %s",
+		state,
+	)
+	helpColor := lipgloss.Color("241")
 	if m.warning != "" {
 		help = " " + m.warning + " • " + state
-		return lipgloss.NewStyle().BorderTop(true).BorderStyle(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("240")).Width(max(1, m.width)).Render(line + "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(help))
+		helpColor = lipgloss.Color("214")
 	}
-	return lipgloss.NewStyle().BorderTop(true).BorderStyle(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("240")).Width(max(1, m.width)).Render(line + "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(help))
+	help = lipgloss.NewStyle().Foreground(helpColor).Render(help)
+
+	return lipgloss.NewStyle().
+		BorderTop(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Width(max(1, m.width)).
+		Render(line + "\n" + help)
 }
 
 // TUI renders the event stream as an interactive live tree.
@@ -549,7 +622,13 @@ type TUI struct {
 	out    io.Writer
 }
 
-func New(lt observability.LoggingTracer, events <-chan domain.Event, in io.Reader, out io.Writer, filt *filter.Filter) TUI {
+func New(
+	lt observability.LoggingTracer,
+	events <-chan domain.Event,
+	in io.Reader,
+	out io.Writer,
+	filt *filter.Filter,
+) TUI {
 	return TUI{lt: lt.Name("tui"), events: events, filt: filt, in: in, out: out}
 }
 
@@ -560,7 +639,13 @@ func (t TUI) Run(ctx context.Context) error {
 		lipgloss.SetColorProfile(termenv.ANSI256)
 	}
 
-	p := tea.NewProgram(NewModel(t.events, t.filt), tea.WithContext(ctx), tea.WithInput(t.in), tea.WithOutput(t.out), tea.WithAltScreen())
+	p := tea.NewProgram(
+		NewModel(t.events, t.filt),
+		tea.WithContext(ctx),
+		tea.WithInput(t.in),
+		tea.WithOutput(t.out),
+		tea.WithAltScreen(),
+	)
 	if _, err := p.Run(); err != nil {
 		log.Error("run tui", "err", err)
 		return err
