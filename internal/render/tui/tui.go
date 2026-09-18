@@ -15,6 +15,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/filter"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 )
 
@@ -564,6 +565,10 @@ func fuzzy(needle, haystack string) bool {
 }
 
 func clean(s string) string {
+	// capture already strips ANSI from stdout/stderr, but OTLP log bodies
+	// bypass that path, so strip here too rather than leaving stray CSI
+	// text (e.g. "[2m") behind when only the ESC byte gets removed.
+	s = ansi.Strip(s)
 	return strings.Map(func(r rune) rune {
 		if r == '\t' {
 			return ' '

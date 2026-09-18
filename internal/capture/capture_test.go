@@ -194,6 +194,35 @@ func TestValidJSONExtractsIDsWithoutWarn(t *testing.T) {
 	})
 }
 
+func TestAnsiColorizedConsoleLineIsStrippedAndExtractsIDs(t *testing.T) {
+	sweet.Run(t, "zerolog-style colorized console output loses its ANSI codes and still yields ids", capFactory, func(t *testing.T, d capDeps) {
+		out := make(chan domain.LogLine, 1)
+		esc := "\x1b"
+		body := esc + "[2mSep 18 11:09:23.508" + esc + "[0m " +
+			esc + "[93mWRN" + esc + "[0m " +
+			esc + "[2menergy-meterpoints/appointment.go:164" + esc + "[0m " +
+			"appointment service using stub adaptors " +
+			esc + "[36mtrace_id=" + esc + "[0m" + esc + "[1mabc123" + esc + "[0m " +
+			esc + "[36mspan_id=" + esc + "[0m" + esc + "[1mdef456" + esc + "[0m"
+
+		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		if err != nil {
+			t.Fatalf("Copy: %v", err)
+		}
+
+		line := recvLine(t, out)
+		if line.TraceID != "abc123" || line.SpanID != "def456" {
+			t.Fatalf("ids %#v", line)
+		}
+		if strings.Contains(line.Body, "\x1b") || strings.Contains(line.Body, "[2m") || strings.Contains(line.Body, "[0m") {
+			t.Fatalf("body still contains ANSI codes: %q", line.Body)
+		}
+		if !strings.Contains(line.Body, "appointment service using stub adaptors") {
+			t.Fatalf("body lost its message text: %q", line.Body)
+		}
+	})
+}
+
 func TestEOFWithoutNewline(t *testing.T) {
 	sweet.Run(t, "last line without newline is kept", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)

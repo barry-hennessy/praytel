@@ -11,6 +11,7 @@ import (
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/go-logfmt/logfmt"
 )
 
@@ -83,6 +84,13 @@ type parsed struct {
 }
 
 func parseLine(source domain.Source, body string) parsed {
+	// Pretty console writers (zerolog, slog console handlers) colorize
+	// key=value tokens with ANSI codes wrapped around them, which both
+	// breaks logfmt key matching (e.g. "trace_id" arrives split around
+	// escape sequences) and shows up as visible garbage on screen. Strip
+	// it once, up front, so both parsing and display work on plain text.
+	body = ansi.Strip(body)
+
 	out := parsed{
 		LogLine: domain.LogLine{
 			Body:   body,
