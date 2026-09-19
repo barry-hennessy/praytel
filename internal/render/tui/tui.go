@@ -35,19 +35,20 @@ var depthColors = []lipgloss.Color{
 }
 
 type spanView struct {
-	id        string
-	traceID   string
-	parentID  string
-	name      string
-	component string
-	declared  bool
-	start     time.Time
-	end       time.Time
-	observed  time.Time
-	status    domain.SpanStatus
-	closed    bool
-	order     int
-	logs      []string
+	id         string
+	traceID    string
+	parentID   string
+	name       string
+	component  string
+	declared   bool
+	start      time.Time
+	end        time.Time
+	observed   time.Time
+	status     domain.SpanStatus
+	closed     bool
+	order      int
+	attributes []domain.Attr
+	logs       []string
 }
 
 type logView struct {
@@ -193,6 +194,7 @@ func (m *Model) apply(ev domain.Event) {
 		sp.start = ev.StartTime
 		sp.end = ev.EndTime
 		sp.status = ev.Status
+		sp.attributes = ev.Attributes
 	case domain.SpanParentLinked:
 		m.ensureSpan(ev.SpanID).parentID = ev.ParentSpanID
 	case domain.SpanClosed:
@@ -397,6 +399,9 @@ func (m Model) renderSpan(
 		m.duration(sp),
 	)
 	*lines = append(*lines, header)
+	if len(sp.attributes) > 0 {
+		*lines = append(*lines, m.bars(depth, sp.closed)+attributesLine(sp.attributes))
+	}
 	for _, id := range sp.logs {
 		log := m.logs[id]
 		if log == nil || (m.mode == searchLogs && m.query != "" && !logMatches[id]) {
@@ -429,6 +434,20 @@ func (m Model) bars(depth int, closed bool) string {
 		b.WriteByte(' ')
 	}
 	return b.String()
+}
+
+// attributesLine renders a span's attributes on one faint, italic line so
+// they read as metadata attached to the header above rather than as a log
+// entry (which is plain-styled and indented one level further in).
+func attributesLine(attrs []domain.Attr) string {
+	parts := make([]string, 0, len(attrs))
+	for _, a := range attrs {
+		parts = append(parts, clean(a.Key)+"="+clean(a.Value))
+	}
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("244")).
+		Italic(true).
+		Render(strings.Join(parts, "  "))
 }
 
 func (m Model) state(sp *spanView) (string, lipgloss.Style) {

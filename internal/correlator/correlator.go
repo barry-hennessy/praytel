@@ -78,6 +78,7 @@ type forestSpan struct {
 	startTime    time.Time
 	endTime      time.Time
 	status       domain.SpanStatus
+	attributes   []domain.Attr
 	logs         []domain.LogLine
 }
 
@@ -368,6 +369,7 @@ func (c *Correlator) handleSpan(ctx context.Context, in domain.Span) {
 		startTime:    in.StartTime,
 		endTime:      in.EndTime,
 		status:       in.Status,
+		attributes:   in.Attributes,
 	}
 	c.forest.spans[in.SpanID] = sp
 
@@ -413,6 +415,9 @@ func (c *Correlator) updateSpan(ctx context.Context, sp *forestSpan, in domain.S
 		}
 		if in.Status != domain.SpanStatusUnset {
 			sp.status = in.Status
+		}
+		if len(in.Attributes) > 0 {
+			sp.attributes = in.Attributes
 		}
 	}
 
@@ -707,14 +712,15 @@ func (c *Correlator) newSynthSpan(traceID, name string) *forestSpan {
 
 func (c *Correlator) emitSpanUpserted(ctx context.Context, sp *forestSpan) {
 	c.emit(ctx, domain.SpanUpserted{
-		TraceID:   sp.traceID,
-		SpanID:    sp.spanID,
-		Name:      sp.name,
-		Component: sp.component,
-		Synthetic: sp.synthetic,
-		StartTime: sp.startTime,
-		EndTime:   sp.endTime,
-		Status:    sp.status,
+		TraceID:    sp.traceID,
+		SpanID:     sp.spanID,
+		Name:       sp.name,
+		Component:  sp.component,
+		Synthetic:  sp.synthetic,
+		StartTime:  sp.startTime,
+		EndTime:    sp.endTime,
+		Status:     sp.status,
+		Attributes: sp.attributes,
 	})
 }
 

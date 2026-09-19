@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"github.com/barry-hennessy/bones/observability"
@@ -160,6 +161,20 @@ func anyValueString(av *commonv1.AnyValue) string {
 		return strconv.FormatBool(v.BoolValue)
 	case *commonv1.AnyValue_BytesValue:
 		return hex.EncodeToString(v.BytesValue)
+	case *commonv1.AnyValue_ArrayValue:
+		vals := v.ArrayValue.GetValues()
+		parts := make([]string, len(vals))
+		for i, e := range vals {
+			parts[i] = anyValueString(e)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case *commonv1.AnyValue_KvlistValue:
+		kvs := v.KvlistValue.GetValues()
+		parts := make([]string, len(kvs))
+		for i, kv := range kvs {
+			parts[i] = kv.GetKey() + "=" + anyValueString(kv.GetValue())
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
 	default:
 		return av.GetStringValue()
 	}

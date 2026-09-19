@@ -10,6 +10,7 @@ import (
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	colltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	commonv1 "go.opentelemetry.io/proto/otlp/common/v1"
 	tracev1 "go.opentelemetry.io/proto/otlp/trace/v1"
 )
 
@@ -139,12 +140,28 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 					StartTime:    startTime,
 					EndTime:      endTime,
 					Status:       spanStatus(sp.GetStatus().GetCode()),
+					Attributes:   spanAttributes(sp.GetAttributes()),
 					Ended:        sp.GetEndTimeUnixNano() != 0,
 				})
 			}
 		}
 	}
 
+	return out
+}
+
+func spanAttributes(kvs []*commonv1.KeyValue) []domain.Attr {
+	if len(kvs) == 0 {
+		return nil
+	}
+
+	out := make([]domain.Attr, 0, len(kvs))
+	for _, kv := range kvs {
+		if kv == nil || kv.GetKey() == "" {
+			continue
+		}
+		out = append(out, domain.Attr{Key: kv.GetKey(), Value: anyValueString(kv.GetValue())})
+	}
 	return out
 }
 

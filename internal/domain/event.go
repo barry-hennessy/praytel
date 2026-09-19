@@ -10,14 +10,15 @@ type Event interface {
 
 type (
 	SpanUpserted struct {
-		TraceID   string
-		SpanID    string
-		Name      string
-		Component string
-		Synthetic bool
-		StartTime time.Time
-		EndTime   time.Time
-		Status    SpanStatus
+		TraceID    string
+		SpanID     string
+		Name       string
+		Component  string
+		Synthetic  bool
+		StartTime  time.Time
+		EndTime    time.Time
+		Status     SpanStatus
+		Attributes []Attr
 	}
 	SpanParentLinked struct {
 		TraceID      string

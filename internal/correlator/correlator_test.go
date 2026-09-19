@@ -94,13 +94,20 @@ func TestUntaggedLogAssignedToGlobalOrphan(t *testing.T) {
 	})
 }
 
-func TestSpanComponentCopiedOnUpsert(t *testing.T) {
-	sweet.Run(t, "span resource component is copied onto SpanUpserted", correlatorFactory, func(t *testing.T, d corrDeps) {
-		d.c.Spans() <- domain.Span{TraceID: "t1", SpanID: "s1", Name: "work", Component: "billing", Ended: true}
+func TestSpanComponentAndAttributesCopiedOnUpsert(t *testing.T) {
+	sweet.Run(t, "span resource component and attributes are copied onto SpanUpserted", correlatorFactory, func(t *testing.T, d corrDeps) {
+		d.c.Spans() <- domain.Span{
+			TraceID: "t1", SpanID: "s1", Name: "work", Component: "billing",
+			Attributes: []domain.Attr{{Key: "http.method", Value: "GET"}},
+			Ended:      true,
+		}
 
 		up := mustUpserted(t, d.out)
 		if up.Component != "billing" || up.Name != "work" {
 			t.Fatalf("upsert %#v", up)
+		}
+		if len(up.Attributes) != 1 || up.Attributes[0].Key != "http.method" || up.Attributes[0].Value != "GET" {
+			t.Fatalf("attributes=%#v", up.Attributes)
 		}
 	})
 }

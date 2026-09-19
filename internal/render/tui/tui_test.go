@@ -47,6 +47,54 @@ func TestTreeRendersLiveStateDurationLogsAndNesting(t *testing.T) {
 	}
 }
 
+func TestTreeRendersAttributesUnderHeaderNotAsLogLine(t *testing.T) {
+	m := NewModel(nil, nil)
+	m.height = 12
+	m.now = time.Unix(20, 0)
+	m.apply(domain.SpanUpserted{
+		TraceID: "trace-1", SpanID: "root", Name: "request", Component: "api",
+		StartTime:  time.Unix(15, 0),
+		Attributes: []domain.Attr{{Key: "http.method", Value: "GET"}, {Key: "http.status_code", Value: "200"}},
+	})
+	m.apply(domain.LogReceived{ID: "1", SpanID: "root", Body: "started"})
+
+	lines := m.treeLines()
+
+	headerIdx := -1
+	attrIdx := -1
+	logIdx := -1
+	for i, line := range lines {
+		switch {
+		case strings.Contains(line, "api.request"):
+			headerIdx = i
+		case strings.Contains(line, "http.method=GET"):
+			attrIdx = i
+		case strings.Contains(line, "started"):
+			logIdx = i
+		}
+	}
+	if headerIdx == -1 || attrIdx == -1 || logIdx == -1 {
+		t.Fatalf("missing header/attr/log line:\n%s", strings.Join(lines, "\n"))
+	}
+	if attrIdx != headerIdx+1 {
+		t.Fatalf("attribute line not directly under header: header=%d attr=%d", headerIdx, attrIdx)
+	}
+	if attrIdx >= logIdx {
+		t.Fatalf("attribute line should render before log lines: attr=%d log=%d", attrIdx, logIdx)
+	}
+	if !strings.Contains(lines[attrIdx], "http.status_code=200") {
+		t.Fatalf("second attribute missing from attribute line:\n%s", lines[attrIdx])
+	}
+
+	prefix := m.bars(0, false)
+	if !strings.HasPrefix(lines[attrIdx], prefix+"http.method") {
+		t.Fatalf("attribute line not flush under header (indented like a log line instead):\n%q", lines[attrIdx])
+	}
+	if !strings.HasPrefix(lines[logIdx], prefix+"   ") {
+		t.Fatalf("log line lost its extra indent:\n%q", lines[logIdx])
+	}
+}
+
 func TestSearchModesChooseTracesOrMatchingLogs(t *testing.T) {
 	m := NewModel(nil, nil)
 	m.height = 12

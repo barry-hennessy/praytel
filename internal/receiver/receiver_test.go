@@ -176,6 +176,12 @@ func TestGRPCTracesBecomeDomainSpans(t *testing.T) {
 						StartTimeUnixNano: start,
 						EndTimeUnixNano:   end,
 						Status:            &tracev1.Status{Code: tracev1.Status_STATUS_CODE_ERROR},
+						Attributes: []*commonv1.KeyValue{{
+							Key: "http.method",
+							Value: &commonv1.AnyValue{
+								Value: &commonv1.AnyValue_StringValue{StringValue: "GET"},
+							},
+						}},
 					}},
 				}},
 			}},
@@ -207,8 +213,76 @@ func TestGRPCTracesBecomeDomainSpans(t *testing.T) {
 			if sp.StartTime.UnixNano() != int64(start) || sp.EndTime.UnixNano() != int64(end) {
 				t.Fatalf("times=%s..%s", sp.StartTime, sp.EndTime)
 			}
+			if len(sp.Attributes) != 1 || sp.Attributes[0].Key != "http.method" || sp.Attributes[0].Value != "GET" {
+				t.Fatalf("attributes=%#v", sp.Attributes)
+			}
 			if sp.Status != domain.SpanStatusError {
 				t.Fatalf("status=%v", sp.Status)
+			}
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for domain span")
+		}
+	})
+}
+
+func TestGRPCTraceArrayAttributesRenderTheirValues(t *testing.T) {
+	sweet.Run(t, "StringSlice-kind (and other array) attributes render, not blank", func(t *testing.T) recvDeps {
+		t.Helper()
+
+		return startRecv(t, make(chan domain.Span, 4), nil)
+	}, func(t *testing.T, d recvDeps) {
+		conn, err := grpc.NewClient(
+			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		traceID := bytes.Repeat([]byte{0xab}, 16)
+		spanID := bytes.Repeat([]byte{0xcd}, 8)
+
+		_, err = colltrace.NewTraceServiceClient(conn).Export(ctx, &colltrace.ExportTraceServiceRequest{
+			ResourceSpans: []*tracev1.ResourceSpans{{
+				ScopeSpans: []*tracev1.ScopeSpans{{
+					Spans: []*tracev1.Span{{
+						TraceId:         traceID,
+						SpanId:          spanID,
+						Name:            "array-attr-span",
+						EndTimeUnixNano: 1,
+						Attributes: []*commonv1.KeyValue{{
+							Key: "ids",
+							Value: &commonv1.AnyValue{
+								Value: &commonv1.AnyValue_ArrayValue{
+									ArrayValue: &commonv1.ArrayValue{
+										Values: []*commonv1.AnyValue{
+											{Value: &commonv1.AnyValue_StringValue{StringValue: "appointment_id:abc-123"}},
+											{Value: &commonv1.AnyValue_StringValue{StringValue: "account_id:acc-456"}},
+										},
+									},
+								},
+							},
+						}},
+					}},
+				}},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+
+		select {
+		case sp := <-d.spans:
+			if len(sp.Attributes) != 1 || sp.Attributes[0].Key != "ids" {
+				t.Fatalf("attributes=%#v", sp.Attributes)
+			}
+			want := "[appointment_id:abc-123, account_id:acc-456]"
+			if sp.Attributes[0].Value != want {
+				t.Fatalf("array attribute value=%q, want %q", sp.Attributes[0].Value, want)
 			}
 		case <-ctx.Done():
 			t.Fatal("timed out waiting for domain span")
