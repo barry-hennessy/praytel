@@ -516,6 +516,14 @@ func shortID(id string) string {
 	return id[:8]
 }
 
+// matchingTraces returns the set of trace IDs to keep when searching in
+// searchTraces mode. A trace matches if ANY single span in it fuzzy-matches
+// on its own trace ID, label, or attributes — the match is per-span, but the
+// result is per-trace: treeLines renders every span, attribute, and log in a
+// matched trace unconditionally, not just the span that actually matched. So
+// a query can surface an entire tree of unrelated calls off the back of one
+// incidental hit deep inside it. See fuzzy for why "misses" are rarer than
+// they look.
 func (m Model) matchingTraces() map[string]bool {
 	out := make(map[string]bool)
 	if m.query == "" {
@@ -576,6 +584,16 @@ func (m Model) branchHasLog(
 	return false
 }
 
+// fuzzy is a per-character SUBSEQUENCE match, not a substring match: each
+// whitespace-separated word in needle must have its characters appear
+// somewhere in haystack in the same relative order, but not necessarily
+// adjacent, and case-insensitively. It does not know about "key=value"
+// structure — "=" and digits are just characters like any other. That makes
+// it forgiving of typos and word order, but also means a query can match by
+// stitching characters together across unrelated attributes (e.g. "rand"
+// from a span's label, "s" from the tail of "ids=", "=12345" from that same
+// attribute's value) even when the literal query string appears nowhere in
+// the haystack.
 func fuzzy(needle, haystack string) bool {
 	needles := strings.Fields(strings.ToLower(needle))
 	haystackRunes := []rune(strings.ToLower(haystack))
