@@ -21,4 +21,5 @@ instead, use ↑/↓ to scroll, Esc to clear, and Ctrl-C to quit.
 Trace search is loose by design: it's a subsequence match (letters found in order,
 not a literal substring), and matching a single span anywhere in a trace surfaces
 that trace's whole tree, not just the span that matched. Expect broader results
-than a `grep`-style search would give you.
+than a `grep`-style search would give you. The matched span's label and attributes
+are highlighted so you can see which one actually caused the trace to show up.

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,41 @@ func TestTraceSearchMatchesAttributeKeyOrValue(t *testing.T) {
 	byValue := m.View()
 	if !strings.Contains(byValue, "orders") || strings.Contains(byValue, "health") {
 		t.Fatalf("attribute value search selected the wrong trees:\n%s", byValue)
+	}
+}
+
+func TestSpanHighlightsMarkOnlyTheMatchedCharacters(t *testing.T) {
+	m := NewModel(nil, nil)
+	m.height = 12
+	m.apply(domain.SpanUpserted{
+		TraceID: "t1", SpanID: "root", Name: "orders",
+		Attributes: []domain.Attr{{Key: "ids", Value: "[12345]"}},
+	})
+	m.apply(domain.SpanUpserted{TraceID: "t1", SpanID: "child", Name: "unrelated"})
+	m.apply(domain.SpanParentLinked{SpanID: "child", ParentSpanID: "root"})
+
+	m.mode = searchTraces
+	m.query = "ids12345"
+
+	if !m.matchingTraces()["t1"] {
+		t.Fatalf("expected trace t1 to match query %q", m.query)
+	}
+
+	highlights := m.spanHighlights()
+	root, ok := highlights["root"]
+	if !ok {
+		t.Fatalf("expected span %q to have its own highlight, got none", "root")
+	}
+	if len(root.attrs) != 1 {
+		t.Fatalf("expected exactly one attribute mask, got %d", len(root.attrs))
+	}
+	want := []bool{true, true, true, false, false, true, true, true, true, true, false}
+	if !reflect.DeepEqual(root.attrs[0], want) {
+		t.Fatalf("attribute mask for %q = %v, want %v", "ids=[12345]", root.attrs[0], want)
+	}
+
+	if _, ok := highlights["child"]; ok {
+		t.Fatalf("child span does not itself match %q, so it should have no highlight, but it does", m.query)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -333,6 +334,7 @@ func (m Model) treeLines() []string {
 
 	traceMatches := m.matchingTraces()
 	logMatches := m.matchingLogs()
+	highlights := m.spanHighlights()
 	var lines []string
 	visited := make(map[string]bool)
 	for _, root := range roots {
@@ -349,7 +351,7 @@ func (m Model) treeLines() []string {
 				continue
 			}
 		}
-		m.renderSpan(&lines, root, 0, children, logMatches, visited)
+		m.renderSpan(&lines, root, 0, children, logMatches, highlights, visited)
 	}
 	if len(lines) == 0 {
 		if m.query == "" {
@@ -374,6 +376,7 @@ func (m Model) renderSpan(
 	depth int,
 	children map[string][]*spanView,
 	logMatches map[string]bool,
+	highlights map[string]spanHighlight,
 	visited map[string]bool,
 ) {
 	if visited[sp.id] {
@@ -389,18 +392,22 @@ func (m Model) renderSpan(
 		return
 	}
 
+	h := highlights[sp.id]
 	prefix := m.bars(depth, sp.closed)
 	symbol, style := m.state(sp)
 	header := fmt.Sprintf(
 		"%s%s %s %s",
 		prefix,
-		spanLabel(sp),
+		styleSegments(spanLabel(sp), h.label, lipgloss.NewStyle(), matchHighlightStyle),
 		style.Render(symbol),
 		m.duration(sp),
 	)
 	*lines = append(*lines, header)
 	if len(sp.attributes) > 0 {
-		*lines = append(*lines, m.bars(depth, sp.closed)+attributesLine(sp.attributes))
+		*lines = append(
+			*lines,
+			m.bars(depth, sp.closed)+attributesLine(sp.attributes, h.attrs),
+		)
 	}
 	for _, id := range sp.logs {
 		log := m.logs[id]
@@ -415,7 +422,7 @@ func (m Model) renderSpan(
 		*lines = append(*lines, line)
 	}
 	for _, child := range children[sp.id] {
-		m.renderSpan(lines, child, depth+1, children, logMatches, visited)
+		m.renderSpan(lines, child, depth+1, children, logMatches, highlights, visited)
 	}
 }
 
@@ -438,16 +445,22 @@ func (m Model) bars(depth int, closed bool) string {
 
 // attributesLine renders a span's attributes on one faint, italic line so
 // they read as metadata attached to the header above rather than as a log
-// entry (which is plain-styled and indented one level further in).
-func attributesLine(attrs []domain.Attr) string {
+// entry (which is plain-styled and indented one level further in). masks,
+// when non-nil, highlights the runes of the matching attribute(s) that made
+// the span match the current trace search (see matchSpan); it is nil
+// outside of a search or for spans not shown for their own sake.
+func attributesLine(attrs []domain.Attr, masks [][]bool) string {
+	base := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
 	parts := make([]string, 0, len(attrs))
-	for _, a := range attrs {
-		parts = append(parts, clean(a.Key)+"="+clean(a.Value))
+	for i, a := range attrs {
+		text := clean(a.Key) + "=" + clean(a.Value)
+		var mask []bool
+		if i < len(masks) {
+			mask = masks[i]
+		}
+		parts = append(parts, styleSegments(text, mask, base, matchHighlightStyle.Italic(true)))
 	}
-	return lipgloss.NewStyle().
-		Foreground(lipgloss.Color("244")).
-		Italic(true).
-		Render(strings.Join(parts, "  "))
+	return strings.Join(parts, base.Render("  "))
 }
 
 func (m Model) state(sp *spanView) (string, lipgloss.Style) {
@@ -523,29 +536,76 @@ func shortID(id string) string {
 // matched trace unconditionally, not just the span that actually matched. So
 // a query can surface an entire tree of unrelated calls off the back of one
 // incidental hit deep inside it. See fuzzy for why "misses" are rarer than
-// they look.
+// they look, and spanHighlights for how the actually-matching span is
+// picked out visually.
 func (m Model) matchingTraces() map[string]bool {
 	out := make(map[string]bool)
 	if m.query == "" {
 		return out
 	}
 	for _, sp := range m.spans {
-		if fuzzy(m.query, sp.traceID+" "+spanLabel(sp)+" "+attrHaystack(sp)) {
+		if ok, _ := matchSpan(m.query, sp); ok {
 			out[sp.traceID] = true
 		}
 	}
 	return out
 }
 
-func attrHaystack(sp *spanView) string {
-	if len(sp.attributes) == 0 {
-		return ""
+// spanHighlight marks which runes of a span's label and of each attribute's
+// "key=value" text were consumed by a fuzzy trace-search match, so the
+// renderer can highlight only the characters that actually matched.
+type spanHighlight struct {
+	label []bool
+	attrs [][]bool
+}
+
+// matchSpan reports whether a span, judged solely on its own trace ID,
+// label, and attributes, satisfies a fuzzy trace-search query — the same
+// per-span test matchingTraces uses to decide whether to pull in the whole
+// trace — and, when it does, which runes of the label and of each attribute
+// were part of the match.
+func matchSpan(query string, sp *spanView) (bool, spanHighlight) {
+	segments := make([]string, 0, len(sp.attributes)+2)
+	segments = append(segments, sp.traceID, spanLabel(sp))
+	for _, a := range sp.attributes {
+		segments = append(segments, a.Key+"="+a.Value)
 	}
-	parts := make([]string, len(sp.attributes))
-	for i, a := range sp.attributes {
-		parts[i] = a.Key + "=" + a.Value
+	ok, mask := fuzzyMatch(query, strings.Join(segments, " "))
+	if !ok {
+		return false, spanHighlight{}
 	}
-	return strings.Join(parts, " ")
+
+	pos := 0
+	next := func(seg string) []bool {
+		n := utf8.RuneCountInString(seg)
+		m := append([]bool(nil), mask[pos:pos+n]...)
+		pos += n + 1 // +1 for the space joining this segment to the next
+		return m
+	}
+	next(segments[0]) // trace ID isn't rendered in the tree; discard its mask
+	h := spanHighlight{label: next(segments[1])}
+	for _, seg := range segments[2:] {
+		h.attrs = append(h.attrs, next(seg))
+	}
+	return true, h
+}
+
+// spanHighlights computes matchSpan for every span, keyed by span ID, for
+// use while rendering a trace search. It is empty outside of a non-empty
+// searchTraces query, and only contains entries for spans that individually
+// matched — spans merely along for the ride in a matched trace get no
+// highlight.
+func (m Model) spanHighlights() map[string]spanHighlight {
+	out := make(map[string]spanHighlight)
+	if m.query == "" || m.mode != searchTraces {
+		return out
+	}
+	for id, sp := range m.spans {
+		if ok, h := matchSpan(m.query, sp); ok {
+			out[id] = h
+		}
+	}
+	return out
 }
 
 func (m Model) matchingLogs() map[string]bool {
@@ -595,21 +655,62 @@ func (m Model) branchHasLog(
 // attribute's value) even when the literal query string appears nowhere in
 // the haystack.
 func fuzzy(needle, haystack string) bool {
+	ok, _ := fuzzyMatch(needle, haystack)
+	return ok
+}
+
+// fuzzyMatch is fuzzy plus, on a match, a mask over haystack's runes (same
+// length and indexing as []rune(strings.ToLower(haystack))) marking which
+// ones were consumed by the match, so callers can highlight exactly the
+// characters that made the query hit.
+func fuzzyMatch(needle, haystack string) (bool, []bool) {
 	needles := strings.Fields(strings.ToLower(needle))
 	haystackRunes := []rune(strings.ToLower(haystack))
+	mask := make([]bool, len(haystackRunes))
 	for _, word := range needles {
 		wordRunes := []rune(word)
 		at := 0
-		for _, r := range haystackRunes {
+		for i, r := range haystackRunes {
 			if at < len(wordRunes) && r == wordRunes[at] {
+				mask[i] = true
 				at++
 			}
 		}
 		if at != len(wordRunes) {
-			return false
+			return false, nil
 		}
 	}
-	return true
+	return true, mask
+}
+
+// matchHighlightStyle marks the runes a fuzzy trace search actually matched,
+// distinct from the depth, status, and duration colors used elsewhere.
+var matchHighlightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
+
+// styleSegments renders s rune-by-rune, applying hl to the runs where mask
+// is true and base everywhere else. A nil mask (no match for this piece)
+// renders the whole string in base.
+func styleSegments(s string, mask []bool, base, hl lipgloss.Style) string {
+	if mask == nil {
+		return base.Render(s)
+	}
+	runes := []rune(s)
+	var b strings.Builder
+	for i := 0; i < len(runes); {
+		matched := i < len(mask) && mask[i]
+		j := i
+		for j < len(runes) && (j < len(mask) && mask[j]) == matched {
+			j++
+		}
+		seg := string(runes[i:j])
+		if matched {
+			b.WriteString(hl.Render(seg))
+		} else {
+			b.WriteString(base.Render(seg))
+		}
+		i = j
+	}
+	return b.String()
 }
 
 func clean(s string) string {
