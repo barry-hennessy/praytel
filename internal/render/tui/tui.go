@@ -79,11 +79,16 @@ type Model struct {
 	width    int
 	height   int
 	scroll   int
+	hscroll  int
 	now      time.Time
 	done     bool
 	warning  string
 	quitting bool
 }
+
+// hscrollStep is how many columns left/right move the viewport per key
+// press.
+const hscrollStep = 8
 
 // NewModel constructs a model. It is exported for embedding and deterministic
 // tests.
@@ -150,9 +155,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = searchTraces
 			}
 			m.scroll = 0
+			m.hscroll = 0
 		case "esc":
 			m.query = ""
 			m.scroll = 0
+			m.hscroll = 0
 		case "backspace", "ctrl+h":
 			if len(m.query) > 0 {
 				r := []rune(m.query)
@@ -172,6 +179,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "pgdown":
 			m.scroll += max(1, m.contentHeight()-1)
+		case "left", "ctrl+b":
+			m.hscroll -= hscrollStep
+			if m.hscroll < 0 {
+				m.hscroll = 0
+			}
+		case "right", "ctrl+f":
+			m.hscroll += hscrollStep
+		case "home":
+			m.hscroll = 0
 		default:
 			if msg.Type == tea.KeyRunes {
 				m.query += string(msg.Runes)
@@ -296,6 +312,22 @@ func (m Model) View() string {
 	}
 	end := min(len(lines), m.scroll+height)
 	visible := lines[min(m.scroll, len(lines)):end]
+
+	width := max(1, m.width)
+	maxHScroll := 0
+	for _, l := range visible {
+		if w := ansi.StringWidth(l) - width; w > maxHScroll {
+			maxHScroll = w
+		}
+	}
+	if m.hscroll > maxHScroll {
+		m.hscroll = maxHScroll
+	}
+	cut := make([]string, len(visible))
+	for i, l := range visible {
+		cut[i] = ansi.Cut(l, m.hscroll, m.hscroll+width)
+	}
+	visible = cut
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
@@ -749,9 +781,12 @@ func (m Model) panel() string {
 		m.query,
 	)
 	help := fmt.Sprintf(
-		" tab mode • ↑/↓ scroll • esc clear • ctrl+q quit • %s",
+		" tab mode • ↑/↓ scroll • ←/→ pan • esc clear • ctrl+q quit • %s",
 		state,
 	)
+	if m.hscroll > 0 {
+		help = fmt.Sprintf(" ◂ panned %d cols • home reset • %s", m.hscroll, help)
+	}
 	helpColor := lipgloss.Color("241")
 	if m.warning != "" {
 		help = " " + m.warning + " • " + state

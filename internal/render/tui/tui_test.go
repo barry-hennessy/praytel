@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/barry-hennessy/praytel/internal/domain"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func TestTreeRendersLiveStateDurationLogsAndNesting(t *testing.T) {
@@ -224,5 +225,49 @@ func TestDeclaredLogContextCreatesLivePlaceholderThenHydrates(t *testing.T) {
 		!strings.Contains(complete, "● 20ms") ||
 		strings.Contains(complete, "span/12345678") {
 		t.Fatalf("completed span did not hydrate the placeholder:\n%s", complete)
+	}
+}
+
+func TestHorizontalScrollPansLongLinesIntoView(t *testing.T) {
+	m := NewModel(nil, nil)
+	m.height = 8
+	m.width = 20
+	m.now = time.Unix(20, 0)
+	m.apply(domain.SpanUpserted{
+		TraceID: "trace-1", SpanID: "root", Name: "request", Component: "api",
+		StartTime: time.Unix(15, 0),
+	})
+	longBody := "this line is much longer than the visible width and runs off screen"
+	m.apply(domain.LogReceived{ID: "1", SpanID: "root", Body: longBody})
+
+	initial := m.View()
+	if strings.Contains(initial, "off screen") {
+		t.Fatalf("expected the tail of a long line to be off-screen before panning:\n%s", initial)
+	}
+
+	var model tea.Model = m
+	for range 10 {
+		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyRight})
+	}
+	m = model.(Model)
+	if m.hscroll == 0 {
+		t.Fatalf("right arrow did not advance horizontal scroll")
+	}
+	panned := m.View()
+	if !strings.Contains(panned, "off screen") {
+		t.Fatalf("panning right did not reveal the tail of the long line:\n%s", panned)
+	}
+	if strings.Contains(panned, "this line") {
+		t.Fatalf("panning right did not scroll the head of the line out of view:\n%s", panned)
+	}
+
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyHome})
+	m = model.(Model)
+	if m.hscroll != 0 {
+		t.Fatalf("home did not reset horizontal scroll: %d", m.hscroll)
+	}
+	reset := m.View()
+	if !strings.Contains(reset, "this line") {
+		t.Fatalf("home did not restore the start of the line:\n%s", reset)
 	}
 }
