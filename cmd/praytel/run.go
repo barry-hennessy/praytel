@@ -18,7 +18,9 @@ import (
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	querylang "github.com/barry-hennessy/praytel/internal/query"
 	"github.com/barry-hennessy/praytel/internal/receiver"
+	queryrender "github.com/barry-hennessy/praytel/internal/render/query"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
 	"github.com/barry-hennessy/praytel/internal/render/tui"
 	"golang.org/x/sync/errgroup"
@@ -39,6 +41,18 @@ func run(
 	ctx, log, span := lt.Start(ctx)
 	defer span.End()
 
+	queryText, err := querySource(cfg)
+	if err != nil {
+		return 1, err
+	}
+	var compiledQuery *querylang.Query
+	if queryText != "" {
+		compiledQuery, err = querylang.Check(queryText)
+		if err != nil {
+			return 1, fmt.Errorf("query: %w", err)
+		}
+	}
+
 	filt, err := filter.New(filter.Query{Focus: cfg.focus, Exclude: cfg.exclude})
 	if err != nil {
 		return 1, fmt.Errorf("filter: %w", err)
@@ -53,8 +67,17 @@ func run(
 		MaxLogLines: cfg.maxLogLines,
 	})
 	var view renderer
+	var queryView *queryrender.Renderer
 	if cfg.tui {
-		view = tui.New(lt, events, stdin, stdout, filt)
+		view = tui.NewWithQuery(lt, events, stdin, stdout, filt, compiledQuery)
+	} else if compiledQuery != nil {
+		queryView = queryrender.New(events, stdout, compiledQuery, queryrender.Options{
+			Format:      queryrender.Format(cfg.format),
+			Emit:        queryrender.Emit(cfg.emit),
+			SettleAfter: cfg.settleAfter,
+			Limit:       cfg.resultLimit,
+		})
+		view = queryView
 	} else {
 		st := stream.New(lt, events, stdout, filt)
 		view = st
@@ -147,6 +170,9 @@ func run(
 		outW,
 		errW,
 	)
+	if queryView != nil {
+		queryView.SetChildResult(code, started)
+	}
 
 	_ = outW.Close()
 	_ = errW.Close()

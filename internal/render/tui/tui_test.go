@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/query"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -18,15 +19,15 @@ func TestTreeRendersLiveStateDurationLogsAndNesting(t *testing.T) {
 		TraceID: "trace-1", SpanID: "root", Name: "request", Component: "api",
 		StartTime: time.Unix(15, 0),
 	})
-	m.apply(domain.LogReceived{ID: "1", SpanID: "root", Body: `{"msg":"started"}`})
+	m.apply(domain.LogReceived{ID: "1", TraceID: "trace-1", SpanID: "root", Body: `{"msg":"started"}`})
 	m.apply(domain.SpanUpserted{
 		TraceID: "trace-1", SpanID: "child", Name: "query", Component: "db",
 		StartTime: time.Unix(18, 0),
 		EndTime:   time.Unix(18, int64(15*time.Millisecond)),
 		Status:    domain.SpanStatusError,
 	})
-	m.apply(domain.SpanParentLinked{SpanID: "child", ParentSpanID: "root"})
-	m.apply(domain.SpanClosed{SpanID: "child"})
+	m.apply(domain.SpanParentLinked{TraceID: "trace-1", SpanID: "child", ParentSpanID: "root"})
+	m.apply(domain.SpanClosed{TraceID: "trace-1", SpanID: "child"})
 
 	view := m.View()
 	wants := []string{
@@ -56,9 +57,9 @@ func TestTreeRendersAttributesUnderHeaderNotAsLogLine(t *testing.T) {
 	m.apply(domain.SpanUpserted{
 		TraceID: "trace-1", SpanID: "root", Name: "request", Component: "api",
 		StartTime:  time.Unix(15, 0),
-		Attributes: []domain.Attr{{Key: "http.method", Value: "GET"}, {Key: "http.status_code", Value: "200"}},
+		Attributes: []domain.Attr{{Key: "http.method", Value: domain.StringValue("GET")}, {Key: "http.status_code", Value: domain.StringValue("200")}},
 	})
-	m.apply(domain.LogReceived{ID: "1", SpanID: "root", Body: "started"})
+	m.apply(domain.LogReceived{ID: "1", TraceID: "trace-1", SpanID: "root", Body: "started"})
 
 	lines := m.treeLines()
 
@@ -102,11 +103,11 @@ func TestSearchModesChooseTracesOrMatchingLogs(t *testing.T) {
 	m.height = 12
 	m.apply(domain.SpanUpserted{TraceID: "t1", SpanID: "orders", Name: "orders"})
 	m.apply(domain.LogReceived{
-		ID: "1", SpanID: "orders", Body: "payment accepted",
+		ID: "1", TraceID: "t1", SpanID: "orders", Body: "payment accepted",
 	})
 	m.apply(domain.SpanUpserted{TraceID: "t2", SpanID: "health", Name: "health"})
 	m.apply(domain.LogReceived{
-		ID: "2", SpanID: "health", Body: "database unavailable",
+		ID: "2", TraceID: "t2", SpanID: "health", Body: "database unavailable",
 	})
 
 	m.query = "ord"
@@ -132,12 +133,44 @@ func TestSearchModesChooseTracesOrMatchingLogs(t *testing.T) {
 	}
 }
 
+func TestTypedQueryConstrainsTreeUsingPathView(t *testing.T) {
+	q, err := query.Parse(`span{ span:status = error } | path`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewQueryModel(nil, nil, q)
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "root", Name: "root"})
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "bad", Name: "bad", Status: domain.SpanStatusError})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "bad", ParentSpanID: "root"})
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "sibling", Name: "sibling"})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "sibling", ParentSpanID: "root"})
+	m.apply(domain.LogReceived{ID: "root-log", TraceID: "t", SpanID: "root", Body: "context"})
+
+	view := strings.Join(m.treeLines(), "\n")
+	if !strings.Contains(view, "root") || !strings.Contains(view, "bad") || !strings.Contains(view, "context") {
+		t.Fatalf("path view omitted selected context:\n%s", view)
+	}
+	if strings.Contains(view, "sibling") {
+		t.Fatalf("path view included an unrelated sibling:\n%s", view)
+	}
+}
+
+func TestTreeScopesSpanIDsByTrace(t *testing.T) {
+	m := NewModel(nil, nil)
+	m.apply(domain.SpanUpserted{TraceID: "one", SpanID: "same", Name: "first"})
+	m.apply(domain.SpanUpserted{TraceID: "two", SpanID: "same", Name: "second"})
+	view := strings.Join(m.treeLines(), "\n")
+	if !strings.Contains(view, "first") || !strings.Contains(view, "second") {
+		t.Fatalf("one trace overwrote the other:\n%s", view)
+	}
+}
+
 func TestTraceSearchMatchesAttributeKeyOrValue(t *testing.T) {
 	m := NewModel(nil, nil)
 	m.height = 12
 	m.apply(domain.SpanUpserted{
 		TraceID: "t1", SpanID: "orders", Name: "orders",
-		Attributes: []domain.Attr{{Key: "http.status_code", Value: "500"}},
+		Attributes: []domain.Attr{{Key: "http.status_code", Value: domain.StringValue("500")}},
 	})
 	m.apply(domain.SpanUpserted{TraceID: "t2", SpanID: "health", Name: "health"})
 
@@ -159,10 +192,10 @@ func TestSpanHighlightsMarkOnlyTheMatchedCharacters(t *testing.T) {
 	m.height = 12
 	m.apply(domain.SpanUpserted{
 		TraceID: "t1", SpanID: "root", Name: "orders",
-		Attributes: []domain.Attr{{Key: "ids", Value: "[12345]"}},
+		Attributes: []domain.Attr{{Key: "ids", Value: domain.StringValue("[12345]")}},
 	})
 	m.apply(domain.SpanUpserted{TraceID: "t1", SpanID: "child", Name: "unrelated"})
-	m.apply(domain.SpanParentLinked{SpanID: "child", ParentSpanID: "root"})
+	m.apply(domain.SpanParentLinked{TraceID: "t1", SpanID: "child", ParentSpanID: "root"})
 
 	m.mode = searchTraces
 	m.query = "ids12345"
@@ -172,7 +205,7 @@ func TestSpanHighlightsMarkOnlyTheMatchedCharacters(t *testing.T) {
 	}
 
 	highlights := m.spanHighlights()
-	root, ok := highlights["root"]
+	root, ok := highlights[selectionKey("t1", "root")]
 	if !ok {
 		t.Fatalf("expected span %q to have its own highlight, got none", "root")
 	}
@@ -184,7 +217,7 @@ func TestSpanHighlightsMarkOnlyTheMatchedCharacters(t *testing.T) {
 		t.Fatalf("attribute mask for %q = %v, want %v", "ids=[12345]", root.attrs[0], want)
 	}
 
-	if _, ok := highlights["child"]; ok {
+	if _, ok := highlights[selectionKey("t1", "child")]; ok {
 		t.Fatalf("child span does not itself match %q, so it should have no highlight, but it does", m.query)
 	}
 }
@@ -238,7 +271,7 @@ func TestHorizontalScrollPansLongLinesIntoView(t *testing.T) {
 		StartTime: time.Unix(15, 0),
 	})
 	longBody := "this line is much longer than the visible width and runs off screen"
-	m.apply(domain.LogReceived{ID: "1", SpanID: "root", Body: longBody})
+	m.apply(domain.LogReceived{ID: "1", TraceID: "trace-1", SpanID: "root", Body: longBody})
 
 	initial := m.View()
 	if strings.Contains(initial, "off screen") {

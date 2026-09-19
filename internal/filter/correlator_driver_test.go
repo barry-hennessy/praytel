@@ -49,9 +49,9 @@ func TestCorrelatorEventsDriveFocusAdmit(t *testing.T) {
 		d.c.Spans() <- domain.Span{TraceID: "t1", SpanID: "root", Name: "http"}
 		d.c.Spans() <- domain.Span{TraceID: "t1", SpanID: "orders", ParentSpanID: "root", Name: "orders"}
 		d.c.Spans() <- domain.Span{TraceID: "t1", SpanID: "health", ParentSpanID: "root", Name: "health"}
-		d.c.Logs() <- domain.LogLine{ID: "Lroot", Body: "root", Source: domain.SourceStdout, TraceID: "t1", SpanID: "root"}
-		d.c.Logs() <- domain.LogLine{ID: "Lorders", Body: "orders", Source: domain.SourceStdout, TraceID: "t1", SpanID: "orders"}
-		d.c.Logs() <- domain.LogLine{ID: "Lhealth", Body: "health", Source: domain.SourceStdout, TraceID: "t1", SpanID: "health"}
+		d.c.Logs() <- domain.LogLine{ID: "Lroot", Body: domain.StringValue("root"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "root"}
+		d.c.Logs() <- domain.LogLine{ID: "Lorders", Body: domain.StringValue("orders"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "orders"}
+		d.c.Logs() <- domain.LogLine{ID: "Lhealth", Body: domain.StringValue("health"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "health"}
 		d.c.Stop()
 
 		var admitted []string

@@ -23,3 +23,46 @@ not a literal substring), and matching a single span anywhere in a trace surface
 that trace's whole tree, not just the span that matched. Expect broader results
 than a `grep`-style search would give you. The matched span's label and attributes
 are highlighted so you can see which one actually caused the trace to show up.
+
+## Typed queries
+
+Use `--query` for precise, typed matching across joined spans and logs:
+
+```sh
+praytel --query 'span{ resource.service.name = "checkout" && span:status = error }' -- go test ./...
+praytel --query 'log{ log:body *= "connection refused" && log:severity_number >= 17 }' --format ndjson -- ./server
+praytel --query 'span{ resource.service.name = "frontend" } >> span{ span:duration > 100ms }' -- ./server
+praytel --tui --query 'span{ span:status = error } | path' -- ./server
+```
+
+`>` means direct child and `>>` means any descendant. Predicates inside one
+selector apply to the same record; `&&` between selectors means the same trace
+contains both. Queries default to the matching path. Append `| matches` for only
+the evidence records or `| trace` for the complete trace.
+
+Validate and canonicalize checked-in queries without running a child:
+
+```sh
+praytel query check 'span{ span:status = error }'
+praytel query fmt 'span{span:status=error}'
+praytel query explain 'span{ span:name = api } >> log{ log:body *= "failed" }'
+```
+
+For a long-running process, `--emit settled --format ndjson` emits a closed trace
+after it has been quiet for `--settle-after`. “Settled” is provisional: late OTLP
+can produce a newer revision. Only a drained `final` result is terminal.
+
+## Agent integration
+
+`praytel mcp` runs a stdio MCP server rooted at its working directory. It exposes
+`start_run`, `wait_for_matches`, `get_trace_topology`, `get_span_details`,
+`get_logs`, and `stop_run`. Tools use progressive disclosure so an agent searches
+compact evidence before loading span or log detail. Configure an MCP client to run:
+
+```json
+{"command":"praytel","args":["mcp"]}
+```
+
+Run `praytel agent instructions` for the concise playbook to include in an agent
+skill. A “no match” conclusion is valid only after the run is terminal and both
+`truncated` and `incomplete_reasons` show that the result is complete.

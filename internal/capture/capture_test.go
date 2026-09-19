@@ -40,7 +40,7 @@ func TestPlainTextNoWarnAndKeepsBody(t *testing.T) {
 		}
 
 		line := recvLine(t, out)
-		if line.Body != "hello world" {
+		if line.Body.String() != "hello world" {
 			t.Fatalf("body=%q", line.Body)
 		}
 		if line.Source != domain.SourceStdout {
@@ -66,7 +66,7 @@ func TestMalformedJSONWarnsRateLimited(t *testing.T) {
 
 		for i := 0; i < 3; i++ {
 			line := recvLine(t, out)
-			if !strings.Contains(line.Body, "{") {
+			if !strings.Contains(line.Body.String(), "{") {
 				t.Fatalf("body=%q", line.Body)
 			}
 			if line.Source != domain.SourceStderr {
@@ -94,7 +94,7 @@ func TestLogfmtExtractsIDsWithoutWarn(t *testing.T) {
 		if line.TraceID != "aaa" || line.SpanID != "bbb" {
 			t.Fatalf("ids %#v", line)
 		}
-		if line.Body != body {
+		if line.Body.String() != body {
 			t.Fatalf("body=%q", line.Body)
 		}
 		if strings.Contains(d.logs.String(), "malformed") {
@@ -185,7 +185,7 @@ func TestValidJSONExtractsIDsWithoutWarn(t *testing.T) {
 		if line.TraceID != "aaa" || line.SpanID != "bbb" {
 			t.Fatalf("ids %#v", line)
 		}
-		if line.Body != body {
+		if line.Body.String() != body {
 			t.Fatalf("body=%q", line.Body)
 		}
 		if strings.Contains(d.logs.String(), "malformed") {
@@ -214,10 +214,10 @@ func TestAnsiColorizedConsoleLineIsStrippedAndExtractsIDs(t *testing.T) {
 		if line.TraceID != "abc123" || line.SpanID != "def456" {
 			t.Fatalf("ids %#v", line)
 		}
-		if strings.Contains(line.Body, "\x1b") || strings.Contains(line.Body, "[2m") || strings.Contains(line.Body, "[0m") {
+		if strings.Contains(line.Body.String(), "\x1b") || strings.Contains(line.Body.String(), "[2m") || strings.Contains(line.Body.String(), "[0m") {
 			t.Fatalf("body still contains ANSI codes: %q", line.Body)
 		}
-		if !strings.Contains(line.Body, "appointment service using stub adaptors") {
+		if !strings.Contains(line.Body.String(), "appointment service using stub adaptors") {
 			t.Fatalf("body lost its message text: %q", line.Body)
 		}
 	})
@@ -231,7 +231,7 @@ func TestEOFWithoutNewline(t *testing.T) {
 			t.Fatalf("Copy: %v", err)
 		}
 
-		if recvLine(t, out).Body != "tail" {
+		if recvLine(t, out).Body.String() != "tail" {
 			t.Fatal("missing tail line")
 		}
 	})

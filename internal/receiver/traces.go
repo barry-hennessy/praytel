@@ -114,11 +114,13 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 		}
 
 		component := resourceServiceName(rs.GetResource())
+		resource := domain.Resource{Attributes: attributes(rs.GetResource().GetAttributes())}
 		for _, ss := range rs.GetScopeSpans() {
 			if ss == nil {
 				continue
 			}
 
+			scope := scopeFromProto(ss.GetScope())
 			for _, sp := range ss.GetSpans() {
 				if sp == nil || len(sp.GetSpanId()) == 0 {
 					continue
@@ -132,16 +134,22 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 				}
 
 				out = append(out, domain.Span{
-					TraceID:      hex.EncodeToString(sp.GetTraceId()),
-					SpanID:       hex.EncodeToString(sp.GetSpanId()),
-					ParentSpanID: hex.EncodeToString(sp.GetParentSpanId()),
-					Name:         sp.GetName(),
-					Component:    component,
-					StartTime:    startTime,
-					EndTime:      endTime,
-					Status:       spanStatus(sp.GetStatus().GetCode()),
-					Attributes:   spanAttributes(sp.GetAttributes()),
-					Ended:        sp.GetEndTimeUnixNano() != 0,
+					TraceID:       hex.EncodeToString(sp.GetTraceId()),
+					SpanID:        hex.EncodeToString(sp.GetSpanId()),
+					ParentSpanID:  hex.EncodeToString(sp.GetParentSpanId()),
+					Name:          sp.GetName(),
+					Component:     component,
+					StartTime:     startTime,
+					EndTime:       endTime,
+					Status:        spanStatus(sp.GetStatus().GetCode()),
+					StatusMessage: sp.GetStatus().GetMessage(),
+					Kind:          spanKind(sp.GetKind()),
+					Resource:      resource,
+					Scope:         scope,
+					Attributes:    spanAttributes(sp.GetAttributes()),
+					Events:        spanEvents(sp.GetEvents()),
+					Links:         spanLinks(sp.GetLinks()),
+					Ended:         sp.GetEndTimeUnixNano() != 0,
 				})
 			}
 		}
@@ -160,7 +168,29 @@ func spanAttributes(kvs []*commonv1.KeyValue) []domain.Attr {
 		if kv == nil || kv.GetKey() == "" {
 			continue
 		}
-		out = append(out, domain.Attr{Key: kv.GetKey(), Value: anyValueString(kv.GetValue())})
+		out = append(out, domain.Attr{Key: kv.GetKey(), Value: anyValue(kv.GetValue())})
+	}
+	return out
+}
+
+func spanKind(k tracev1.Span_SpanKind) domain.SpanKind { return domain.SpanKind(k) }
+
+func spanEvents(in []*tracev1.Span_Event) []domain.SpanEvent {
+	out := make([]domain.SpanEvent, 0, len(in))
+	for _, e := range in {
+		if e != nil {
+			out = append(out, domain.SpanEvent{Name: e.GetName(), Timestamp: unixNano(e.GetTimeUnixNano()), Attributes: attributes(e.GetAttributes()), DroppedAttributesCount: e.GetDroppedAttributesCount()})
+		}
+	}
+	return out
+}
+
+func spanLinks(in []*tracev1.Span_Link) []domain.SpanLink {
+	out := make([]domain.SpanLink, 0, len(in))
+	for _, l := range in {
+		if l != nil {
+			out = append(out, domain.SpanLink{TraceID: hex.EncodeToString(l.GetTraceId()), SpanID: hex.EncodeToString(l.GetSpanId()), TraceState: l.GetTraceState(), Attributes: attributes(l.GetAttributes()), DroppedAttributesCount: l.GetDroppedAttributesCount()})
+		}
 	}
 	return out
 }

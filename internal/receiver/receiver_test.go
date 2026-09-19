@@ -213,7 +213,7 @@ func TestGRPCTracesBecomeDomainSpans(t *testing.T) {
 			if sp.StartTime.UnixNano() != int64(start) || sp.EndTime.UnixNano() != int64(end) {
 				t.Fatalf("times=%s..%s", sp.StartTime, sp.EndTime)
 			}
-			if len(sp.Attributes) != 1 || sp.Attributes[0].Key != "http.method" || sp.Attributes[0].Value != "GET" {
+			if len(sp.Attributes) != 1 || sp.Attributes[0].Key != "http.method" || sp.Attributes[0].Value.String() != "GET" {
 				t.Fatalf("attributes=%#v", sp.Attributes)
 			}
 			if sp.Status != domain.SpanStatusError {
@@ -281,7 +281,7 @@ func TestGRPCTraceArrayAttributesRenderTheirValues(t *testing.T) {
 				t.Fatalf("attributes=%#v", sp.Attributes)
 			}
 			want := "[appointment_id:abc-123, account_id:acc-456]"
-			if sp.Attributes[0].Value != want {
+			if sp.Attributes[0].Value.String() != want {
 				t.Fatalf("array attribute value=%q, want %q", sp.Attributes[0].Value, want)
 			}
 		case <-ctx.Done():
@@ -421,7 +421,7 @@ func TestOTLPLogsBecomeLogLines(t *testing.T) {
 		if line.Source != domain.SourceOTLP {
 			t.Fatalf("source=%q", line.Source)
 		}
-		if line.Body != "otlp-body" {
+		if line.Body.String() != "otlp-body" {
 			t.Fatalf("body=%q", line.Body)
 		}
 		if line.Component != "helper-svc" {
@@ -449,7 +449,7 @@ func TestOTLPLogsBecomeLogLines(t *testing.T) {
 		}
 
 		httpLine := recvLog(t, ctx, d.logs)
-		if httpLine.Source != domain.SourceOTLP || httpLine.Component != "helper-svc" || httpLine.Body != "otlp-body" {
+		if httpLine.Source != domain.SourceOTLP || httpLine.Component != "helper-svc" || httpLine.Body.String() != "otlp-body" {
 			t.Fatalf("http log %#v", httpLine)
 		}
 	})

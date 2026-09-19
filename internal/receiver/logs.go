@@ -4,9 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 	"net/http"
-	"strconv"
-	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -105,22 +104,31 @@ func domainLogs(req *colllog.ExportLogsServiceRequest) []domain.LogLine {
 		}
 
 		component := resourceServiceName(rl.GetResource())
+		resource := domain.Resource{Attributes: attributes(rl.GetResource().GetAttributes())}
 		for _, sl := range rl.GetScopeLogs() {
 			if sl == nil {
 				continue
 			}
 
+			scope := scopeFromProto(sl.GetScope())
 			for _, rec := range sl.GetLogRecords() {
 				if rec == nil {
 					continue
 				}
 
 				out = append(out, domain.LogLine{
-					Body:      anyValueString(rec.GetBody()),
-					Source:    domain.SourceOTLP,
-					Component: component,
-					TraceID:   hex.EncodeToString(rec.GetTraceId()),
-					SpanID:    hex.EncodeToString(rec.GetSpanId()),
+					Timestamp:         unixNano(rec.GetTimeUnixNano()),
+					ObservedTimestamp: unixNano(rec.GetObservedTimeUnixNano()),
+					SeverityNumber:    int32(rec.GetSeverityNumber()),
+					SeverityText:      rec.GetSeverityText(),
+					Body:              anyValue(rec.GetBody()),
+					Resource:          resource,
+					Scope:             scope,
+					Attributes:        attributes(rec.GetAttributes()),
+					Source:            domain.SourceOTLP,
+					Component:         component,
+					TraceID:           hex.EncodeToString(rec.GetTraceId()),
+					SpanID:            hex.EncodeToString(rec.GetSpanId()),
 				})
 			}
 		}
@@ -139,43 +147,70 @@ func resourceServiceName(res *resourcev1.Resource) string {
 			continue
 		}
 
-		return anyValueString(kv.GetValue())
+		return anyValue(kv.GetValue()).String()
 	}
 
 	return ""
 }
 
-func anyValueString(av *commonv1.AnyValue) string {
+func anyValue(av *commonv1.AnyValue) domain.Value {
 	if av == nil {
-		return ""
+		return domain.Value{}
 	}
 
 	switch v := av.GetValue().(type) {
 	case *commonv1.AnyValue_StringValue:
-		return v.StringValue
+		return domain.StringValue(v.StringValue)
 	case *commonv1.AnyValue_IntValue:
-		return strconv.FormatInt(v.IntValue, 10)
+		return domain.Int64Value(v.IntValue)
 	case *commonv1.AnyValue_DoubleValue:
-		return strconv.FormatFloat(v.DoubleValue, 'g', -1, 64)
+		return domain.Float64Value(v.DoubleValue)
 	case *commonv1.AnyValue_BoolValue:
-		return strconv.FormatBool(v.BoolValue)
+		return domain.BoolValue(v.BoolValue)
 	case *commonv1.AnyValue_BytesValue:
-		return hex.EncodeToString(v.BytesValue)
+		return domain.BytesValue(v.BytesValue)
 	case *commonv1.AnyValue_ArrayValue:
 		vals := v.ArrayValue.GetValues()
-		parts := make([]string, len(vals))
+		parts := make([]domain.Value, len(vals))
 		for i, e := range vals {
-			parts[i] = anyValueString(e)
+			parts[i] = anyValue(e)
 		}
-		return "[" + strings.Join(parts, ", ") + "]"
+		return domain.ArrayValue(parts)
 	case *commonv1.AnyValue_KvlistValue:
 		kvs := v.KvlistValue.GetValues()
-		parts := make([]string, len(kvs))
+		parts := make([]domain.Attr, 0, len(kvs))
 		for i, kv := range kvs {
-			parts[i] = kv.GetKey() + "=" + anyValueString(kv.GetValue())
+			if kv != nil {
+				parts = append(parts, domain.Attr{Key: kv.GetKey(), Value: anyValue(kv.GetValue())})
+			}
+			_ = i
 		}
-		return "{" + strings.Join(parts, ", ") + "}"
+		return domain.MapValue(parts)
 	default:
-		return av.GetStringValue()
+		return domain.Value{}
 	}
+}
+
+func unixNano(n uint64) time.Time {
+	if n == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, int64(n))
+}
+
+func attributes(kvs []*commonv1.KeyValue) []domain.Attr {
+	out := make([]domain.Attr, 0, len(kvs))
+	for _, kv := range kvs {
+		if kv != nil && kv.GetKey() != "" {
+			out = append(out, domain.Attr{Key: kv.GetKey(), Value: anyValue(kv.GetValue())})
+		}
+	}
+	return out
+}
+
+func scopeFromProto(s *commonv1.InstrumentationScope) domain.Scope {
+	if s == nil {
+		return domain.Scope{}
+	}
+	return domain.Scope{Name: s.GetName(), Version: s.GetVersion(), Attributes: attributes(s.GetAttributes())}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,7 @@ type WarnGate struct {
 	last time.Time
 }
 
+// NewWarnGate returns a warning gate with the supplied minimum interval.
 func NewWarnGate(every time.Duration) *WarnGate {
 	if every <= 0 {
 		every = defaultWarnEvery
@@ -33,6 +35,7 @@ func NewWarnGate(every time.Duration) *WarnGate {
 	return &WarnGate{every: every}
 }
 
+// Allow reports whether a warning should be emitted now.
 func (g *WarnGate) Allow() bool {
 	if g == nil {
 		return true
@@ -93,7 +96,7 @@ func parseLine(source domain.Source, body string) parsed {
 
 	out := parsed{
 		LogLine: domain.LogLine{
-			Body:   body,
+			Body:   domain.StringValue(body),
 			Source: source,
 		},
 	}
@@ -127,6 +130,18 @@ func parseJSON(out parsed, trim string) parsed {
 
 	out.TraceID = meta.TraceID
 	out.SpanID = meta.SpanID
+	dec := json.NewDecoder(strings.NewReader(trim))
+	_, _ = dec.Token()
+	for dec.More() {
+		key, _ := dec.Token()
+		var raw json.RawMessage
+		if dec.Decode(&raw) != nil {
+			break
+		}
+		if value, ok := jsonScalar(raw); ok {
+			out.Attributes = append(out.Attributes, domain.Attr{Key: key.(string), Value: value})
+		}
+	}
 
 	return out
 }
@@ -139,6 +154,12 @@ func parseLogfmt(out parsed, trim string) parsed {
 
 	out.TraceID = traceID
 	out.SpanID = spanID
+	dec := logfmt.NewDecoder(strings.NewReader(trim))
+	if dec.ScanRecord() {
+		for dec.ScanKeyval() {
+			out.Attributes = append(out.Attributes, domain.Attr{Key: string(dec.Key()), Value: logfmtValue(string(dec.Value()))})
+		}
+	}
 
 	return out
 }
@@ -165,6 +186,42 @@ func logfmtIDs(s string) (traceID, spanID string, ok bool) {
 	}
 
 	return traceID, spanID, true
+}
+
+func jsonScalar(raw json.RawMessage) (domain.Value, bool) {
+	var v any
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.UseNumber()
+	if dec.Decode(&v) != nil {
+		return domain.Value{}, false
+	}
+	switch x := v.(type) {
+	case string:
+		return domain.StringValue(x), true
+	case bool:
+		return domain.BoolValue(x), true
+	case json.Number:
+		if i, err := x.Int64(); err == nil {
+			return domain.Int64Value(i), true
+		}
+		if f, err := x.Float64(); err == nil {
+			return domain.Float64Value(f), true
+		}
+	}
+	return domain.Value{}, false
+}
+
+func logfmtValue(s string) domain.Value {
+	if b, err := strconv.ParseBool(s); err == nil {
+		return domain.BoolValue(b)
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return domain.Int64Value(i)
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return domain.Float64Value(f)
+	}
+	return domain.StringValue(s)
 }
 
 func looksLikeJSON(s string) bool {

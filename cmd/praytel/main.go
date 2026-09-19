@@ -60,6 +60,24 @@ func fmtUsage(w io.Writer) {
 }
 
 func runProcess(ctx context.Context, lt observability.LoggingTracer, mapErr bones.ErrMapper[int], args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "mcp" {
+		if err := runMCP(ctx, lt); err != nil {
+			return mapErr(err)
+		}
+		return 0
+	}
+	if len(args) > 0 && args[0] == "agent" {
+		if err := runAgentCommand(args[1:], stdout); err != nil {
+			return mapErr(err)
+		}
+		return 0
+	}
+	if len(args) > 0 && args[0] == "query" {
+		if err := runQueryCommand(args[1:], stdout); err != nil {
+			return mapErr(err)
+		}
+		return 0
+	}
 	cfg, err := parseArgs(args, stderr)
 	if err != nil {
 		return mapErr(err)

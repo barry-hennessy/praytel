@@ -57,7 +57,7 @@ func TestStopClosesEvents(t *testing.T) {
 
 func TestUntaggedLogAssignedToGlobalOrphan(t *testing.T) {
 	sweet.Run(t, "no IDs yield LogReceived on the global synthetic orphan", correlatorFactory, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "untagged", Source: domain.SourceStdout}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("untagged"), Source: domain.SourceStdout}
 
 		up := mustUpserted(t, d.out)
 		if !up.Synthetic || up.Name != "orphan" {
@@ -98,7 +98,7 @@ func TestSpanComponentAndAttributesCopiedOnUpsert(t *testing.T) {
 	sweet.Run(t, "span resource component and attributes are copied onto SpanUpserted", correlatorFactory, func(t *testing.T, d corrDeps) {
 		d.c.Spans() <- domain.Span{
 			TraceID: "t1", SpanID: "s1", Name: "work", Component: "billing",
-			Attributes: []domain.Attr{{Key: "http.method", Value: "GET"}},
+			Attributes: []domain.Attr{{Key: "http.method", Value: domain.StringValue("GET")}},
 			Ended:      true,
 		}
 
@@ -106,7 +106,7 @@ func TestSpanComponentAndAttributesCopiedOnUpsert(t *testing.T) {
 		if up.Component != "billing" || up.Name != "work" {
 			t.Fatalf("upsert %#v", up)
 		}
-		if len(up.Attributes) != 1 || up.Attributes[0].Key != "http.method" || up.Attributes[0].Value != "GET" {
+		if len(up.Attributes) != 1 || up.Attributes[0].Key != "http.method" || up.Attributes[0].Value.String() != "GET" {
 			t.Fatalf("attributes=%#v", up.Attributes)
 		}
 	})
@@ -114,7 +114,7 @@ func TestSpanComponentAndAttributesCopiedOnUpsert(t *testing.T) {
 
 func TestOTLPLogKeepsComponent(t *testing.T) {
 	sweet.Run(t, "OTLP LogLine component is copied onto LogReceived", correlatorFactory, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "otlp-body", Source: domain.SourceOTLP, Component: "helper-svc"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("otlp-body"), Source: domain.SourceOTLP, Component: "helper-svc"}
 
 		_ = mustUpserted(t, d.out)
 		rec := mustReceived(t, d.out)
@@ -134,12 +134,12 @@ func TestOTLPLogKeepsComponent(t *testing.T) {
 
 func TestUntaggedLinesShareOneGlobalOrphan(t *testing.T) {
 	sweet.Run(t, "two untagged lines share the same orphan span", correlatorFactory, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "a", Source: domain.SourceStdout}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("a"), Source: domain.SourceStdout}
 		_ = mustUpserted(t, d.out)
 		first := mustReceived(t, d.out)
 		_ = mustAssigned(t, d.out)
 
-		d.c.Logs() <- domain.LogLine{Body: "b", Source: domain.SourceStderr}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("b"), Source: domain.SourceStderr}
 		second := mustReceived(t, d.out)
 
 		if first.TraceID != second.TraceID || first.SpanID != second.SpanID {
@@ -162,7 +162,7 @@ func TestJoinLogToExistingSpan(t *testing.T) {
 			t.Fatalf("upsert %#v", up)
 		}
 
-		d.c.Logs() <- domain.LogLine{Body: "joined", Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("joined"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
 		rec := mustReceived(t, d.out)
 		if rec.Synthetic || rec.SpanID != "s1" || rec.TraceID != "t1" || rec.SpanName != "work" {
 			t.Fatalf("received %#v", rec)
@@ -177,7 +177,7 @@ func TestJoinLogToExistingSpan(t *testing.T) {
 
 func TestTraceOnlyUnknownUsesGlobalOrphan(t *testing.T) {
 	sweet.Run(t, "trace_id only on an unseen trace uses the global orphan", correlatorFactory, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "lone-trace", Source: domain.SourceStdout, TraceID: "t-unknown"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("lone-trace"), Source: domain.SourceStdout, TraceID: "t-unknown"}
 		up := mustUpserted(t, d.out)
 		if !up.Synthetic {
 			t.Fatal("expected global orphan upsert")
@@ -200,7 +200,7 @@ func TestTraceOnlyKnownUsesPerTraceOrphan(t *testing.T) {
 		d.c.Spans() <- domain.Span{TraceID: "t1", SpanID: "s1", Name: "work"}
 		_ = mustUpserted(t, d.out)
 
-		d.c.Logs() <- domain.LogLine{Body: "trace-only", Source: domain.SourceStdout, TraceID: "t1"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("trace-only"), Source: domain.SourceStdout, TraceID: "t1"}
 		orphan := mustUpserted(t, d.out)
 		if !orphan.Synthetic || orphan.TraceID != "t1" || orphan.SpanID == "s1" {
 			t.Fatalf("orphan upsert %#v", orphan)
@@ -220,7 +220,7 @@ func TestTraceOnlyKnownUsesPerTraceOrphan(t *testing.T) {
 
 func TestPendingThenAssignedWhenSpanArrives(t *testing.T) {
 	sweet.Run(t, "unseen span_id stays pending then LogAssigned with a stable id", correlatorFactory, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "early", Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("early"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
 		rec := mustReceived(t, d.out)
 		if rec.ID == "" {
 			t.Fatal("expected log id")
@@ -247,7 +247,7 @@ func TestPendingThenAssignedWhenSpanArrives(t *testing.T) {
 
 func TestPendingResolvedOnStop(t *testing.T) {
 	sweet.Run(t, "Stop drains pending onto the global orphan when the trace was never seen", correlatorFactory, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "waiting", Source: domain.SourceStderr, SpanID: "missing"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("waiting"), Source: domain.SourceStderr, SpanID: "missing"}
 		rec := mustReceived(t, d.out)
 		if rec.SpanID != "" {
 			t.Fatalf("pending received %#v", rec)
@@ -272,7 +272,7 @@ func TestPendingDrainKnownTraceUsesTraceOrphan(t *testing.T) {
 		d.c.Spans() <- domain.Span{TraceID: "t1", SpanID: "s1", Name: "work"}
 		_ = mustUpserted(t, d.out)
 
-		d.c.Logs() <- domain.LogLine{Body: "late", Source: domain.SourceStdout, TraceID: "t1", SpanID: "never"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("late"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "never"}
 		rec := mustReceived(t, d.out)
 
 		d.c.Stop()
@@ -294,7 +294,7 @@ func TestIdleDrainJoinsLateSpan(t *testing.T) {
 		t.Helper()
 		return startCorr(t, correlator.Drain{Idle: 80 * time.Millisecond, Timeout: 500 * time.Millisecond}, correlator.Limits{})
 	}, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "early", Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("early"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
 		rec := mustReceived(t, d.out)
 
 		d.c.Stop()
@@ -389,7 +389,7 @@ func TestChildBeforeParentEmitsUpsertThenLink(t *testing.T) {
 
 func TestAssignmentNotReparented(t *testing.T) {
 	sweet.Run(t, "LogAssigned is sticky when a matching trace appears later", correlatorFactory, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "early-trace", Source: domain.SourceStdout, TraceID: "t1"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("early-trace"), Source: domain.SourceStdout, TraceID: "t1"}
 		_ = mustUpserted(t, d.out)
 		rec := mustReceived(t, d.out)
 		as := mustAssigned(t, d.out)
@@ -517,13 +517,13 @@ func TestEvictOldestClosedTrace(t *testing.T) {
 		}
 		_ = mustClosed(t, d.out)
 
-		d.c.Logs() <- domain.LogLine{Body: "after-evict", Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("after-evict"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
 		rec := mustReceived(t, d.out)
 		if rec.SpanID != "" || rec.Body != "after-evict" {
 			t.Fatalf("evicted span must not still join: %#v", rec)
 		}
 
-		d.c.Logs() <- domain.LogLine{Body: "still-live", Source: domain.SourceStdout, TraceID: "t2", SpanID: "s2"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("still-live"), Source: domain.SourceStdout, TraceID: "t2", SpanID: "s2"}
 		kept := mustReceived(t, d.out)
 		if kept.SpanID != "s2" || kept.Body != "still-live" {
 			t.Fatalf("newer closed trace should remain: %#v", kept)
@@ -550,7 +550,7 @@ func TestEndedChildDoesNotCloseLiveParentTrace(t *testing.T) {
 		d.c.Spans() <- domain.Span{TraceID: "t2", SpanID: "other", Name: "other", Ended: true}
 		_ = mustShed(t, d.out)
 
-		d.c.Logs() <- domain.LogLine{Body: "parent-still-here", Source: domain.SourceStdout, TraceID: "t1", SpanID: "parent"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("parent-still-here"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "parent"}
 		rec := mustReceived(t, d.out)
 		if rec.SpanID != "parent" || rec.Body != "parent-still-here" {
 			t.Fatalf("parent should still join: %#v", rec)
@@ -579,7 +579,7 @@ func TestShedNewestWhenAllLive(t *testing.T) {
 
 		_ = mustShed(t, d.out)
 
-		d.c.Logs() <- domain.LogLine{Body: "kept-live", Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("kept-live"), Source: domain.SourceStdout, TraceID: "t1", SpanID: "s1"}
 		rec := mustReceived(t, d.out)
 		if rec.SpanID != "s1" {
 			t.Fatalf("live span should still join: %#v", rec)
@@ -606,7 +606,7 @@ func TestShedNewestLogWhenLive(t *testing.T) {
 	}
 
 	sweet.Run(t, "over log cap with no closed traces sheds the newest log", factory, func(t *testing.T, d corrDeps) {
-		d.c.Logs() <- domain.LogLine{Body: "keep", Source: domain.SourceStdout}
+		d.c.Logs() <- domain.LogLine{Body: domain.StringValue("keep"), Source: domain.SourceStdout}
 		_ = mustUpserted(t, d.out)
 		if rec := mustReceived(t, d.out); rec.Body != "keep" {
 			t.Fatalf("received %#v", rec)
@@ -614,7 +614,7 @@ func TestShedNewestLogWhenLive(t *testing.T) {
 		_ = mustAssigned(t, d.out)
 
 		select {
-		case d.c.Logs() <- domain.LogLine{Body: "drop", Source: domain.SourceStdout}:
+		case d.c.Logs() <- domain.LogLine{Body: domain.StringValue("drop"), Source: domain.SourceStdout}:
 		case <-time.After(2 * time.Second):
 			t.Fatal("inbound log blocked instead of shedding")
 		}

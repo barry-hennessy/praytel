@@ -27,6 +27,12 @@ type config struct {
 	focus        []string
 	exclude      []string
 	tui          bool
+	query        string
+	queryFile    string
+	format       string
+	emit         string
+	settleAfter  time.Duration
+	resultLimit  int
 }
 
 type stringList []string
@@ -64,6 +70,13 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
 	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
 	tuiMode := fs.Bool("tui", false, "render an interactive live trace tree")
+	queryText := fs.String("query", "", "select logs and traces with a typed query")
+	fs.StringVar(queryText, "q", "", "shorthand for --query")
+	queryFile := fs.String("query-file", "", "read a typed query from a file")
+	format := fs.String("format", "text", "query output format: text, json, or ndjson")
+	emit := fs.String("emit", "final", "query lifecycle to emit: final or settled")
+	settleAfter := fs.Duration("settle-after", 250*time.Millisecond, "quiet period before a closed trace is settled")
+	resultLimit := fs.Int("limit", 100, "maximum query results per output envelope")
 	var focus stringList
 	var exclude stringList
 	fs.Var(&focus, "focus", "admit the span path matching this glob (repeatable, union)")
@@ -75,6 +88,30 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 
 	if fs.NArg() != 0 {
 		return config{}, ErrUsage
+	}
+	if *queryText != "" && *queryFile != "" {
+		return config{}, errors.New("--query and --query-file are mutually exclusive")
+	}
+	if *format != "text" && *format != "json" && *format != "ndjson" {
+		return config{}, fmt.Errorf("invalid --format %q", *format)
+	}
+	if *emit != "final" && *emit != "settled" {
+		return config{}, fmt.Errorf("invalid --emit %q", *emit)
+	}
+	if *emit == "settled" && *format != "ndjson" {
+		return config{}, errors.New("--emit settled requires --format ndjson")
+	}
+	if (*format != "text" || *emit != "final") && *queryText == "" && *queryFile == "" {
+		return config{}, errors.New("--format and --emit require --query or --query-file")
+	}
+	if *tuiMode && (*format != "text" || *emit != "final") {
+		return config{}, errors.New("--format and --emit are not used with --tui")
+	}
+	if (*queryText != "" || *queryFile != "") && (len(focus) > 0 || len(exclude) > 0) {
+		return config{}, errors.New("--query cannot be combined with --focus or --exclude")
+	}
+	if *resultLimit <= 0 {
+		return config{}, errors.New("--limit must be positive")
 	}
 
 	idle := *drainIdle
@@ -97,6 +134,12 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 		focus:        append([]string(nil), focus...),
 		exclude:      append([]string(nil), exclude...),
 		tui:          *tuiMode,
+		query:        *queryText,
+		queryFile:    *queryFile,
+		format:       *format,
+		emit:         *emit,
+		settleAfter:  max(time.Duration(0), *settleAfter),
+		resultLimit:  *resultLimit,
 	}, nil
 }
 

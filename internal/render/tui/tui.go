@@ -14,6 +14,8 @@ import (
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	"github.com/barry-hennessy/praytel/internal/projection"
+	querylang "github.com/barry-hennessy/praytel/internal/query"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -53,9 +55,10 @@ type spanView struct {
 }
 
 type logView struct {
-	id     string
-	body   string
-	spanID string
+	id      string
+	body    string
+	traceID string
+	spanID  string
 }
 
 type eventMsg struct {
@@ -69,6 +72,8 @@ type tickMsg time.Time
 type Model struct {
 	events <-chan domain.Event
 	filt   *filter.Filter
+	fixed  *querylang.Query
+	proj   *projection.Projection
 
 	spans     map[string]*spanView
 	logs      map[string]*logView
@@ -93,6 +98,13 @@ const hscrollStep = 8
 // NewModel constructs a model. It is exported for embedding and deterministic
 // tests.
 func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
+	return NewQueryModel(events, filt, nil)
+}
+
+// NewQueryModel constructs a model with an optional checked query that limits
+// the displayed records. The interactive fuzzy search remains available and
+// narrows the query-selected view further.
+func NewQueryModel(events <-chan domain.Event, filt *filter.Filter, query *querylang.Query) Model {
 	if filt == nil {
 		filt, _ = filter.New(filter.Query{})
 	}
@@ -100,6 +112,8 @@ func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
 	return Model{
 		events: events,
 		filt:   filt,
+		fixed:  query,
+		proj:   projection.New(),
 		spans:  make(map[string]*spanView),
 		logs:   make(map[string]*logView),
 		width:  80,
@@ -108,6 +122,7 @@ func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
 	}
 }
 
+// Init begins waiting for telemetry and animation ticks.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(waitEvent(m.events), tick())
 }
@@ -125,6 +140,7 @@ func tick() tea.Cmd {
 	})
 }
 
+// Update applies one Bubble Tea message.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case eventMsg:
@@ -200,10 +216,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) apply(ev domain.Event) {
+	m.proj.Observe(ev, m.now)
 	m.filt.Observe(ev)
 	switch ev := ev.(type) {
 	case domain.SpanUpserted:
-		sp := m.ensureSpan(ev.SpanID)
+		sp := m.ensureSpan(ev.TraceID, ev.SpanID)
 		sp.traceID = ev.TraceID
 		sp.name = ev.Name
 		sp.component = ev.Component
@@ -213,34 +230,39 @@ func (m *Model) apply(ev domain.Event) {
 		sp.status = ev.Status
 		sp.attributes = ev.Attributes
 	case domain.SpanParentLinked:
-		m.ensureSpan(ev.SpanID).parentID = ev.ParentSpanID
+		m.ensureSpan(ev.TraceID, ev.SpanID).parentID = ev.ParentSpanID
 	case domain.SpanClosed:
-		m.ensureSpan(ev.SpanID).closed = true
+		m.ensureSpan(ev.TraceID, ev.SpanID).closed = true
 	case domain.LogReceived:
 		m.nextOrder++
 		spanID := ev.SpanID
 		if spanID == "" {
 			spanID = ev.DeclaredSpanID
 		}
-		m.logs[ev.ID] = &logView{id: ev.ID, body: ev.Body, spanID: spanID}
+		traceID := ev.TraceID
+		if traceID == "" {
+			traceID = ev.DeclaredTraceID
+		}
+		m.logs[ev.ID] = &logView{id: ev.ID, body: ev.Body, traceID: traceID, spanID: spanID}
 		if ev.SpanID == "" && ev.DeclaredSpanID != "" {
-			sp := m.ensureSpan(ev.DeclaredSpanID)
+			sp := m.ensureSpan(ev.DeclaredTraceID, ev.DeclaredSpanID)
 			sp.traceID = ev.DeclaredTraceID
 			sp.component = ev.Component
 			sp.name = "span/" + shortID(ev.DeclaredSpanID)
 			sp.declared = true
 		}
-		m.attachLog(ev.ID, "", spanID)
+		m.attachLog(ev.ID, "", "", traceID, spanID)
 	case domain.LogAssigned:
 		log := m.logs[ev.ID]
 		if log != nil {
-			old := log.spanID
+			oldTrace, old := log.traceID, log.spanID
+			log.traceID = ev.TraceID
 			log.spanID = ev.SpanID
-			m.attachLog(ev.ID, old, ev.SpanID)
-			sp := m.spans[old]
-			if old != ev.SpanID && sp != nil &&
+			m.attachLog(ev.ID, oldTrace, old, ev.TraceID, ev.SpanID)
+			sp := m.spans[selectionKey(oldTrace, old)]
+			if (oldTrace != ev.TraceID || old != ev.SpanID) && sp != nil &&
 				sp.declared && len(sp.logs) == 0 {
-				delete(m.spans, old)
+				delete(m.spans, selectionKey(oldTrace, old))
 			}
 		}
 	case domain.DrainComplete:
@@ -253,19 +275,20 @@ func (m *Model) apply(ev domain.Event) {
 	}
 }
 
-func (m *Model) ensureSpan(id string) *spanView {
-	if sp := m.spans[id]; sp != nil {
+func (m *Model) ensureSpan(traceID, id string) *spanView {
+	key := selectionKey(traceID, id)
+	if sp := m.spans[key]; sp != nil {
 		return sp
 	}
 	m.nextOrder++
-	sp := &spanView{id: id, observed: m.now, order: m.nextOrder}
-	m.spans[id] = sp
+	sp := &spanView{id: id, traceID: traceID, observed: m.now, order: m.nextOrder}
+	m.spans[key] = sp
 	return sp
 }
 
-func (m *Model) attachLog(id, oldSpanID, spanID string) {
-	if oldSpanID != "" && oldSpanID != spanID {
-		old := m.spans[oldSpanID]
+func (m *Model) attachLog(id, oldTraceID, oldSpanID, traceID, spanID string) {
+	if oldSpanID != "" && (oldTraceID != traceID || oldSpanID != spanID) {
+		old := m.spans[selectionKey(oldTraceID, oldSpanID)]
 		if old != nil {
 			for i, logID := range old.logs {
 				if logID == id {
@@ -278,7 +301,7 @@ func (m *Model) attachLog(id, oldSpanID, spanID string) {
 	if spanID == "" {
 		return
 	}
-	sp := m.ensureSpan(spanID)
+	sp := m.ensureSpan(traceID, spanID)
 	for _, logID := range sp.logs {
 		if logID == id {
 			return
@@ -299,6 +322,7 @@ func (m *Model) removeTrace(traceID string) {
 	}
 }
 
+// View renders the current tree and interaction panel.
 func (m Model) View() string {
 	if m.quitting {
 		return ""
@@ -340,16 +364,21 @@ func (m Model) contentHeight() int {
 }
 
 func (m Model) treeLines() []string {
+	selectedSpans, selectedLogs := m.querySelection()
 	children := make(map[string][]*spanView)
 	var roots []*spanView
 	for _, sp := range m.spans {
 		if !m.filt.InFocus(sp.id) {
 			continue
 		}
-		parent := m.spans[sp.parentID]
+		if selectedSpans != nil && !selectedSpans[selectionKey(sp.traceID, sp.id)] {
+			continue
+		}
+		parent := m.spans[selectionKey(sp.traceID, sp.parentID)]
 		if sp.parentID != "" && parent != nil &&
-			m.filt.InFocus(parent.id) {
-			children[sp.parentID] = append(children[sp.parentID], sp)
+			m.filt.InFocus(parent.id) &&
+			(selectedSpans == nil || selectedSpans[selectionKey(parent.traceID, parent.id)]) {
+			children[selectionKey(sp.traceID, sp.parentID)] = append(children[selectionKey(sp.traceID, sp.parentID)], sp)
 		} else {
 			roots = append(roots, sp)
 		}
@@ -383,10 +412,10 @@ func (m Model) treeLines() []string {
 				continue
 			}
 		}
-		m.renderSpan(&lines, root, 0, children, logMatches, highlights, visited)
+		m.renderSpan(&lines, root, 0, children, logMatches, selectedLogs, highlights, visited)
 	}
 	if len(lines) == 0 {
-		if m.query == "" {
+		if m.query == "" && m.fixed == nil {
 			return []string{
 				lipgloss.NewStyle().
 					Foreground(lipgloss.Color("245")).
@@ -402,19 +431,39 @@ func (m Model) treeLines() []string {
 	return lines
 }
 
+func selectionKey(traceID, spanID string) string { return traceID + "\x00" + spanID }
+
+func (m Model) querySelection() (map[string]bool, map[string]bool) {
+	if m.fixed == nil {
+		return nil, nil
+	}
+	spans, logs := map[string]bool{}, map[string]bool{}
+	for _, result := range m.proj.Results(m.fixed, m.now) {
+		for _, id := range result.Evidence.SelectedSpanIDs {
+			spans[selectionKey(result.TraceID, id)] = true
+		}
+		for _, id := range result.Evidence.SelectedLogIDs {
+			logs[id] = true
+		}
+	}
+	return spans, logs
+}
+
 func (m Model) renderSpan(
 	lines *[]string,
 	sp *spanView,
 	depth int,
 	children map[string][]*spanView,
 	logMatches map[string]bool,
+	selectedLogs map[string]bool,
 	highlights map[string]spanHighlight,
 	visited map[string]bool,
 ) {
-	if visited[sp.id] {
+	key := selectionKey(sp.traceID, sp.id)
+	if visited[key] {
 		return
 	}
-	visited[sp.id] = true
+	visited[key] = true
 	if m.mode == searchLogs && m.query != "" && !m.branchHasLog(
 		sp,
 		children,
@@ -424,7 +473,7 @@ func (m Model) renderSpan(
 		return
 	}
 
-	h := highlights[sp.id]
+	h := highlights[key]
 	prefix := m.bars(depth, sp.closed)
 	symbol, style := m.state(sp)
 	header := fmt.Sprintf(
@@ -443,7 +492,8 @@ func (m Model) renderSpan(
 	}
 	for _, id := range sp.logs {
 		log := m.logs[id]
-		if log == nil || (m.mode == searchLogs && m.query != "" && !logMatches[id]) {
+		if log == nil || (selectedLogs != nil && !selectedLogs[id]) ||
+			(m.mode == searchLogs && m.query != "" && !logMatches[id]) {
 			continue
 		}
 		body := clean(log.body)
@@ -453,8 +503,8 @@ func (m Model) renderSpan(
 				Render(body)
 		*lines = append(*lines, line)
 	}
-	for _, child := range children[sp.id] {
-		m.renderSpan(lines, child, depth+1, children, logMatches, highlights, visited)
+	for _, child := range children[key] {
+		m.renderSpan(lines, child, depth+1, children, logMatches, selectedLogs, highlights, visited)
 	}
 }
 
@@ -485,7 +535,7 @@ func attributesLine(attrs []domain.Attr, masks [][]bool) string {
 	base := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
 	parts := make([]string, 0, len(attrs))
 	for i, a := range attrs {
-		text := clean(a.Key) + "=" + clean(a.Value)
+		text := clean(a.Key) + "=" + clean(a.Value.String())
 		var mask []bool
 		if i < len(masks) {
 			mask = masks[i]
@@ -600,7 +650,7 @@ func matchSpan(query string, sp *spanView) (bool, spanHighlight) {
 	segments := make([]string, 0, len(sp.attributes)+2)
 	segments = append(segments, sp.traceID, spanLabel(sp))
 	for _, a := range sp.attributes {
-		segments = append(segments, a.Key+"="+a.Value)
+		segments = append(segments, a.Key+"="+a.Value.String())
 	}
 	ok, mask := fuzzyMatch(query, strings.Join(segments, " "))
 	if !ok {
@@ -622,7 +672,7 @@ func matchSpan(query string, sp *spanView) (bool, spanHighlight) {
 	return true, h
 }
 
-// spanHighlights computes matchSpan for every span, keyed by span ID, for
+// spanHighlights computes matchSpan for every span, keyed by trace and span ID, for
 // use while rendering a trace search. It is empty outside of a non-empty
 // searchTraces query, and only contains entries for spans that individually
 // matched — spans merely along for the ride in a matched trace get no
@@ -659,16 +709,17 @@ func (m Model) branchHasLog(
 	matches map[string]bool,
 	seen map[string]bool,
 ) bool {
-	if seen[sp.id] {
+	key := selectionKey(sp.traceID, sp.id)
+	if seen[key] {
 		return false
 	}
-	seen[sp.id] = true
+	seen[key] = true
 	for _, id := range sp.logs {
 		if matches[id] {
 			return true
 		}
 	}
-	for _, child := range children[sp.id] {
+	for _, child := range children[key] {
 		if m.branchHasLog(child, children, matches, seen) {
 			return true
 		}
@@ -807,10 +858,12 @@ type TUI struct {
 	lt     observability.LoggingTracer
 	events <-chan domain.Event
 	filt   *filter.Filter
+	query  *querylang.Query
 	in     io.Reader
 	out    io.Writer
 }
 
+// New constructs an unconstrained live TUI.
 func New(
 	lt observability.LoggingTracer,
 	events <-chan domain.Event,
@@ -818,7 +871,20 @@ func New(
 	out io.Writer,
 	filt *filter.Filter,
 ) TUI {
-	return TUI{lt: lt.Name("tui"), events: events, filt: filt, in: in, out: out}
+	return NewWithQuery(lt, events, in, out, filt, nil)
+}
+
+// NewWithQuery constructs a TUI whose tree is constrained by query. Query must
+// have been checked before the child starts; nil preserves the unfiltered view.
+func NewWithQuery(
+	lt observability.LoggingTracer,
+	events <-chan domain.Event,
+	in io.Reader,
+	out io.Writer,
+	filt *filter.Filter,
+	query *querylang.Query,
+) TUI {
+	return TUI{lt: lt.Name("tui"), events: events, filt: filt, query: query, in: in, out: out}
 }
 
 func (t TUI) Run(ctx context.Context) error {
@@ -829,7 +895,7 @@ func (t TUI) Run(ctx context.Context) error {
 	}
 
 	p := tea.NewProgram(
-		NewModel(t.events, t.filt),
+		NewQueryModel(t.events, t.filt, t.query),
 		tea.WithContext(ctx),
 		tea.WithInput(t.in),
 		tea.WithOutput(t.out),

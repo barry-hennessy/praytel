@@ -54,8 +54,8 @@ type Correlator struct {
 
 type forest struct {
 	traces       map[string]*traceNode
-	spans        map[string]*forestSpan
-	pending      map[string][]domain.LogLine
+	spans        map[domain.SpanKey]*forestSpan
+	pending      map[domain.SpanKey][]domain.LogLine
 	globalOrphan *forestSpan
 }
 
@@ -67,19 +67,25 @@ type traceNode struct {
 }
 
 type forestSpan struct {
-	traceID      string
-	spanID       string
-	parentSpanID string
-	name         string
-	component    string
-	synthetic    bool
-	linked       bool
-	ended        bool
-	startTime    time.Time
-	endTime      time.Time
-	status       domain.SpanStatus
-	attributes   []domain.Attr
-	logs         []domain.LogLine
+	traceID       string
+	spanID        string
+	parentSpanID  string
+	name          string
+	component     string
+	synthetic     bool
+	linked        bool
+	ended         bool
+	startTime     time.Time
+	endTime       time.Time
+	status        domain.SpanStatus
+	kind          domain.SpanKind
+	statusMessage string
+	resource      domain.Resource
+	scope         domain.Scope
+	attributes    []domain.Attr
+	events        []domain.SpanEvent
+	links         []domain.SpanLink
+	logs          []domain.LogLine
 }
 
 func New(lt observability.LoggingTracer, out chan<- domain.Event, drain Drain, limits Limits) *Correlator {
@@ -100,8 +106,8 @@ func New(lt observability.LoggingTracer, out chan<- domain.Event, drain Drain, l
 		limits: limits,
 		forest: forest{
 			traces:  make(map[string]*traceNode),
-			spans:   make(map[string]*forestSpan),
-			pending: make(map[string][]domain.LogLine),
+			spans:   make(map[domain.SpanKey]*forestSpan),
+			pending: make(map[domain.SpanKey][]domain.LogLine),
 		},
 	}
 }
@@ -306,20 +312,29 @@ func (c *Correlator) handleLog(ctx context.Context, line domain.LogLine) {
 	}
 
 	if line.SpanID != "" {
-		if sp, ok := c.forest.spans[line.SpanID]; ok {
+		if sp := c.findSpan(line.TraceID, line.SpanID); sp != nil {
 			sp.logs = append(sp.logs, line)
 			c.emitReceivedAssigned(ctx, line, sp)
 			return
 		}
 
-		c.forest.pending[line.SpanID] = append(c.forest.pending[line.SpanID], line)
+		key := domain.SpanKey{TraceID: line.TraceID, SpanID: line.SpanID}
+		c.forest.pending[key] = append(c.forest.pending[key], line)
 		c.emit(ctx, domain.LogReceived{
-			ID:              id,
-			Body:            line.Body,
-			Source:          line.Source,
-			Component:       line.Component,
-			DeclaredTraceID: line.TraceID,
-			DeclaredSpanID:  line.SpanID,
+			ID:                id,
+			Body:              line.Body.String(),
+			Source:            line.Source,
+			Component:         line.Component,
+			DeclaredTraceID:   line.TraceID,
+			DeclaredSpanID:    line.SpanID,
+			Timestamp:         line.Timestamp,
+			ObservedTimestamp: line.ObservedTimestamp,
+			SeverityNumber:    line.SeverityNumber,
+			SeverityText:      line.SeverityText,
+			BodyValue:         line.Body,
+			Resource:          line.Resource,
+			Scope:             line.Scope,
+			Attributes:        line.Attributes,
 		})
 
 		return
@@ -350,7 +365,8 @@ func (c *Correlator) handleSpan(ctx context.Context, in domain.Span) {
 		return
 	}
 
-	sp, ok := c.forest.spans[in.SpanID]
+	key := domain.SpanKey{TraceID: in.TraceID, SpanID: in.SpanID}
+	sp, ok := c.forest.spans[key]
 	if ok {
 		c.updateSpan(ctx, sp, in)
 		return
@@ -361,17 +377,23 @@ func (c *Correlator) handleSpan(ctx context.Context, in domain.Span) {
 	}
 
 	sp = &forestSpan{
-		traceID:      in.TraceID,
-		spanID:       in.SpanID,
-		parentSpanID: in.ParentSpanID,
-		name:         in.Name,
-		component:    in.Component,
-		startTime:    in.StartTime,
-		endTime:      in.EndTime,
-		status:       in.Status,
-		attributes:   in.Attributes,
+		traceID:       in.TraceID,
+		spanID:        in.SpanID,
+		parentSpanID:  in.ParentSpanID,
+		name:          in.Name,
+		component:     in.Component,
+		startTime:     in.StartTime,
+		endTime:       in.EndTime,
+		status:        in.Status,
+		kind:          in.Kind,
+		statusMessage: in.StatusMessage,
+		resource:      in.Resource,
+		scope:         in.Scope,
+		attributes:    in.Attributes,
+		events:        in.Events,
+		links:         in.Links,
 	}
-	c.forest.spans[in.SpanID] = sp
+	c.forest.spans[key] = sp
 
 	if in.TraceID != "" {
 		c.ensureTrace(in.TraceID)
@@ -416,8 +438,26 @@ func (c *Correlator) updateSpan(ctx context.Context, sp *forestSpan, in domain.S
 		if in.Status != domain.SpanStatusUnset {
 			sp.status = in.Status
 		}
+		if in.Kind != domain.SpanKindUnspecified {
+			sp.kind = in.Kind
+		}
+		if in.StatusMessage != "" {
+			sp.statusMessage = in.StatusMessage
+		}
+		if len(in.Resource.Attributes) > 0 {
+			sp.resource = in.Resource
+		}
+		if in.Scope.Name != "" || in.Scope.Version != "" || len(in.Scope.Attributes) > 0 {
+			sp.scope = in.Scope
+		}
 		if len(in.Attributes) > 0 {
 			sp.attributes = in.Attributes
+		}
+		if len(in.Events) > 0 {
+			sp.events = in.Events
+		}
+		if len(in.Links) > 0 {
+			sp.links = in.Links
 		}
 	}
 
@@ -432,12 +472,17 @@ func (c *Correlator) updateSpan(ctx context.Context, sp *forestSpan, in domain.S
 }
 
 func (c *Correlator) flushPending(ctx context.Context, sp *forestSpan) {
-	waiting := c.forest.pending[sp.spanID]
+	key := domain.SpanKey{TraceID: sp.traceID, SpanID: sp.spanID}
+	waiting := c.forest.pending[key]
+	if unscoped := c.forest.pending[domain.SpanKey{SpanID: sp.spanID}]; len(unscoped) > 0 {
+		waiting = append(waiting, unscoped...)
+		delete(c.forest.pending, domain.SpanKey{SpanID: sp.spanID})
+	}
 	if len(waiting) == 0 {
 		return
 	}
 
-	delete(c.forest.pending, sp.spanID)
+	delete(c.forest.pending, key)
 
 	for _, line := range waiting {
 		sp.logs = append(sp.logs, line)
@@ -453,7 +498,7 @@ func (c *Correlator) flushPending(ctx context.Context, sp *forestSpan) {
 
 func (c *Correlator) linkParents(ctx context.Context, sp *forestSpan) {
 	if sp.parentSpanID != "" && sp.parentSpanID != sp.spanID && !sp.linked {
-		if _, ok := c.forest.spans[sp.parentSpanID]; ok {
+		if _, ok := c.forest.spans[domain.SpanKey{TraceID: sp.traceID, SpanID: sp.parentSpanID}]; ok {
 			sp.linked = true
 			c.emit(ctx, domain.SpanParentLinked{
 				TraceID:      sp.traceID,
@@ -478,8 +523,8 @@ func (c *Correlator) linkParents(ctx context.Context, sp *forestSpan) {
 }
 
 func (c *Correlator) resolvePending(ctx context.Context) {
-	for spanID, waiting := range c.forest.pending {
-		delete(c.forest.pending, spanID)
+	for key, waiting := range c.forest.pending {
+		delete(c.forest.pending, key)
 
 		for _, line := range waiting {
 			sp := c.assignmentAtDrain(ctx, line)
@@ -500,7 +545,7 @@ func (c *Correlator) resolvePending(ctx context.Context) {
 }
 
 func (c *Correlator) assignmentAtDrain(ctx context.Context, line domain.LogLine) *forestSpan {
-	if sp, ok := c.forest.spans[line.SpanID]; ok {
+	if sp := c.findSpan(line.TraceID, line.SpanID); sp != nil {
 		return sp
 	}
 
@@ -529,16 +574,24 @@ func (c *Correlator) assignmentAtDrain(ctx context.Context, line domain.LogLine)
 
 func (c *Correlator) emitReceivedAssigned(ctx context.Context, line domain.LogLine, sp *forestSpan) {
 	c.emit(ctx, domain.LogReceived{
-		ID:              line.ID,
-		Body:            line.Body,
-		Source:          line.Source,
-		Component:       line.Component,
-		TraceID:         sp.traceID,
-		SpanID:          sp.spanID,
-		SpanName:        sp.name,
-		Synthetic:       sp.synthetic,
-		DeclaredTraceID: line.TraceID,
-		DeclaredSpanID:  line.SpanID,
+		ID:                line.ID,
+		Body:              line.Body.String(),
+		Source:            line.Source,
+		Component:         line.Component,
+		TraceID:           sp.traceID,
+		SpanID:            sp.spanID,
+		SpanName:          sp.name,
+		Synthetic:         sp.synthetic,
+		DeclaredTraceID:   line.TraceID,
+		DeclaredSpanID:    line.SpanID,
+		Timestamp:         line.Timestamp,
+		ObservedTimestamp: line.ObservedTimestamp,
+		SeverityNumber:    line.SeverityNumber,
+		SeverityText:      line.SeverityText,
+		BodyValue:         line.Body,
+		Resource:          line.Resource,
+		Scope:             line.Scope,
+		Attributes:        line.Attributes,
 	})
 	c.emit(ctx, domain.LogAssigned{
 		ID:        line.ID,
@@ -597,13 +650,13 @@ func (c *Correlator) oldestClosedTrace() string {
 }
 
 func (c *Correlator) evictTrace(ctx context.Context, traceID string) {
-	for spanID, sp := range c.forest.spans {
+	for key, sp := range c.forest.spans {
 		if sp.traceID != traceID {
 			continue
 		}
 
-		delete(c.forest.pending, spanID)
-		delete(c.forest.spans, spanID)
+		delete(c.forest.pending, key)
+		delete(c.forest.spans, key)
 	}
 
 	delete(c.forest.traces, traceID)
@@ -705,23 +758,50 @@ func (c *Correlator) newSynthSpan(traceID, name string) *forestSpan {
 		name:      name,
 		synthetic: true,
 	}
-	c.forest.spans[sp.spanID] = sp
+	c.forest.spans[domain.SpanKey{TraceID: sp.traceID, SpanID: sp.spanID}] = sp
 
 	return sp
 }
 
 func (c *Correlator) emitSpanUpserted(ctx context.Context, sp *forestSpan) {
 	c.emit(ctx, domain.SpanUpserted{
-		TraceID:    sp.traceID,
-		SpanID:     sp.spanID,
-		Name:       sp.name,
-		Component:  sp.component,
-		Synthetic:  sp.synthetic,
-		StartTime:  sp.startTime,
-		EndTime:    sp.endTime,
-		Status:     sp.status,
-		Attributes: sp.attributes,
+		TraceID:       sp.traceID,
+		SpanID:        sp.spanID,
+		ParentSpanID:  sp.parentSpanID,
+		Name:          sp.name,
+		Component:     sp.component,
+		Synthetic:     sp.synthetic,
+		StartTime:     sp.startTime,
+		EndTime:       sp.endTime,
+		Status:        sp.status,
+		Kind:          sp.kind,
+		StatusMessage: sp.statusMessage,
+		Resource:      sp.resource,
+		Scope:         sp.scope,
+		Attributes:    sp.attributes,
+		Events:        sp.events,
+		Links:         sp.links,
 	})
+}
+
+func (c *Correlator) findSpan(traceID, spanID string) *forestSpan {
+	if spanID == "" {
+		return nil
+	}
+	if traceID != "" {
+		return c.forest.spans[domain.SpanKey{TraceID: traceID, SpanID: spanID}]
+	}
+	var found *forestSpan
+	for key, span := range c.forest.spans {
+		if key.SpanID != spanID {
+			continue
+		}
+		if found != nil {
+			return nil
+		}
+		found = span
+	}
+	return found
 }
 
 func randomHex(n int) string {

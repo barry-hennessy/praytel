@@ -14,9 +14,14 @@ internal/domain      Trace, Span, LogLine, events (no join logic)
 internal/receiver    OTLP gRPC+HTTP (traces and logs) — not the Collector
 internal/capture     child stdout/stderr → LogLine
 internal/correlator  one goroutine, private forest, outbound events
-internal/filter      projection + --focus/--exclude
+internal/query       typed parser, checker, formatter, pure evaluator
+internal/projection  event-derived query read model + trace settlement
+internal/filter      legacy --focus/--exclude live admission
+internal/session     bounded in-process runs for agent integrations
+internal/agentapi    transport-neutral progressive investigation tools
 internal/render/stream
-internal/render/tui  (later: tree / summary as more Run adapters)
+internal/render/query
+internal/render/tui  live tree with typed-query selection
 ```
 
 `main` constructs one renderer and `Run`s it. Flags are primary; env vars only where OTel already uses them (`OTEL_EXPORTER_OTLP_*`). Default ports 4317/4318 with `--grpc-port` / `--http-port`.
@@ -31,15 +36,21 @@ The child sees OTLP endpoints via env. Drain after child exit: idle timeout with
 
 ## Join
 
-One correlator goroutine. Typed inbound channels (spans, OTLP logs, stdout lines). Private mutable forest (`traces`, `spans` by ID, `pending` by span ID, lazy synthetic orphans). Nobody else reads those maps.
+One correlator goroutine. Typed inbound channels (spans, OTLP logs, stdout lines). Private mutable forest (`traces`, `spans` by `(TraceID, SpanID)`, scoped pending assignments, lazy synthetic orphans). Nobody else reads those maps.
 
 Outbound **value-copy events** in `domain`: `SpanUpserted`, `SpanParentLinked`, `SpanClosed`, `LogReceived`, `LogAssigned`, `DrainComplete`, plus `ForestEvicted` / `ForestShed`. Child spans insert immediately; parent link may be late. Logs that **name** an unseen span wait until that span or drain; then assignment is sticky.
 
 Untagged logs never attach to a guessed real span. Global synthetic orphan (no IDs); per-trace synthetic orphan (`trace_id` only). See [Untagged log handling](.scratch/tickets/01-untagged-log-handling.md).
 
-## Filter
+## Selection
 
-One module, own projection from events. `--focus GLOB` / `--exclude GLOB` on component or span name. Focus is the **path** (match ∪ ancestors ∪ descendants), not the whole trace. Query language later.
+Typed queries are checked before the child starts and evaluated per trace by
+`internal/query` over an `internal/projection` read model. Selectors distinguish
+spans from logs; structural operators use final log-to-span assignment. The default
+view is **path** (match ∪ ancestors ∪ descendants), while `matches` and `trace`
+provide compact evidence and whole-trace views. CLI machine output and the TUI use
+the same evaluator. `--focus GLOB` / `--exclude GLOB` remain legacy shorthand for
+component or span-name filtering when no typed query is supplied.
 
 - Stream and TUI: **live admit** (late admission OK; stream never un-prints).
 - Buffered renderers: **`InFocus` at paint**.
@@ -65,6 +76,10 @@ Praytel’s own logs: `LoggingTracer` on **stderr**, **noop tracer**, never expo
 ## Out of scope (this architecture)
 
 Multi-process orchestration; non-TUI browse-after-exit; OTLP metrics.
+
+The optional `praytel mcp` command is a separate composition mode: its process
+owns several bounded, in-memory sessions for one MCP client. Each session still
+wraps one child, leaves no files, and is cancelled when the MCP server exits.
 
 ## Tickets
 
