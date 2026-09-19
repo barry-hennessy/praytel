@@ -14,5 +14,6 @@ can leverage both.
  - get value out of your logs in your development workflow without spinning up a docker container
 
 Run `praytel -- command` for the append-only stream, or `praytel --tui -- command`
-for a live trace/span tree. In the TUI, type to fuzzy-search traces, press Tab to
-search log bodies instead, use ↑/↓ to scroll, Esc to clear, and Ctrl-C to quit.
+for a live trace/span tree. In the TUI, type to fuzzy-search traces (matches span
+names and attributes, including trace attributes), press Tab to search log bodies
+instead, use ↑/↓ to scroll, Esc to clear, and Ctrl-C to quit.

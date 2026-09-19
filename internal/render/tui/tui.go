@@ -522,11 +522,22 @@ func (m Model) matchingTraces() map[string]bool {
 		return out
 	}
 	for _, sp := range m.spans {
-		if fuzzy(m.query, sp.traceID+" "+spanLabel(sp)) {
+		if fuzzy(m.query, sp.traceID+" "+spanLabel(sp)+" "+attrHaystack(sp)) {
 			out[sp.traceID] = true
 		}
 	}
 	return out
+}
+
+func attrHaystack(sp *spanView) string {
+	if len(sp.attributes) == 0 {
+		return ""
+	}
+	parts := make([]string, len(sp.attributes))
+	for i, a := range sp.attributes {
+		parts[i] = a.Key + "=" + a.Value
+	}
+	return strings.Join(parts, " ")
 }
 
 func (m Model) matchingLogs() map[string]bool {

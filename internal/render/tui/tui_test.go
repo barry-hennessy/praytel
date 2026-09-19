@@ -130,6 +130,28 @@ func TestSearchModesChooseTracesOrMatchingLogs(t *testing.T) {
 	}
 }
 
+func TestTraceSearchMatchesAttributeKeyOrValue(t *testing.T) {
+	m := NewModel(nil, nil)
+	m.height = 12
+	m.apply(domain.SpanUpserted{
+		TraceID: "t1", SpanID: "orders", Name: "orders",
+		Attributes: []domain.Attr{{Key: "http.status_code", Value: "500"}},
+	})
+	m.apply(domain.SpanUpserted{TraceID: "t2", SpanID: "health", Name: "health"})
+
+	m.query = "status_code"
+	byKey := m.View()
+	if !strings.Contains(byKey, "orders") || strings.Contains(byKey, "health") {
+		t.Fatalf("attribute key search selected the wrong trees:\n%s", byKey)
+	}
+
+	m.query = "500"
+	byValue := m.View()
+	if !strings.Contains(byValue, "orders") || strings.Contains(byValue, "health") {
+		t.Fatalf("attribute value search selected the wrong trees:\n%s", byValue)
+	}
+}
+
 func TestDeclaredLogContextCreatesLivePlaceholderThenHydrates(t *testing.T) {
 	m := NewModel(nil, nil)
 	m.height = 8
