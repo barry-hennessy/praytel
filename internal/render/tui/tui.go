@@ -363,10 +363,21 @@ func (m Model) contentHeight() int {
 	return max(1, m.height-3)
 }
 
-func (m Model) treeLines() []string {
+// filteredForest applies the glob focus/exclude filter (m.filt.InFocus) and
+// the compiled-query selection (m.querySelection) to m.spans -- but NOT the
+// live fuzzy search, which fuzzyVisible applies separately since its
+// mode-dependent semantics (whole-trace vs. per-branch) differ from simple
+// inclusion. treeLines and (a planned) graph view both call this so they
+// can never disagree about what's in scope.
+func (m Model) filteredForest() (
+	children map[string][]*spanView,
+	roots []*spanView,
+	inScope map[string]*spanView,
+	selectedLogs map[string]bool,
+) {
 	selectedSpans, selectedLogs := m.querySelection()
-	children := make(map[string][]*spanView)
-	var roots []*spanView
+	children = make(map[string][]*spanView)
+	inScope = make(map[string]*spanView)
 	for _, sp := range m.spans {
 		if !m.filt.InFocus(sp.id) {
 			continue
@@ -374,6 +385,7 @@ func (m Model) treeLines() []string {
 		if selectedSpans != nil && !selectedSpans[selectionKey(sp.traceID, sp.id)] {
 			continue
 		}
+		inScope[selectionKey(sp.traceID, sp.id)] = sp
 		parent := m.spans[selectionKey(sp.traceID, sp.parentID)]
 		if sp.parentID != "" && parent != nil &&
 			m.filt.InFocus(parent.id) &&
@@ -392,6 +404,33 @@ func (m Model) treeLines() []string {
 	for id := range children {
 		byOrder(children[id])
 	}
+	return children, roots, inScope, selectedLogs
+}
+
+// fuzzyVisible reports whether sp should be considered "in view" under the
+// current live search (m.mode, m.query): whole-trace in searchTraces mode
+// (any span in the trace matched), or per-branch in searchLogs mode (sp or
+// a descendant has a matching log). Always true when there is no live
+// query.
+func (m Model) fuzzyVisible(
+	sp *spanView,
+	children map[string][]*spanView,
+	traceMatches, logMatches map[string]bool,
+) bool {
+	if m.query == "" {
+		return true
+	}
+	switch m.mode {
+	case searchTraces:
+		return traceMatches[sp.traceID]
+	case searchLogs:
+		return m.branchHasLog(sp, children, logMatches, make(map[string]bool))
+	}
+	return true
+}
+
+func (m Model) treeLines() []string {
+	children, roots, _, selectedLogs := m.filteredForest()
 
 	traceMatches := m.matchingTraces()
 	logMatches := m.matchingLogs()
@@ -399,18 +438,8 @@ func (m Model) treeLines() []string {
 	var lines []string
 	visited := make(map[string]bool)
 	for _, root := range roots {
-		if m.query != "" {
-			if m.mode == searchTraces && !traceMatches[root.traceID] {
-				continue
-			}
-			if m.mode == searchLogs && !m.branchHasLog(
-				root,
-				children,
-				logMatches,
-				make(map[string]bool),
-			) {
-				continue
-			}
+		if !m.fuzzyVisible(root, children, traceMatches, logMatches) {
+			continue
 		}
 		m.renderSpan(&lines, root, 0, children, logMatches, selectedLogs, highlights, visited)
 	}
@@ -464,12 +493,7 @@ func (m Model) renderSpan(
 		return
 	}
 	visited[key] = true
-	if m.mode == searchLogs && m.query != "" && !m.branchHasLog(
-		sp,
-		children,
-		logMatches,
-		make(map[string]bool),
-	) {
+	if m.mode == searchLogs && !m.fuzzyVisible(sp, children, nil, logMatches) {
 		return
 	}
 
