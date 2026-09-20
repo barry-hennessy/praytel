@@ -29,6 +29,16 @@ const (
 	searchLogs
 )
 
+// viewMode is orthogonal to searchMode: it picks the full-screen display
+// (tree vs. component/section graph), independent of which fuzzy search
+// mode narrows it.
+type viewMode uint8
+
+const (
+	viewTree viewMode = iota
+	viewGraph
+)
+
 var depthColors = []lipgloss.Color{
 	lipgloss.Color("39"),
 	lipgloss.Color("135"),
@@ -80,6 +90,7 @@ type Model struct {
 	nextOrder int
 
 	mode     searchMode
+	view     viewMode
 	query    string
 	width    int
 	height   int
@@ -169,6 +180,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = searchLogs
 			} else {
 				m.mode = searchTraces
+			}
+			m.scroll = 0
+			m.hscroll = 0
+		case "ctrl+g":
+			if m.view == viewTree {
+				m.view = viewGraph
+			} else {
+				m.view = viewTree
 			}
 			m.scroll = 0
 			m.hscroll = 0
@@ -328,7 +347,12 @@ func (m Model) View() string {
 		return ""
 	}
 
-	lines := m.treeLines()
+	var lines []string
+	if m.view == viewGraph {
+		lines = m.graphLines()
+	} else {
+		lines = m.treeLines()
+	}
 	height := m.contentHeight()
 	maxScroll := max(0, len(lines)-height)
 	if m.scroll > maxScroll {
@@ -367,8 +391,8 @@ func (m Model) contentHeight() int {
 // the compiled-query selection (m.querySelection) to m.spans -- but NOT the
 // live fuzzy search, which fuzzyVisible applies separately since its
 // mode-dependent semantics (whole-trace vs. per-branch) differ from simple
-// inclusion. treeLines and (a planned) graph view both call this so they
-// can never disagree about what's in scope.
+// inclusion. treeLines and buildGraph both call this so they can never
+// disagree about what's in scope.
 func (m Model) filteredForest() (
 	children map[string][]*spanView,
 	roots []*spanView,
@@ -845,18 +869,24 @@ func (m Model) panel() string {
 	} else {
 		logStyle = active
 	}
+	viewLabel := "tree"
+	if m.view == viewGraph {
+		viewLabel = "graph"
+	}
+	viewStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("135")).Bold(true)
 	state := "running"
 	if m.done {
 		state = "complete"
 	}
 	line := fmt.Sprintf(
-		" %s  %s   › %s",
+		" %s  %s   %s   › %s",
 		traceStyle.Render("traces"),
 		logStyle.Render("logs"),
+		viewStyle.Render(viewLabel),
 		m.query,
 	)
 	help := fmt.Sprintf(
-		" tab mode • ↑/↓ scroll • ←/→ pan • esc clear • ctrl+q quit • %s",
+		" tab mode • ctrl+g graph • ↑/↓ scroll • ←/→ pan • esc clear • ctrl+q quit • %s",
 		state,
 	)
 	if m.hscroll > 0 {
