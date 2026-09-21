@@ -488,7 +488,6 @@ func matchGraphNode(query string, n *graphNode) (bool, graphNodeHighlight) {
 // reveals the rest.
 const (
 	minNodeInnerWidth = 8
-	maxNodeInnerWidth = 24
 	minColumnWidth    = 6
 	columnGap         = 6
 	rowGap            = 1
@@ -532,9 +531,6 @@ func nodeBoxWidth(n *graphNode) int {
 	if inner < minNodeInnerWidth {
 		inner = minNodeInnerWidth
 	}
-	if inner > maxNodeInnerWidth {
-		inner = maxNodeInnerWidth
-	}
 	return inner + 4 // "│ " + inner + " │"
 }
 
@@ -565,8 +561,39 @@ var cellStyles = map[cellStyle]lipgloss.Style{
 }
 
 type gridCell struct {
-	r     rune
-	style cellStyle
+	r        rune
+	style    cellStyle
+	lineDirs uint8 // 0 for non-line cells (text, borders, arrows); otherwise the OR of the dirXxx bits currently occupying this cell
+}
+
+// Direction bits for the box-drawing line glyphs a cell can connect to its
+// neighbors. Multiple edges' lines that cross or merge at the same cell
+// accumulate bits here (see canvas.addLine) so the rendered glyph is the
+// correct junction (a T or a cross) instead of whichever edge happened to
+// draw last blindly overwriting the others.
+const (
+	dirNorth uint8 = 1 << iota
+	dirSouth
+	dirEast
+	dirWest
+)
+
+var lineGlyphs = map[uint8]rune{
+	dirNorth | dirSouth:                     '│',
+	dirEast | dirWest:                       '─',
+	dirNorth | dirEast:                      '└',
+	dirNorth | dirWest:                      '┘',
+	dirSouth | dirEast:                      '┌',
+	dirSouth | dirWest:                      '┐',
+	dirNorth | dirSouth | dirEast:           '├',
+	dirNorth | dirSouth | dirWest:           '┤',
+	dirEast | dirWest | dirSouth:            '┬',
+	dirEast | dirWest | dirNorth:            '┴',
+	dirNorth | dirSouth | dirEast | dirWest: '┼',
+	dirNorth: '╵',
+	dirSouth: '╷',
+	dirEast:  '╶',
+	dirWest:  '╴',
 }
 
 type canvas struct {
@@ -599,6 +626,18 @@ func (c *canvas) set(row, col int, r rune, style cellStyle) {
 	c.cells[row][col] = gridCell{r: r, style: style}
 }
 
+// addLine merges dirs into whatever line directions already occupy (row,
+// col) and re-resolves the glyph from the combined set, so two edges whose
+// lines cross or merge at the same cell produce a proper junction (a T or a
+// cross) rather than one edge's draw silently erasing the other's.
+func (c *canvas) addLine(row, col int, dirs uint8, style cellStyle) {
+	if row < 0 || row >= c.h || col < 0 || col >= c.w {
+		return
+	}
+	merged := c.cells[row][col].lineDirs | dirs
+	c.cells[row][col] = gridCell{r: lineGlyphs[merged], style: style, lineDirs: merged}
+}
+
 func (c *canvas) writeText(row, col int, text string, style cellStyle) {
 	for i, r := range []rune(text) {
 		c.set(row, col+i, r, style)
@@ -615,31 +654,16 @@ func (c *canvas) writeTextMasked(row, col int, text string, mask []bool, base, h
 	}
 }
 
-// bendGlyph picks the box-drawing corner character for a line that arrives
-// from one of fromLeft/fromRight and turns toward one of toUp/toDown.
-func bendGlyph(fromLeft, fromRight, toUp, toDown bool) rune {
-	switch {
-	case fromLeft && toDown:
-		return '┐' // ┐
-	case fromRight && toDown:
-		return '┌' // ┌
-	case fromLeft && toUp:
-		return '┘' // ┘
-	case fromRight && toUp:
-		return '└' // └
-	}
-	return '┼' // ┼
-}
-
 // drawSegment draws one waypoint-to-waypoint hop as a single elbowed line
 // (straight if the row is unchanged), bending at a column midway between
 // the two endpoints. arrowAtEnd places an arrowhead at (rowTo, colTo);
 // forward picks a rightward (▶) vs. leftward (◀) arrowhead. When arrowAtEnd
 // and label is non-empty, the label is written just before the arrowhead if
 // there's room on the line -- used for a multi-edge's "(×N)" aggregate
-// count -- and silently dropped otherwise. This does not attempt collision
-// avoidance against other edges -- a documented v1 simplification -- so
-// busy graphs may show occasional overlapping lines.
+// count -- and silently dropped otherwise. Every non-arrow cell is drawn via
+// canvas.addLine rather than a direct rune, so a cell where two edges'
+// lines cross or merge resolves to the correct T/cross junction instead of
+// one edge's draw overwriting the other's.
 func (c *canvas) drawSegment(rowFrom, colFrom, rowTo, colTo int, style cellStyle, arrowAtEnd, forward bool, label string) {
 	arrowRune := '▶' // ▶
 	if !forward {
@@ -654,11 +678,11 @@ func (c *canvas) drawSegment(rowFrom, colFrom, rowTo, colTo int, style cellStyle
 			lo, hi = hi, lo
 		}
 		for x := lo; x <= hi; x++ {
-			r := rune('─')
 			if arrowAtEnd && x == colTo {
-				r = arrowRune
+				c.set(rowFrom, x, arrowRune, style)
+				continue
 			}
-			c.set(rowFrom, x, r, style)
+			c.addLine(rowFrom, x, dirEast|dirWest, style)
 		}
 		finalRow, finalLo, finalHi = rowFrom, lo, hi
 	} else {
@@ -676,30 +700,54 @@ func (c *canvas) drawSegment(rowFrom, colFrom, rowTo, colTo int, style cellStyle
 			loH, hiH = hiH, loH
 		}
 		for x := loH; x <= hiH; x++ {
-			c.set(rowFrom, x, '─', style)
+			if x == mid {
+				continue // the bend cell is set below, combined with the vertical run
+			}
+			c.addLine(rowFrom, x, dirEast|dirWest, style)
 		}
 
-		step := 1
+		loV, hiV := rowFrom, rowTo
+		if loV > hiV {
+			loV, hiV = hiV, loV
+		}
+		for y := loV; y <= hiV; y++ {
+			if y == rowFrom || y == rowTo {
+				continue // the two bend cells are set below
+			}
+			c.addLine(y, mid, dirNorth|dirSouth, style)
+		}
+
+		fromHoriz, fromVert := dirWest, dirSouth
+		if colFrom > mid {
+			fromHoriz = dirEast
+		}
 		if rowTo < rowFrom {
-			step = -1
+			fromVert = dirNorth
 		}
-		for y := rowFrom; y != rowTo; y += step {
-			c.set(y, mid, '│', style) // │
-		}
+		c.addLine(rowFrom, mid, fromHoriz|fromVert, style)
 
-		c.set(rowFrom, mid, bendGlyph(colFrom < mid, colFrom > mid, rowTo > rowFrom, rowTo < rowFrom), style)
-		c.set(rowTo, mid, bendGlyph(mid > colTo, mid < colTo, rowFrom < rowTo, rowFrom > rowTo), style)
+		toHoriz, toVert := dirEast, dirNorth
+		if mid > colTo {
+			toHoriz = dirWest
+		}
+		if rowFrom > rowTo {
+			toVert = dirSouth
+		}
+		c.addLine(rowTo, mid, toHoriz|toVert, style)
 
 		loH2, hiH2 := mid, colTo
 		if loH2 > hiH2 {
 			loH2, hiH2 = hiH2, loH2
 		}
 		for x := loH2; x <= hiH2; x++ {
-			r := rune('─')
-			if arrowAtEnd && x == colTo {
-				r = arrowRune
+			if x == mid {
+				continue
 			}
-			c.set(rowTo, x, r, style)
+			if arrowAtEnd && x == colTo {
+				c.set(rowTo, x, arrowRune, style)
+				continue
+			}
+			c.addLine(rowTo, x, dirEast|dirWest, style)
 		}
 		finalRow, finalLo, finalHi = rowTo, loH2, hiH2
 	}
@@ -824,20 +872,18 @@ func layoutGraph(g *componentGraph, highlights map[string]graphNodeHighlight) *g
 
 	cv := newCanvas(totalWidth, totalHeight)
 
+	// rightPoint/leftPoint anchor every hop to the boundary of its layer's
+	// column -- for a real node that's just outside its box border, and a
+	// dummy waypoint (which has no box) is treated identically, as a
+	// zero-width placeholder at that same boundary. This keeps every
+	// bend/vertical strictly inside the gap between columns, never inside a
+	// column's own span -- which matters because a dummy shares its layer's
+	// column with whatever real nodes are also in that layer, and those
+	// nodes' boxes fill the column's full width at their own rows.
 	centerRow := func(p *positioned) int { return topMargin + p.row*rowSlot + nodeBoxHeight/2 }
 	boxLeft := func(p *positioned) int { return colX[p.layer] }
-	rightPoint := func(p *positioned) (int, int) {
-		if p.dummy {
-			return centerRow(p), colX[p.layer] + colWidth[p.layer]/2
-		}
-		return centerRow(p), boxLeft(p) + colWidth[p.layer]
-	}
-	leftPoint := func(p *positioned) (int, int) {
-		if p.dummy {
-			return centerRow(p), colX[p.layer] + colWidth[p.layer]/2
-		}
-		return centerRow(p), boxLeft(p) - 1
-	}
+	rightPoint := func(p *positioned) (int, int) { return centerRow(p), boxLeft(p) + colWidth[p.layer] }
+	leftPoint := func(p *positioned) (int, int) { return centerRow(p), boxLeft(p) - 1 }
 
 	for _, re := range routed {
 		style := styleEdge
@@ -865,6 +911,18 @@ func layoutGraph(g *componentGraph, highlights map[string]graphNodeHighlight) *g
 				label = fmt.Sprintf("(×%d)", re.edge.count)
 			}
 			cv.drawSegment(fr, fc, tr, tc, style, arrow, forward, label)
+		}
+
+		// Each interior dummy waypoint now anchors its incoming and outgoing
+		// hops to opposite boundaries of its own column (whichever boundary
+		// faces that neighbor), so it needs a straight bridge across its own
+		// row connecting those two boundaries -- safe because a dummy's row
+		// is never shared with a real box in that same layer.
+		for i := 1; i < len(re.waypoints)-1; i++ {
+			p := positions[re.waypoints[i]]
+			row, lc := leftPoint(p)
+			_, rc := rightPoint(p)
+			cv.drawSegment(row, lc, row, rc, style, false, true, "")
 		}
 	}
 
