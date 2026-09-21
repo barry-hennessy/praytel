@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/barry-hennessy/bones/observability"
+	"github.com/barry-hennessy/praytel/cmd/praytel/internal/args"
 	"github.com/barry-hennessy/praytel/internal/capture"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	"github.com/barry-hennessy/praytel/internal/ingest"
 	querylang "github.com/barry-hennessy/praytel/internal/query"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 	queryrender "github.com/barry-hennessy/praytel/internal/render/query"
@@ -33,7 +35,7 @@ type renderer interface {
 func run(
 	ctx context.Context,
 	lt observability.LoggingTracer,
-	cfg config,
+	cfg args.Config,
 	stdin io.Reader,
 	stdout io.Writer,
 	stderr io.Writer,
@@ -53,45 +55,42 @@ func run(
 		}
 	}
 
-	filt, err := filter.New(filter.Query{Focus: cfg.focus, Exclude: cfg.exclude})
+	filt, err := filter.New(filter.Query{Focus: cfg.Focus, Exclude: cfg.Exclude})
 	if err != nil {
 		return 1, fmt.Errorf("filter: %w", err)
 	}
 
-	events := make(chan domain.Event, 64)
-	corr := correlator.New(lt, events, correlator.Drain{
-		Idle:    cfg.drainIdle,
-		Timeout: cfg.drainTimeout,
+	pipe, err := ingest.New(lt, correlator.Drain{
+		Idle:    cfg.DrainIdle,
+		Timeout: cfg.DrainTimeout,
 	}, correlator.Limits{
-		MaxSpans:    cfg.maxSpans,
-		MaxLogLines: cfg.maxLogLines,
+		MaxSpans:    cfg.MaxSpans,
+		MaxLogLines: cfg.MaxLogLines,
+	}, receiver.Ports{
+		GRPC: cfg.GRPCPort,
+		HTTP: cfg.HTTPPort,
 	})
+	if err != nil {
+		return 1, fmt.Errorf("bind otlp: %w", err)
+	}
+	events, corr, rec := pipe.Events, pipe.Corr, pipe.Rec
+
 	var view renderer
 	var queryView *queryrender.Renderer
-	if cfg.tui {
+	if cfg.TUI {
 		view = tui.NewWithQuery(lt, events, stdin, stdout, filt, compiledQuery)
 	} else if compiledQuery != nil {
 		queryView = queryrender.New(events, stdout, compiledQuery, queryrender.Options{
-			Format:      queryrender.Format(cfg.format),
-			Emit:        queryrender.Emit(cfg.emit),
-			SettleAfter: cfg.settleAfter,
-			Limit:       cfg.resultLimit,
+			Format:      queryrender.Format(cfg.Format),
+			Emit:        queryrender.Emit(cfg.Emit),
+			SettleAfter: cfg.SettleAfter,
+			Limit:       cfg.ResultLimit,
 		})
 		view = queryView
 	} else {
 		st := stream.New(lt, events, stdout, filt)
 		view = st
 	}
-
-	rec, err := receiver.Listen(lt, receiver.Ports{
-		GRPC: cfg.grpcPort,
-		HTTP: cfg.httpPort,
-	}, corr.Spans(), corr.Logs())
-	if err != nil {
-		return 1, fmt.Errorf("bind otlp: %w", err)
-	}
-
-	corr.DropIngest(rec.Drop)
 
 	outR, outW, err := os.Pipe()
 	if err != nil {
@@ -159,12 +158,12 @@ func run(
 	}()
 
 	childIn := stdin
-	if cfg.tui {
+	if cfg.TUI {
 		// The terminal belongs to Bubble Tea in interactive mode.
 		childIn = nil
 	}
 	code, started, err := startChild(
-		cfg.command,
+		cfg.Command,
 		rec.ChildEnv(),
 		childIn,
 		outW,
@@ -184,8 +183,8 @@ func run(
 	// Keep the listener in drop mode briefly so a late export hits warn
 	// instead of a closed port (issue 07). Drain idle/hard-cap already ran.
 	hold := 50 * time.Millisecond
-	if cfg.drainTimeout > 0 && hold > cfg.drainTimeout {
-		hold = cfg.drainTimeout
+	if cfg.DrainTimeout > 0 && hold > cfg.DrainTimeout {
+		hold = cfg.DrainTimeout
 	}
 	holdTimer := time.NewTimer(hold)
 	<-holdTimer.C

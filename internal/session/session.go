@@ -18,6 +18,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/capture"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/ingest"
 	"github.com/barry-hennessy/praytel/internal/projection"
 	"github.com/barry-hennessy/praytel/internal/query"
 	"github.com/barry-hennessy/praytel/internal/receiver"
@@ -316,14 +317,12 @@ func (r *run) execute() {
 }
 
 func (r *run) executePipeline() {
-	events := make(chan domain.Event, 64)
-	corr := correlator.New(r.m.lt, events, correlator.Drain{Idle: r.cfg.DrainIdle, Timeout: r.cfg.DrainTimeout}, correlator.Limits{MaxSpans: r.cfg.MaxSpans, MaxLogLines: r.cfg.MaxLogLines})
-	rec, err := receiver.Listen(r.m.lt, receiver.Ports{}, corr.Spans(), corr.Logs())
+	pipe, err := ingest.New(r.m.lt, correlator.Drain{Idle: r.cfg.DrainIdle, Timeout: r.cfg.DrainTimeout}, correlator.Limits{MaxSpans: r.cfg.MaxSpans, MaxLogLines: r.cfg.MaxLogLines}, receiver.Ports{})
 	if err != nil {
 		r.fail(false, 1, err)
 		return
 	}
-	corr.DropIngest(rec.Drop)
+	events, corr, rec := pipe.Events, pipe.Corr, pipe.Rec
 	serveCtx, cancelServe := context.WithCancel(context.Background())
 	defer cancelServe()
 	serveDone := make(chan struct{})

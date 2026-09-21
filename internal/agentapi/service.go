@@ -2,12 +2,11 @@ package agentapi
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/agentapi/internal/telemetry"
 	"github.com/barry-hennessy/praytel/internal/projection"
 	"github.com/barry-hennessy/praytel/internal/session"
 )
@@ -175,41 +174,19 @@ type DetailsInput struct {
 }
 
 // Attribute is an ordered typed telemetry attribute.
-type Attribute struct {
-	Key   string `json:"key"`
-	Value Value  `json:"value"`
-}
+type Attribute = telemetry.Attribute
 
 // Value is a JSON-safe typed telemetry value.
-type Value struct {
-	Kind    string `json:"kind"`
-	Display string `json:"display"`
-	Data    any    `json:"data,omitempty"`
-}
+type Value = telemetry.Value
 
 // Scope identifies the instrumentation library that emitted a record.
-type Scope struct {
-	Name       string      `json:"name,omitempty"`
-	Version    string      `json:"version,omitempty"`
-	Attributes []Attribute `json:"attributes,omitempty"`
-}
+type Scope = telemetry.Scope
 
 // SpanEvent is one timestamped event recorded by a span.
-type SpanEvent struct {
-	Name                   string      `json:"name"`
-	Timestamp              time.Time   `json:"timestamp"`
-	Attributes             []Attribute `json:"attributes,omitempty"`
-	DroppedAttributesCount uint32      `json:"dropped_attributes_count,omitempty"`
-}
+type SpanEvent = telemetry.SpanEvent
 
 // SpanLink identifies another span context related to a span.
-type SpanLink struct {
-	TraceID                string      `json:"trace_id"`
-	SpanID                 string      `json:"span_id"`
-	TraceState             string      `json:"trace_state,omitempty"`
-	Attributes             []Attribute `json:"attributes,omitempty"`
-	DroppedAttributesCount uint32      `json:"dropped_attributes_count,omitempty"`
-}
+type SpanLink = telemetry.SpanLink
 
 // SpanDetails is rich detail for one explicitly requested span.
 type SpanDetails struct {
@@ -257,8 +234,8 @@ func (s *Service) Details(_ context.Context, in DetailsInput) (DetailsOutput, er
 			ID: item.ID, ParentID: item.ParentID, Name: item.Name, Kind: item.Kind,
 			Status: item.Status, StatusMessage: item.StatusMessage, DurationNS: item.Duration,
 			Closed: item.Closed, Synthetic: item.Synthetic, Start: item.Start, End: item.End,
-			Resource: attributes(item.Resource.Attributes), Scope: scope(item.Scope),
-			Attributes: attributes(item.Attributes), Events: events(item.Events), Links: links(item.Links),
+			Resource: telemetry.ToAttributes(item.Resource.Attributes), Scope: telemetry.ToScope(item.Scope),
+			Attributes: telemetry.ToAttributes(item.Attributes), Events: telemetry.ToEvents(item.Events), Links: telemetry.ToLinks(item.Links),
 		}
 	}
 	return DetailsOutput{SchemaVersion, in.RunID, in.TraceID, page.Returned, page.Matched, page.Truncated, out}, nil
@@ -314,8 +291,8 @@ func (s *Service) Logs(_ context.Context, in LogsInput) (LogsOutput, error) {
 			ID: item.ID, TraceID: item.TraceID, SpanID: item.SpanID, Body: item.Body,
 			Source: string(item.Source), SeverityText: item.SeverityText, Timestamp: item.Timestamp,
 			ObservedTimestamp: item.ObservedTimestamp, SeverityNumber: item.SeverityNumber,
-			BodyValue: value(item.BodyValue), Resource: attributes(item.Resource.Attributes),
-			Scope: scope(item.Scope), Attributes: attributes(item.Attributes),
+			BodyValue: telemetry.ToValue(item.BodyValue), Resource: telemetry.ToAttributes(item.Resource.Attributes),
+			Scope: telemetry.ToScope(item.Scope), Attributes: telemetry.ToAttributes(item.Attributes),
 		}
 	}
 	return LogsOutput{SchemaVersion, in.RunID, in.TraceID, page.Returned, page.Matched, page.Truncated, out}, nil
@@ -341,62 +318,6 @@ func (s *Service) Stop(ctx context.Context, in StopInput) (StopOutput, error) {
 	}
 	state, child, err := s.sessions.Status(in.RunID)
 	return StopOutput{SchemaVersion, in.RunID, state, child}, err
-}
-
-func attributes(in []domain.Attr) []Attribute {
-	out := make([]Attribute, len(in))
-	for i, attr := range in {
-		out[i] = Attribute{attr.Key, value(attr.Value)}
-	}
-	return out
-}
-
-func scope(in domain.Scope) Scope {
-	return Scope{Name: in.Name, Version: in.Version, Attributes: attributes(in.Attributes)}
-}
-
-func events(in []domain.SpanEvent) []SpanEvent {
-	out := make([]SpanEvent, len(in))
-	for i, event := range in {
-		out[i] = SpanEvent{event.Name, event.Timestamp, attributes(event.Attributes), event.DroppedAttributesCount}
-	}
-	return out
-}
-
-func links(in []domain.SpanLink) []SpanLink {
-	out := make([]SpanLink, len(in))
-	for i, link := range in {
-		out[i] = SpanLink{link.TraceID, link.SpanID, link.TraceState, attributes(link.Attributes), link.DroppedAttributesCount}
-	}
-	return out
-}
-
-func value(in domain.Value) Value {
-	out := Value{Kind: in.Kind().String(), Display: in.String()}
-	switch in.Kind() {
-	case domain.ValueString:
-		out.Data, _ = in.AsString()
-	case domain.ValueInt64:
-		out.Data, _ = in.AsInt64()
-	case domain.ValueFloat64:
-		out.Data, _ = in.AsFloat64()
-	case domain.ValueBool:
-		out.Data, _ = in.AsBool()
-	case domain.ValueBytes:
-		b, _ := in.AsBytes()
-		out.Data = hex.EncodeToString(b)
-	case domain.ValueArray:
-		items, _ := in.AsArray()
-		values := make([]any, len(items))
-		for i, item := range items {
-			values[i] = value(item)
-		}
-		out.Data = values
-	case domain.ValueMap:
-		items, _ := in.AsMap()
-		out.Data = attributes(items)
-	}
-	return out
 }
 
 // Instructions is the concise agent playbook served by the CLI documentation

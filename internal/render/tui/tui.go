@@ -917,17 +917,6 @@ type TUI struct {
 	out    io.Writer
 }
 
-// New constructs an unconstrained live TUI.
-func New(
-	lt observability.LoggingTracer,
-	events <-chan domain.Event,
-	in io.Reader,
-	out io.Writer,
-	filt *filter.Filter,
-) TUI {
-	return NewWithQuery(lt, events, in, out, filt, nil)
-}
-
 // NewWithQuery constructs a TUI whose tree is constrained by query. Query must
 // have been checked before the child starts; nil preserves the unfiltered view.
 func NewWithQuery(

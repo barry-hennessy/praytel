@@ -6,278 +6,41 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// hierarchyPath splits a span's component and name into a container
-// hierarchy -- Component, then nested "section" segments -- plus a
-// trailing "function" leaf segment. Component.section.section...function
-// is the convention this parses; e.g. component="Foo", name="Bar.Qux.Baz"
-// yields containerPath=["Foo","Bar","Qux"], function="Baz". It mirrors
-// spanLabel's own "does name already embed component?" prefix check so
-// hierarchy parsing and the tree's display never disagree about that.
-//
-// A span with no component and no dots in its name has nothing to derive a
-// container from except the name itself, so that name becomes the
-// container (a node of its own, no separate function) rather than a
-// function with no container -- which would otherwise render as a
-// blank-labeled node.
-func hierarchyPath(component, name string) (containerPath []string, function string) {
-	if component != "" {
-		containerPath = append(containerPath, component)
-		if name == component {
-			return containerPath, ""
-		}
-		if strings.HasPrefix(name, component+".") {
-			name = name[len(component)+1:]
-		}
-	}
-	if name == "" {
-		return containerPath, ""
-	}
-	segments := strings.Split(name, ".")
-	if len(segments) == 1 {
-		if component == "" {
-			return []string{segments[0]}, ""
-		}
-		return containerPath, segments[0]
-	}
-	containerPath = append(containerPath, segments[:len(segments)-1]...)
-	return containerPath, segments[len(segments)-1]
-}
-
-func containerKey(path []string) string {
-	return strings.Join(path, "\x1f")
-}
-
-// graphNode is one container in the interconnection graph: a distinct
-// (Component, section...) path. The leaf function segment of any
-// contributing span is not itself promoted to a node (that would make the
-// graph "call graph of every method" scale); it is tallied in functions
-// instead so the detail isn't lost, just not given node status.
-type graphNode struct {
-	key       string
-	path      []string
-	spanCount int
-	functions map[string]int
-	order     int // min contributing span order, for deterministic layout
-}
-
-// graphEdge is a directed, aggregated call from one container to another --
-// built whenever a visible span's parent lives in a different container,
-// whether that crosses a Component (service) boundary or just a section
-// boundary within one Component. Both kinds fall out of the same rule; see
-// buildGraph.
-type graphEdge struct {
-	fromKey, toKey string
-	count          int
-	order          int
-}
-
-type componentGraph struct {
-	nodes map[string]*graphNode
-	edges map[[2]string]*graphEdge
-}
-
-func newComponentGraph() *componentGraph {
-	return &componentGraph{nodes: map[string]*graphNode{}, edges: map[[2]string]*graphEdge{}}
-}
-
-func (g *componentGraph) ensureNode(path []string, order int) *graphNode {
-	key := containerKey(path)
-	n, ok := g.nodes[key]
-	if !ok {
-		n = &graphNode{key: key, path: append([]string(nil), path...), functions: map[string]int{}, order: order}
-		g.nodes[key] = n
-		return n
-	}
-	if order < n.order {
-		n.order = order
-	}
-	return n
-}
-
-func (g *componentGraph) ensureEdge(fromKey, toKey string, order int) *graphEdge {
-	k := [2]string{fromKey, toKey}
-	e, ok := g.edges[k]
-	if !ok {
-		e = &graphEdge{fromKey: fromKey, toKey: toKey, order: order}
-		g.edges[k] = e
-		return e
-	}
-	if order < e.order {
-		e.order = order
-	}
-	return e
-}
-
 // buildGraph aggregates the currently filtered/visible spans (per
 // filteredForest and fuzzyVisible -- the same layers treeLines applies, so
-// the graph can never show something the tree wouldn't) into a
-// componentGraph: one node per distinct hierarchy container, one edge per
-// pair of containers connected by an observed parent/child span call.
-// Same-container calls (a function calling another function in the same
-// section) are folded into the node's own function tally rather than
-// becoming self-edges.
-func (m Model) buildGraph() *componentGraph {
+// the graph can never show something the tree wouldn't) into a graph.Graph:
+// one node per distinct hierarchy container, one edge per pair of
+// containers connected by an observed parent/child span call. The
+// aggregation rule itself (same-container calls fold into a function tally
+// rather than becoming self-edges) lives in the graph package, which knows
+// nothing about Model or live filtering; buildGraph's own job is only to
+// decide which spans are visible right now and hand their facts over.
+func (m Model) buildGraph() *graph.Graph {
 	children, _, inScope, _ := m.filteredForest()
 	traceMatches := m.matchingTraces()
 	logMatches := m.matchingLogs()
-	g := newComponentGraph()
 
+	facts := make([]graph.SpanFact, 0, len(inScope))
 	for _, sp := range inScope {
 		if !m.fuzzyVisible(sp, children, traceMatches, logMatches) {
 			continue
 		}
-		path, fn := hierarchyPath(sp.component, sp.name)
-		node := g.ensureNode(path, sp.order)
-		node.spanCount++
-		if fn != "" {
-			node.functions[fn]++
-		}
-
-		parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]
-		if sp.parentID == "" || !ok || !m.fuzzyVisible(parent, children, traceMatches, logMatches) {
-			continue
-		}
-		parentPath, _ := hierarchyPath(parent.component, parent.name)
-		parentNode := g.ensureNode(parentPath, parent.order)
-		if parentNode.key != node.key {
-			g.ensureEdge(parentNode.key, node.key, min(sp.order, parent.order)).count++
-		}
-	}
-	return g
-}
-
-// orderedNodeKeys returns g's node keys sorted by first-observed order (span
-// order), tie-broken by key, so every downstream algorithm that iterates
-// nodes gets a deterministic sequence regardless of Go's randomized map
-// iteration.
-func orderedNodeKeys(g *componentGraph) []string {
-	keys := make([]string, 0, len(g.nodes))
-	for k := range g.nodes {
-		keys = append(keys, k)
-	}
-	sort.SliceStable(keys, func(i, j int) bool {
-		ni, nj := g.nodes[keys[i]], g.nodes[keys[j]]
-		if ni.order != nj.order {
-			return ni.order < nj.order
-		}
-		return keys[i] < keys[j]
-	})
-	return keys
-}
-
-// sortedEdgeKeys returns g's edge keys similarly ordered by first-observed
-// order, tie-broken by endpoints.
-func sortedEdgeKeys(g *componentGraph) [][2]string {
-	keys := make([][2]string, 0, len(g.edges))
-	for k := range g.edges {
-		keys = append(keys, k)
-	}
-	sort.SliceStable(keys, func(i, j int) bool {
-		ei, ej := g.edges[keys[i]], g.edges[keys[j]]
-		if ei.order != ej.order {
-			return ei.order < ej.order
-		}
-		if keys[i][0] != keys[j][0] {
-			return keys[i][0] < keys[j][0]
-		}
-		return keys[i][1] < keys[j][1]
-	})
-	return keys
-}
-
-// detectFeedbackEdges splits g's edges into a forward DAG (adjacency list,
-// feedback edges excluded) plus the set of "back" edges that would close a
-// cycle in a DFS starting from nodes in order-sorted sequence. Aggregated
-// container-call graphs can cycle (A calls B in one trace, B calls A in
-// another) even though per-trace parent pointers can't, so layering must
-// tolerate this rather than assume a DAG.
-func detectFeedbackEdges(g *componentGraph) (forward map[string][]string, feedback map[[2]string]bool) {
-	forward = make(map[string][]string)
-	feedback = make(map[[2]string]bool)
-
-	adj := make(map[string][]*graphEdge)
-	for _, k := range sortedEdgeKeys(g) {
-		e := g.edges[k]
-		adj[e.fromKey] = append(adj[e.fromKey], e)
-	}
-
-	const (
-		white = 0
-		gray  = 1
-		black = 2
-	)
-	color := make(map[string]int, len(g.nodes))
-
-	var visit func(key string)
-	visit = func(key string) {
-		color[key] = gray
-		for _, e := range adj[key] {
-			switch color[e.toKey] {
-			case white:
-				forward[key] = append(forward[key], e.toKey)
-				visit(e.toKey)
-			case gray:
-				feedback[[2]string{e.fromKey, e.toKey}] = true
-			case black:
-				forward[key] = append(forward[key], e.toKey)
+		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order}
+		if sp.parentID != "" {
+			if parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]; ok && m.fuzzyVisible(parent, children, traceMatches, logMatches) {
+				fact.HasParent = true
+				fact.ParentComponent = parent.component
+				fact.ParentName = parent.name
+				fact.ParentOrder = parent.order
 			}
 		}
-		color[key] = black
+		facts = append(facts, fact)
 	}
-
-	for _, key := range orderedNodeKeys(g) {
-		if color[key] == white {
-			visit(key)
-		}
-	}
-	return forward, feedback
-}
-
-// assignLayers computes a longest-path layer (rank/column) for every node
-// using only forward edges -- feedback edges are ignored here, though they
-// are still routed and drawn later. Nodes with no forward incoming edges
-// (true roots, and nodes whose only edges were fed back) start at layer 0;
-// every other node's layer is one more than its deepest forward
-// predecessor. This is Kahn's algorithm: a node is only dequeued once every
-// forward predecessor has already been finalized, so the result is
-// deterministic regardless of queue/map iteration order.
-func assignLayers(g *componentGraph, forward map[string][]string) map[string]int {
-	indegree := make(map[string]int, len(g.nodes))
-	for k := range g.nodes {
-		indegree[k] = 0
-	}
-	for _, tos := range forward {
-		for _, to := range tos {
-			indegree[to]++
-		}
-	}
-
-	layer := make(map[string]int, len(g.nodes))
-	var queue []string
-	for _, key := range orderedNodeKeys(g) {
-		if indegree[key] == 0 {
-			queue = append(queue, key)
-			layer[key] = 0
-		}
-	}
-
-	for len(queue) > 0 {
-		key := queue[0]
-		queue = queue[1:]
-		for _, to := range forward[key] {
-			if layer[key]+1 > layer[to] {
-				layer[to] = layer[key] + 1
-			}
-			indegree[to]--
-			if indegree[to] == 0 {
-				queue = append(queue, to)
-			}
-		}
-	}
-	return layer
+	return graph.Build(facts)
 }
 
 // positioned is a node (real or a routing dummy) placed at a specific
@@ -287,7 +50,7 @@ type positioned struct {
 	layer int
 	row   int
 	dummy bool
-	node  *graphNode // nil for a dummy waypoint
+	node  *graph.Node // nil for a dummy waypoint
 }
 
 // unitEdge connects two waypoints exactly one layer apart -- the unit of
@@ -296,12 +59,12 @@ type unitEdge struct {
 	from, to string
 }
 
-// routedEdge is one original graphEdge resolved into a chain of waypoints,
+// routedEdge is one original graph.Edge resolved into a chain of waypoints,
 // each consecutive pair one layer apart, with dummy waypoints inserted at
 // every intermediate layer so long edges don't cut diagonally across
 // unrelated columns.
 type routedEdge struct {
-	edge      *graphEdge
+	edge      *graph.Edge
 	waypoints []string
 	feedback  bool
 }
@@ -312,30 +75,30 @@ type routedEdge struct {
 // resulting per-layer node lists, the unit edges used for ordering, and the
 // full waypoint chain for every original edge, used for drawing.
 func routeEdges(
-	g *componentGraph,
+	g *graph.Graph,
 	layer map[string]int,
 	feedback map[[2]string]bool,
 ) (positions map[string]*positioned, layers map[int][]string, unitEdges []unitEdge, routed []routedEdge) {
 	positions = map[string]*positioned{}
 	layers = map[int][]string{}
 
-	place := func(key string, l int, dummy bool, node *graphNode) {
+	place := func(key string, l int, dummy bool, node *graph.Node) {
 		if _, ok := positions[key]; ok {
 			return
 		}
 		positions[key] = &positioned{key: key, layer: l, dummy: dummy, node: node}
 		layers[l] = append(layers[l], key)
 	}
-	for _, key := range orderedNodeKeys(g) {
-		place(key, layer[key], false, g.nodes[key])
+	for _, key := range graph.OrderedNodeKeys(g) {
+		place(key, layer[key], false, g.Nodes[key])
 	}
 
 	dummyN := 0
-	for _, ek := range sortedEdgeKeys(g) {
-		e := g.edges[ek]
-		lf, lt := layer[e.fromKey], layer[e.toKey]
+	for _, ek := range graph.SortedEdgeKeys(g) {
+		e := g.Edges[ek]
+		lf, lt := layer[e.FromKey], layer[e.ToKey]
 		isFB := feedback[ek]
-		chain := []string{e.fromKey}
+		chain := []string{e.FromKey}
 		if lf != lt {
 			step := 1
 			if lt < lf {
@@ -348,7 +111,7 @@ func routeEdges(
 				chain = append(chain, dk)
 			}
 		}
-		chain = append(chain, e.toKey)
+		chain = append(chain, e.ToKey)
 		for i := 0; i+1 < len(chain); i++ {
 			if positions[chain[i]].layer == positions[chain[i+1]].layer {
 				continue // same-layer hop (only possible for a feedback edge); drawn as a node annotation, not a line
@@ -364,7 +127,7 @@ func nodeSortKey(p *positioned) string {
 	if p.dummy {
 		return "\xff" + p.key
 	}
-	return fmt.Sprintf("%08d:%s", p.node.order, p.key)
+	return fmt.Sprintf("%08d:%s", p.node.Order, p.key)
 }
 
 // orderLayers assigns a row index within each layer via one top-down
@@ -462,10 +225,10 @@ type graphNodeHighlight struct {
 // appears in the node's own rendered label. Only the label's portion of the
 // match mask is returned -- functions aren't rendered as their own text, so
 // there's nothing to highlight them against.
-func matchGraphNode(query string, n *graphNode) (bool, graphNodeHighlight) {
-	label := strings.Join(n.path, ".")
-	fnNames := make([]string, 0, len(n.functions))
-	for fn := range n.functions {
+func matchGraphNode(query string, n *graph.Node) (bool, graphNodeHighlight) {
+	label := strings.Join(n.Path, ".")
+	fnNames := make([]string, 0, len(n.Functions))
+	for fn := range n.Functions {
 		fnNames = append(fnNames, fn)
 	}
 	sort.Strings(fnNames)
@@ -514,15 +277,15 @@ func plural(n int) string {
 	return "s"
 }
 
-func nodeFooter(n *graphNode) string {
-	if len(n.functions) == 0 {
-		return fmt.Sprintf("%d span%s", n.spanCount, plural(n.spanCount))
+func nodeFooter(n *graph.Node) string {
+	if len(n.Functions) == 0 {
+		return fmt.Sprintf("%d span%s", n.SpanCount, plural(n.SpanCount))
 	}
-	return fmt.Sprintf("%d span%s · %d fn%s", n.spanCount, plural(n.spanCount), len(n.functions), plural(len(n.functions)))
+	return fmt.Sprintf("%d span%s · %d fn%s", n.SpanCount, plural(n.SpanCount), len(n.Functions), plural(len(n.Functions)))
 }
 
-func nodeBoxWidth(n *graphNode) int {
-	label := strings.Join(n.path, ".")
+func nodeBoxWidth(n *graph.Node) int {
+	label := strings.Join(n.Path, ".")
 	footer := nodeFooter(n)
 	inner := utf8.RuneCountInString(label)
 	if fl := utf8.RuneCountInString(footer); fl > inner {
@@ -590,10 +353,10 @@ var lineGlyphs = map[uint8]rune{
 	dirEast | dirWest | dirSouth:            '┬',
 	dirEast | dirWest | dirNorth:            '┴',
 	dirNorth | dirSouth | dirEast | dirWest: '┼',
-	dirNorth: '╵',
-	dirSouth: '╷',
-	dirEast:  '╶',
-	dirWest:  '╴',
+	dirNorth:                                '╵',
+	dirSouth:                                '╷',
+	dirEast:                                 '╶',
+	dirWest:                                 '╴',
 }
 
 type canvas struct {
@@ -764,7 +527,7 @@ func (c *canvas) drawSegment(rowFrom, colFrom, rowTo, colTo int, style cellStyle
 	}
 }
 
-func (c *canvas) drawBox(top, left, width int, n *graphNode, hl graphNodeHighlight) {
+func (c *canvas) drawBox(top, left, width int, n *graph.Node, hl graphNodeHighlight) {
 	right := left + width - 1
 	bottom := top + nodeBoxHeight - 1
 	c.set(top, left, '┌', styleBorder)
@@ -782,7 +545,7 @@ func (c *canvas) drawBox(top, left, width int, n *graphNode, hl graphNodeHighlig
 
 	inner := width - 4
 	labelCol := left + 2
-	label := truncateLabel(strings.Join(n.path, "."), inner)
+	label := truncateLabel(strings.Join(n.Path, "."), inner)
 	if hl.label != nil {
 		c.writeTextMasked(top+1, labelCol, label, hl.label, styleLabel, styleLabelMatch)
 	} else {
@@ -826,9 +589,9 @@ func (l *graphLayout) lines() []string {
 // width/height the graph naturally needs -- no attempt is made to fit the
 // current terminal size, since the result flows through the same
 // scroll/crop viewport the tree view already uses.
-func layoutGraph(g *componentGraph, highlights map[string]graphNodeHighlight) *graphLayout {
-	forward, feedback := detectFeedbackEdges(g)
-	layer := assignLayers(g, forward)
+func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *graphLayout {
+	forward, feedback := graph.DetectFeedbackEdges(g)
+	layer := graph.AssignLayers(g, forward)
 	positions, layers, unitEdges, routed := routeEdges(g, layer, feedback)
 	orderLayers(layers, positions, unitEdges)
 
@@ -907,8 +670,8 @@ func layoutGraph(g *componentGraph, highlights map[string]graphNodeHighlight) *g
 			}
 			arrow := i+2 == len(re.waypoints)
 			label := ""
-			if arrow && re.edge.count > 1 {
-				label = fmt.Sprintf("(×%d)", re.edge.count)
+			if arrow && re.edge.Count > 1 {
+				label = fmt.Sprintf("(×%d)", re.edge.Count)
 			}
 			cv.drawSegment(fr, fc, tr, tc, style, arrow, forward, label)
 		}
@@ -933,7 +696,7 @@ func layoutGraph(g *componentGraph, highlights map[string]graphNodeHighlight) *g
 				continue
 			}
 			top := topMargin + p.row*rowSlot
-			cv.drawBox(top, boxLeft(p), colWidth[p.layer], p.node, highlights[p.node.key])
+			cv.drawBox(top, boxLeft(p), colWidth[p.layer], p.node, highlights[p.node.Key])
 		}
 	}
 
@@ -946,7 +709,7 @@ func layoutGraph(g *componentGraph, highlights map[string]graphNodeHighlight) *g
 // treeLines (see filteredForest and fuzzyVisible).
 func (m Model) graphLines() []string {
 	g := m.buildGraph()
-	if len(g.nodes) == 0 {
+	if len(g.Nodes) == 0 {
 		if m.query == "" && m.fixed == nil {
 			return []string{
 				lipgloss.NewStyle().
@@ -963,7 +726,7 @@ func (m Model) graphLines() []string {
 
 	highlights := map[string]graphNodeHighlight{}
 	if m.query != "" && m.mode == searchTraces {
-		for key, n := range g.nodes {
+		for key, n := range g.Nodes {
 			if ok, h := matchGraphNode(m.query, n); ok {
 				highlights[key] = h
 			}

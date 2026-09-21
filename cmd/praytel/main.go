@@ -10,6 +10,7 @@ import (
 
 	"github.com/barry-hennessy/bones"
 	"github.com/barry-hennessy/bones/observability"
+	"github.com/barry-hennessy/praytel/cmd/praytel/internal/args"
 )
 
 func main() {
@@ -42,7 +43,7 @@ func newErrMapper(lt observability.LoggingTracer, stderr io.Writer) bones.ErrMap
 			return 0
 		}
 
-		if errors.Is(err, ErrUsage) {
+		if errors.Is(err, args.ErrUsage) {
 			fmtUsage(stderr)
 			return 1
 		}
@@ -56,29 +57,29 @@ func newErrMapper(lt observability.LoggingTracer, stderr io.Writer) bones.ErrMap
 }
 
 func fmtUsage(w io.Writer) {
-	_, _ = io.WriteString(w, ErrUsage.Error()+"\n")
+	_, _ = io.WriteString(w, args.ErrUsage.Error()+"\n")
 }
 
-func runProcess(ctx context.Context, lt observability.LoggingTracer, mapErr bones.ErrMapper[int], args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 1 && args[0] == "mcp" {
+func runProcess(ctx context.Context, lt observability.LoggingTracer, mapErr bones.ErrMapper[int], argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(argv) == 1 && argv[0] == "mcp" {
 		if err := runMCP(ctx, lt); err != nil {
 			return mapErr(err)
 		}
 		return 0
 	}
-	if len(args) > 0 && args[0] == "agent" {
-		if err := runAgentCommand(args[1:], stdout); err != nil {
+	if len(argv) > 0 && argv[0] == "agent" {
+		if err := runAgentCommand(argv[1:], stdout); err != nil {
 			return mapErr(err)
 		}
 		return 0
 	}
-	if len(args) > 0 && args[0] == "query" {
-		if err := runQueryCommand(args[1:], stdout); err != nil {
+	if len(argv) > 0 && argv[0] == "query" {
+		if err := runQueryCommand(argv[1:], stdout); err != nil {
 			return mapErr(err)
 		}
 		return 0
 	}
-	cfg, err := parseArgs(args, stderr)
+	cfg, err := args.Parse(argv, stderr)
 	if err != nil {
 		return mapErr(err)
 	}

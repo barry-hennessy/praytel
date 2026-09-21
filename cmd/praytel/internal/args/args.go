@@ -1,4 +1,5 @@
-package main
+// Package args parses praytel's command-line flags into a Config.
+package args
 
 import (
 	"errors"
@@ -12,27 +13,28 @@ import (
 	"github.com/barry-hennessy/praytel/internal/receiver"
 )
 
-var (
-	ErrUsage = errors.New("usage: praytel [flags] -- command [args ...]")
-)
+// ErrUsage is returned for any malformed invocation; callers print the usage
+// line and exit non-zero.
+var ErrUsage = errors.New("usage: praytel [flags] -- command [args ...]")
 
-type config struct {
-	command      []string
-	grpcPort     int
-	httpPort     int
-	drainIdle    time.Duration
-	drainTimeout time.Duration
-	maxSpans     int
-	maxLogLines  int
-	focus        []string
-	exclude      []string
-	tui          bool
-	query        string
-	queryFile    string
-	format       string
-	emit         string
-	settleAfter  time.Duration
-	resultLimit  int
+// Config is a validated set of flags plus the child command to run.
+type Config struct {
+	Command      []string
+	GRPCPort     int
+	HTTPPort     int
+	DrainIdle    time.Duration
+	DrainTimeout time.Duration
+	MaxSpans     int
+	MaxLogLines  int
+	Focus        []string
+	Exclude      []string
+	TUI          bool
+	Query        string
+	QueryFile    string
+	Format       string
+	Emit         string
+	SettleAfter  time.Duration
+	ResultLimit  int
 }
 
 type stringList []string
@@ -47,14 +49,16 @@ func (s *stringList) Set(v string) error {
 	return nil
 }
 
-func parseArgs(args []string, errOut io.Writer) (config, error) {
+// Parse splits args on "--" into flags and a child command, parses the
+// flags, and validates their combination.
+func Parse(args []string, errOut io.Writer) (Config, error) {
 	flags, command, ok := splitDashDash(args)
 	if !ok {
-		return config{}, ErrUsage
+		return Config{}, ErrUsage
 	}
 
 	if len(command) == 0 || strings.TrimSpace(command[0]) == "" {
-		return config{}, ErrUsage
+		return Config{}, ErrUsage
 	}
 
 	fs := flag.NewFlagSet("praytel", flag.ContinueOnError)
@@ -83,63 +87,57 @@ func parseArgs(args []string, errOut io.Writer) (config, error) {
 	fs.Var(&exclude, "exclude", "drop matching names after focus expansion (repeatable)")
 
 	if err := fs.Parse(flags); err != nil {
-		return config{}, err
+		return Config{}, err
 	}
 
 	if fs.NArg() != 0 {
-		return config{}, ErrUsage
+		return Config{}, ErrUsage
 	}
 	if *queryText != "" && *queryFile != "" {
-		return config{}, errors.New("--query and --query-file are mutually exclusive")
+		return Config{}, errors.New("--query and --query-file are mutually exclusive")
 	}
 	if *format != "text" && *format != "json" && *format != "ndjson" {
-		return config{}, fmt.Errorf("invalid --format %q", *format)
+		return Config{}, fmt.Errorf("invalid --format %q", *format)
 	}
 	if *emit != "final" && *emit != "settled" {
-		return config{}, fmt.Errorf("invalid --emit %q", *emit)
+		return Config{}, fmt.Errorf("invalid --emit %q", *emit)
 	}
 	if *emit == "settled" && *format != "ndjson" {
-		return config{}, errors.New("--emit settled requires --format ndjson")
+		return Config{}, errors.New("--emit settled requires --format ndjson")
 	}
 	if (*format != "text" || *emit != "final") && *queryText == "" && *queryFile == "" {
-		return config{}, errors.New("--format and --emit require --query or --query-file")
+		return Config{}, errors.New("--format and --emit require --query or --query-file")
 	}
 	if *tuiMode && (*format != "text" || *emit != "final") {
-		return config{}, errors.New("--format and --emit are not used with --tui")
+		return Config{}, errors.New("--format and --emit are not used with --tui")
 	}
 	if (*queryText != "" || *queryFile != "") && (len(focus) > 0 || len(exclude) > 0) {
-		return config{}, errors.New("--query cannot be combined with --focus or --exclude")
+		return Config{}, errors.New("--query cannot be combined with --focus or --exclude")
 	}
 	if *resultLimit <= 0 {
-		return config{}, errors.New("--limit must be positive")
+		return Config{}, errors.New("--limit must be positive")
 	}
 
-	idle := *drainIdle
-	if idle < 0 {
-		idle = 0
-	}
-	hard := *drainTimeout
-	if hard < 0 {
-		hard = 0
-	}
+	idle := max(0, *drainIdle)
+	hard := max(0, *drainTimeout)
 
-	return config{
-		command:      command,
-		grpcPort:     *grpcPort,
-		httpPort:     *httpPort,
-		drainIdle:    idle,
-		drainTimeout: hard,
-		maxSpans:     *maxSpans,
-		maxLogLines:  *maxLogLines,
-		focus:        append([]string(nil), focus...),
-		exclude:      append([]string(nil), exclude...),
-		tui:          *tuiMode,
-		query:        *queryText,
-		queryFile:    *queryFile,
-		format:       *format,
-		emit:         *emit,
-		settleAfter:  max(time.Duration(0), *settleAfter),
-		resultLimit:  *resultLimit,
+	return Config{
+		Command:      command,
+		GRPCPort:     *grpcPort,
+		HTTPPort:     *httpPort,
+		DrainIdle:    idle,
+		DrainTimeout: hard,
+		MaxSpans:     *maxSpans,
+		MaxLogLines:  *maxLogLines,
+		Focus:        append([]string(nil), focus...),
+		Exclude:      append([]string(nil), exclude...),
+		TUI:          *tuiMode,
+		Query:        *queryText,
+		QueryFile:    *queryFile,
+		Format:       *format,
+		Emit:         *emit,
+		SettleAfter:  max(time.Duration(0), *settleAfter),
+		ResultLimit:  *resultLimit,
 	}, nil
 }
 

@@ -14,6 +14,7 @@ internal/domain      Trace, Span, LogLine, events (no join logic)
 internal/receiver    OTLP gRPC+HTTP (traces and logs) — not the Collector
 internal/capture     child stdout/stderr → LogLine
 internal/correlator  one goroutine, private forest, outbound events
+internal/ingest      wires one correlator to its listening receiver
 internal/query       typed parser, checker, formatter, pure evaluator
 internal/projection  event-derived query read model + trace settlement
 internal/filter      legacy --focus/--exclude live admission

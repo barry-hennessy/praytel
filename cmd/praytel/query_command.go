@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/barry-hennessy/praytel/cmd/praytel/internal/args"
 	"github.com/barry-hennessy/praytel/internal/query"
 )
 
@@ -31,11 +32,11 @@ func runQueryCommand(args []string, stdout io.Writer) error {
 	}
 }
 
-func querySource(cfg config) (string, error) {
-	if cfg.queryFile == "" {
-		return cfg.query, nil
+func querySource(cfg args.Config) (string, error) {
+	if cfg.QueryFile == "" {
+		return cfg.Query, nil
 	}
-	b, err := os.ReadFile(cfg.queryFile)
+	b, err := os.ReadFile(cfg.QueryFile)
 	if err != nil {
 		return "", fmt.Errorf("read query file: %w", err)
 	}
