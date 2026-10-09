@@ -13,9 +13,10 @@ import (
 )
 
 // The pure graph-aggregation and layering algorithm (containerKey,
-// hierarchyPath, componentGraph, assignLayers, detectFeedbackEdges, and
-// graph.Build's own aggregation rule) is tested directly, as an external
-// caller, in internal/render/tui/internal/graph. The tests below exercise
+// hierarchyPath, componentGraph, detectFeedbackEdges, and graph.Build's own
+// aggregation rule) is tested directly, as an external caller, in
+// internal/render/tui/internal/graph, and node placement in its layout
+// subpackage. The tests below exercise
 // Model's live-filtering integration -- focus globs, typed queries, and
 // fuzzy search narrowing the graph -- which has no meaning apart from
 // Model's own state, so there is no cleaner surface to test it through
@@ -145,12 +146,12 @@ func TestGraphViewRendersBoxesLabelsAndAggregatedEdgeCount(t *testing.T) {
 	m.view = viewGraph
 
 	view := m.View()
-	for _, want := range []string{"api", "db", "\u25b6", "(\u00d72)"} {
+	for _, want := range []string{"api", "db", "\u25b6", "\u00d72"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("graph view missing %q:\n%s", want, view)
 		}
 	}
-	if !strings.ContainsAny(view, "\u250c\u2510\u2514\u2518") {
+	if !strings.ContainsAny(view, "\u256d\u256e\u2570\u256f") {
 		t.Fatalf("graph view has no box corners:\n%s", view)
 	}
 }

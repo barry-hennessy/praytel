@@ -159,7 +159,7 @@ func nodeKeys(g *graph.Graph) []string {
 	return keys
 }
 
-func TestAssignLayersRanksALinearChain(t *testing.T) {
+func TestDetectFeedbackEdgesFindsNoneInALinearChain(t *testing.T) {
 	g := graph.New()
 	a := g.EnsureNode([]string{"A"}, 1)
 	b := g.EnsureNode([]string{"B"}, 2)
@@ -167,13 +167,9 @@ func TestAssignLayersRanksALinearChain(t *testing.T) {
 	g.EnsureEdge(a.Key, b.Key, 1).Count++
 	g.EnsureEdge(b.Key, c.Key, 2).Count++
 
-	forward, feedback := graph.DetectFeedbackEdges(g)
+	_, feedback := graph.DetectFeedbackEdges(g)
 	if len(feedback) != 0 {
 		t.Fatalf("expected no feedback edges in a linear chain, got %v", feedback)
-	}
-	layer := graph.AssignLayers(g, forward)
-	if layer[a.Key] != 0 || layer[b.Key] != 1 || layer[c.Key] != 2 {
-		t.Fatalf("layers = %v, want A:0 B:1 C:2", layer)
 	}
 }
 
@@ -184,16 +180,9 @@ func TestDetectFeedbackEdgesTerminatesAndFlagsExactlyOneEdgeInATwoCycle(t *testi
 	g.EnsureEdge(a.Key, b.Key, 1).Count++
 	g.EnsureEdge(b.Key, a.Key, 2).Count++
 
-	forward, feedback := graph.DetectFeedbackEdges(g)
+	_, feedback := graph.DetectFeedbackEdges(g)
 	if len(feedback) != 1 {
 		t.Fatalf("expected exactly one feedback edge in a 2-cycle, got %d: %v", len(feedback), feedback)
-	}
-	layer := graph.AssignLayers(g, forward)
-	if _, ok := layer[a.Key]; !ok {
-		t.Fatalf("node A has no assigned layer")
-	}
-	if _, ok := layer[b.Key]; !ok {
-		t.Fatalf("node B has no assigned layer")
 	}
 }
 
@@ -217,10 +206,5 @@ func TestDetectFeedbackEdgesIsDeterministic(t *testing.T) {
 	}
 	if !reflect.DeepEqual(fb1, fb2) {
 		t.Fatalf("feedback set not deterministic: %v vs %v", fb1, fb2)
-	}
-	l1 := graph.AssignLayers(g1, f1)
-	l2 := graph.AssignLayers(g2, f2)
-	if !reflect.DeepEqual(l1, l2) {
-		t.Fatalf("layer assignment not deterministic: %v vs %v", l1, l2)
 	}
 }

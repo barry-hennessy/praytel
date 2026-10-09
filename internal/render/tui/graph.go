@@ -2,11 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
+	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph/layout"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -41,175 +43,6 @@ func (m Model) buildGraph() *graph.Graph {
 		facts = append(facts, fact)
 	}
 	return graph.Build(facts)
-}
-
-// positioned is a node (real or a routing dummy) placed at a specific
-// layer/row in the final layout.
-type positioned struct {
-	key   string
-	layer int
-	row   int
-	dummy bool
-	node  *graph.Node // nil for a dummy waypoint
-}
-
-// unitEdge connects two waypoints exactly one layer apart -- the unit of
-// both routing and barycenter ordering.
-type unitEdge struct {
-	from, to string
-}
-
-// routedEdge is one original graph.Edge resolved into a chain of waypoints,
-// each consecutive pair one layer apart, with dummy waypoints inserted at
-// every intermediate layer so long edges don't cut diagonally across
-// unrelated columns.
-type routedEdge struct {
-	edge      *graph.Edge
-	waypoints []string
-	feedback  bool
-}
-
-// routeEdges places every real node at its assigned layer, inserts dummy
-// waypoints for edges spanning more than one layer (in either direction --
-// a feedback edge can span layers just like a forward one), and returns the
-// resulting per-layer node lists, the unit edges used for ordering, and the
-// full waypoint chain for every original edge, used for drawing.
-func routeEdges(
-	g *graph.Graph,
-	layer map[string]int,
-	feedback map[[2]string]bool,
-) (positions map[string]*positioned, layers map[int][]string, unitEdges []unitEdge, routed []routedEdge) {
-	positions = map[string]*positioned{}
-	layers = map[int][]string{}
-
-	place := func(key string, l int, dummy bool, node *graph.Node) {
-		if _, ok := positions[key]; ok {
-			return
-		}
-		positions[key] = &positioned{key: key, layer: l, dummy: dummy, node: node}
-		layers[l] = append(layers[l], key)
-	}
-	for _, key := range graph.OrderedNodeKeys(g) {
-		place(key, layer[key], false, g.Nodes[key])
-	}
-
-	dummyN := 0
-	for _, ek := range graph.SortedEdgeKeys(g) {
-		e := g.Edges[ek]
-		lf, lt := layer[e.FromKey], layer[e.ToKey]
-		isFB := feedback[ek]
-		chain := []string{e.FromKey}
-		if lf != lt {
-			step := 1
-			if lt < lf {
-				step = -1
-			}
-			for l := lf + step; l != lt; l += step {
-				dummyN++
-				dk := fmt.Sprintf("\x00d%d", dummyN)
-				place(dk, l, true, nil)
-				chain = append(chain, dk)
-			}
-		}
-		chain = append(chain, e.ToKey)
-		for i := 0; i+1 < len(chain); i++ {
-			if positions[chain[i]].layer == positions[chain[i+1]].layer {
-				continue // same-layer hop (only possible for a feedback edge); drawn as a node annotation, not a line
-			}
-			unitEdges = append(unitEdges, unitEdge{from: chain[i], to: chain[i+1]})
-		}
-		routed = append(routed, routedEdge{edge: e, waypoints: chain, feedback: isFB})
-	}
-	return positions, layers, unitEdges, routed
-}
-
-func nodeSortKey(p *positioned) string {
-	if p.dummy {
-		return "\xff" + p.key
-	}
-	return fmt.Sprintf("%08d:%s", p.node.Order, p.key)
-}
-
-// orderLayers assigns a row index within each layer via one top-down
-// barycenter pass (order by mean row of predecessors in the previous
-// layer) followed by one bottom-up pass (mean row of successors), seeded
-// with an order-sorted initial placement and tie-broken by it throughout.
-// This is a "good enough for a terminal" heuristic, not full
-// crossing-minimization -- overkill at TUI scale.
-func orderLayers(layers map[int][]string, positions map[string]*positioned, unitEdges []unitEdge) {
-	maxLayer := 0
-	for l := range layers {
-		if l > maxLayer {
-			maxLayer = l
-		}
-	}
-
-	for l, keys := range layers {
-		sorted := append([]string(nil), keys...)
-		sort.SliceStable(sorted, func(i, j int) bool {
-			return nodeSortKey(positions[sorted[i]]) < nodeSortKey(positions[sorted[j]])
-		})
-		layers[l] = sorted
-		for i, k := range sorted {
-			positions[k].row = i
-		}
-	}
-
-	predecessors := map[string][]string{}
-	successors := map[string][]string{}
-	for _, ue := range unitEdges {
-		a, b := positions[ue.from], positions[ue.to]
-		switch {
-		case a.layer+1 == b.layer:
-			successors[a.key] = append(successors[a.key], b.key)
-			predecessors[b.key] = append(predecessors[b.key], a.key)
-		case b.layer+1 == a.layer:
-			successors[b.key] = append(successors[b.key], a.key)
-			predecessors[a.key] = append(predecessors[a.key], b.key)
-		}
-	}
-
-	reorder := func(l int, neighbors map[string][]string) {
-		keys := layers[l]
-		type scored struct {
-			key   string
-			score float64
-			has   bool
-		}
-		sc := make([]scored, len(keys))
-		for i, k := range keys {
-			ns := neighbors[k]
-			if len(ns) == 0 {
-				sc[i] = scored{key: k}
-				continue
-			}
-			sum := 0
-			for _, n := range ns {
-				sum += positions[n].row
-			}
-			sc[i] = scored{key: k, score: float64(sum) / float64(len(ns)), has: true}
-		}
-		sort.SliceStable(sc, func(i, j int) bool {
-			if sc[i].has != sc[j].has {
-				return sc[i].has
-			}
-			if sc[i].has && sc[i].score != sc[j].score {
-				return sc[i].score < sc[j].score
-			}
-			return nodeSortKey(positions[sc[i].key]) < nodeSortKey(positions[sc[j].key])
-		})
-		for i, s := range sc {
-			layers[l][i] = s.key
-			positions[s.key].row = i
-		}
-	}
-
-	for l := 1; l <= maxLayer; l++ {
-		reorder(l, predecessors)
-	}
-	for l := maxLayer - 1; l >= 0; l-- {
-		reorder(l, successors)
-	}
 }
 
 // graphNodeHighlight mirrors spanHighlight at container granularity: which
@@ -252,12 +85,21 @@ func matchGraphNode(query string, n *graph.Node) (bool, graphNodeHighlight) {
 const (
 	minNodeInnerWidth = 8
 	minColumnWidth    = 6
-	columnGap         = 6
 	rowGap            = 1
 	nodeBoxHeight     = 4
 	leftMargin        = 1
 	topMargin         = 1
+
+	// The gap between two columns is gapLead cells of line out of the left
+	// column, one vertical track per bus spaced trackPitch apart, then
+	// gapTail cells into the right column, the last of which holds the
+	// arrowhead. Count labels widen the lead or tail they sit in.
+	gapLead    = 2
+	gapTail    = 3
+	trackPitch = 2
 )
+
+var placeOptions = layout.Options{NodeHeight: nodeBoxHeight, RowGap: rowGap}
 
 func truncateLabel(s string, max int) string {
 	r := []rune(s)
@@ -305,28 +147,72 @@ type cellStyle uint8
 
 const (
 	styleDefault cellStyle = iota
-	styleBorder
-	styleLabel
 	styleLabelMatch
 	styleFooter
-	styleEdge
+	styleCrossing
+
+	// Edge styles are in precedence order: where lines of different styles
+	// share a cell, the later one wins.
 	styleEdgeFeedback
+	styleEdgeLight
+	styleEdge
+	styleEdgeHeavy
+
+	// styleComponent+i draws a box in depthColors[i].
+	styleComponent
 )
 
-var cellStyles = map[cellStyle]lipgloss.Style{
-	styleDefault:      lipgloss.NewStyle(),
-	styleBorder:       lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-	styleLabel:        lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-	styleLabelMatch:   matchHighlightStyle,
-	styleFooter:       lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true),
-	styleEdge:         lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
-	styleEdgeFeedback: lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
+var cellStyles = func() []lipgloss.Style {
+	styles := []lipgloss.Style{
+		styleDefault:      lipgloss.NewStyle(),
+		styleLabelMatch:   matchHighlightStyle,
+		styleFooter:       lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true),
+		styleCrossing:     lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+		styleEdgeFeedback: lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
+		styleEdgeLight:    lipgloss.NewStyle().Foreground(lipgloss.Color("31")),
+		styleEdge:         lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
+		styleEdgeHeavy:    lipgloss.NewStyle().Foreground(lipgloss.Color("87")).Bold(true),
+	}
+	for _, color := range depthColors {
+		styles = append(styles, lipgloss.NewStyle().Foreground(color))
+	}
+	return styles
+}()
+
+// componentStyle picks a box color from the component name alone, so a
+// component keeps its color as other components come and go and all of one
+// component's sections read as a group.
+func componentStyle(component string) cellStyle {
+	h := fnv.New32a()
+	h.Write([]byte(component))
+	return styleComponent + cellStyle(h.Sum32()%uint32(len(depthColors)))
+}
+
+// edgeWeightStyle buckets an edge's call count against the graph's range,
+// so the busiest calls stand out. Weight is carried by color rather than by
+// heavier glyphs because box-drawing has no heavy rounded corners.
+func edgeWeightStyle(g *graph.Graph) func(count int) cellStyle {
+	lo, hi := 0, 0
+	for _, e := range g.Edges {
+		if lo == 0 || e.Count < lo {
+			lo = e.Count
+		}
+		hi = max(hi, e.Count)
+	}
+	return func(count int) cellStyle {
+		if hi == lo {
+			return styleEdge
+		}
+		return styleEdgeLight + cellStyle((count-lo)*2/(hi-lo))
+	}
 }
 
 type gridCell struct {
 	r        rune
 	style    cellStyle
 	lineDirs uint8 // 0 for non-line cells (text, borders, arrows); otherwise the OR of the dirXxx bits currently occupying this cell
+	bend     bool  // some line turns or ends here, as opposed to every line passing straight through
+	lines    uint8 // how many traced lines cover this cell
 }
 
 // Direction bits for the box-drawing line glyphs a cell can connect to its
@@ -344,19 +230,33 @@ const (
 var lineGlyphs = map[uint8]rune{
 	dirNorth | dirSouth:                     '│',
 	dirEast | dirWest:                       '─',
-	dirNorth | dirEast:                      '└',
-	dirNorth | dirWest:                      '┘',
-	dirSouth | dirEast:                      '┌',
-	dirSouth | dirWest:                      '┐',
+	dirNorth | dirEast:                      '╰',
+	dirNorth | dirWest:                      '╯',
+	dirSouth | dirEast:                      '╭',
+	dirSouth | dirWest:                      '╮',
 	dirNorth | dirSouth | dirEast:           '├',
 	dirNorth | dirSouth | dirWest:           '┤',
 	dirEast | dirWest | dirSouth:            '┬',
 	dirEast | dirWest | dirNorth:            '┴',
 	dirNorth | dirSouth | dirEast | dirWest: '┼',
-	dirNorth:                                '╵',
-	dirSouth:                                '╷',
-	dirEast:                                 '╶',
-	dirWest:                                 '╴',
+}
+
+// glyph resolves what a cell shows. Two things can't be decided until every
+// line is down: a four-way cell that nothing bends in is two unrelated
+// lines crossing, drawn dim so each reads as continuing straight through
+// rather than as a junction; and a feedback line's straight runs are dashed.
+func (g gridCell) glyph() (rune, cellStyle) {
+	switch {
+	case g.lineDirs == 0:
+		return g.r, g.style
+	case g.lineDirs == dirNorth|dirSouth|dirEast|dirWest && !g.bend:
+		return '┼', styleCrossing
+	case g.style == styleEdgeFeedback && g.lineDirs == dirEast|dirWest:
+		return '╌', g.style
+	case g.style == styleEdgeFeedback && g.lineDirs == dirNorth|dirSouth:
+		return '╎', g.style
+	}
+	return lineGlyphs[g.lineDirs], g.style
 }
 
 type canvas struct {
@@ -390,15 +290,72 @@ func (c *canvas) set(row, col int, r rune, style cellStyle) {
 }
 
 // addLine merges dirs into whatever line directions already occupy (row,
-// col) and re-resolves the glyph from the combined set, so two edges whose
-// lines cross or merge at the same cell produce a proper junction (a T or a
-// cross) rather than one edge's draw silently erasing the other's.
-func (c *canvas) addLine(row, col int, dirs uint8, style cellStyle) {
+// col), so two edges whose lines cross or merge at the same cell produce a
+// proper junction (a T or a cross) rather than one edge's draw silently
+// erasing the other's.
+func (c *canvas) addLine(row, col int, dirs uint8, style cellStyle, bend bool) {
 	if row < 0 || row >= c.h || col < 0 || col >= c.w {
 		return
 	}
-	merged := c.cells[row][col].lineDirs | dirs
-	c.cells[row][col] = gridCell{r: lineGlyphs[merged], style: style, lineDirs: merged}
+	cell := &c.cells[row][col]
+	if cell.lineDirs != 0 {
+		style = max(style, cell.style)
+	}
+	*cell = gridCell{style: style, lineDirs: cell.lineDirs | dirs, bend: cell.bend || bend, lines: cell.lines + 1}
+}
+
+type cellPos struct {
+	row, col int
+}
+
+// trace draws one continuous line through pts, each consecutive pair of
+// which shares a row or a column. Both end cells are drawn as full line
+// segments rather than half stubs, since a line ends against a box or under
+// an arrowhead.
+func (c *canvas) trace(pts []cellPos, style cellStyle) {
+	cells := []cellPos{pts[0]}
+	for _, p := range pts[1:] {
+		for q := cells[len(cells)-1]; q != p; {
+			q.row += sign(p.row - q.row)
+			q.col += sign(p.col - q.col)
+			cells = append(cells, q)
+		}
+	}
+	toward := func(from, to cellPos) uint8 {
+		switch {
+		case to.row < from.row:
+			return dirNorth
+		case to.row > from.row:
+			return dirSouth
+		case to.col > from.col:
+			return dirEast
+		}
+		return dirWest
+	}
+	for i, p := range cells {
+		var dirs uint8
+		if i > 0 {
+			dirs |= toward(p, cells[i-1])
+		}
+		if i+1 < len(cells) {
+			dirs |= toward(p, cells[i+1])
+		}
+		straight := dirs == dirNorth|dirSouth || dirs == dirEast|dirWest
+		if i == 0 || i+1 == len(cells) {
+			dirs = dirEast | dirWest
+		}
+		c.addLine(p.row, p.col, dirs, style, !straight)
+	}
+}
+
+func sign(n int) int {
+	switch {
+	case n < 0:
+		return -1
+	case n > 0:
+		return 1
+	}
+	return 0
 }
 
 func (c *canvas) writeText(row, col int, text string, style cellStyle) {
@@ -417,140 +374,72 @@ func (c *canvas) writeTextMasked(row, col int, text string, mask []bool, base, h
 	}
 }
 
-// drawSegment draws one waypoint-to-waypoint hop as a single elbowed line
-// (straight if the row is unchanged), bending at a column midway between
-// the two endpoints. arrowAtEnd places an arrowhead at (rowTo, colTo);
-// forward picks a rightward (▶) vs. leftward (◀) arrowhead. When arrowAtEnd
-// and label is non-empty, the label is written just before the arrowhead if
-// there's room on the line -- used for a multi-edge's "(×N)" aggregate
-// count -- and silently dropped otherwise. Every non-arrow cell is drawn via
-// canvas.addLine rather than a direct rune, so a cell where two edges'
-// lines cross or merge resolves to the correct T/cross junction instead of
-// one edge's draw overwriting the other's.
-func (c *canvas) drawSegment(rowFrom, colFrom, rowTo, colTo int, style cellStyle, arrowAtEnd, forward bool, label string) {
-	arrowRune := '▶' // ▶
-	if !forward {
-		arrowRune = '◀' // ◀
+// writeLabel puts text over a stretch of line, but only where that stretch
+// (and a cell either side, so the label reads as sitting on the line) is
+// one edge's plain horizontal run -- never over a bend, a crossing, or a
+// run several edges share, where a count would be attributed to the wrong
+// edge. It reports whether the label fit.
+func (c *canvas) writeLabel(row, col int, text string) bool {
+	n := utf8.RuneCountInString(text)
+	if row < 0 || row >= c.h || col < 1 || col+n >= c.w {
+		return false
 	}
-
-	var finalRow, finalLo, finalHi int
-
-	if rowFrom == rowTo {
-		lo, hi := colFrom, colTo
-		if lo > hi {
-			lo, hi = hi, lo
+	for _, cell := range c.cells[row][col-1 : col+n+1] {
+		if cell.lineDirs != dirEast|dirWest || cell.lines != 1 || cell.bend {
+			return false
 		}
-		for x := lo; x <= hi; x++ {
-			if arrowAtEnd && x == colTo {
-				c.set(rowFrom, x, arrowRune, style)
-				continue
-			}
-			c.addLine(rowFrom, x, dirEast|dirWest, style)
-		}
-		finalRow, finalLo, finalHi = rowFrom, lo, hi
-	} else {
-		mid := colFrom + (colTo-colFrom)/2
-		if mid == colFrom {
-			if colTo > colFrom {
-				mid++
-			} else {
-				mid--
-			}
-		}
-
-		loH, hiH := colFrom, mid
-		if loH > hiH {
-			loH, hiH = hiH, loH
-		}
-		for x := loH; x <= hiH; x++ {
-			if x == mid {
-				continue // the bend cell is set below, combined with the vertical run
-			}
-			c.addLine(rowFrom, x, dirEast|dirWest, style)
-		}
-
-		loV, hiV := rowFrom, rowTo
-		if loV > hiV {
-			loV, hiV = hiV, loV
-		}
-		for y := loV; y <= hiV; y++ {
-			if y == rowFrom || y == rowTo {
-				continue // the two bend cells are set below
-			}
-			c.addLine(y, mid, dirNorth|dirSouth, style)
-		}
-
-		fromHoriz, fromVert := dirWest, dirSouth
-		if colFrom > mid {
-			fromHoriz = dirEast
-		}
-		if rowTo < rowFrom {
-			fromVert = dirNorth
-		}
-		c.addLine(rowFrom, mid, fromHoriz|fromVert, style)
-
-		toHoriz, toVert := dirEast, dirNorth
-		if mid > colTo {
-			toHoriz = dirWest
-		}
-		if rowFrom > rowTo {
-			toVert = dirSouth
-		}
-		c.addLine(rowTo, mid, toHoriz|toVert, style)
-
-		loH2, hiH2 := mid, colTo
-		if loH2 > hiH2 {
-			loH2, hiH2 = hiH2, loH2
-		}
-		for x := loH2; x <= hiH2; x++ {
-			if x == mid {
-				continue
-			}
-			if arrowAtEnd && x == colTo {
-				c.set(rowTo, x, arrowRune, style)
-				continue
-			}
-			c.addLine(rowTo, x, dirEast|dirWest, style)
-		}
-		finalRow, finalLo, finalHi = rowTo, loH2, hiH2
 	}
+	c.writeText(row, col, text, styleFooter)
+	return true
+}
 
-	if arrowAtEnd && label != "" && colTo >= finalLo && colTo <= finalHi {
-		labelRunes := utf8.RuneCountInString(label)
-		start := colTo - labelRunes - 1
-		if !forward {
-			start = colTo + 2
+// labelLine writes text on the first free stretch of the line through pts,
+// searching from its last point back toward its first if fromEnd, so the
+// label sits as near that end as it can. It is dropped if the line has no
+// stretch to itself that is long enough.
+func (c *canvas) labelLine(pts []cellPos, text string, fromEnd bool) {
+	n := utf8.RuneCountInString(text)
+	for i := range len(pts) - 1 {
+		a, b := pts[i], pts[i+1]
+		if fromEnd {
+			a, b = pts[len(pts)-2-i], pts[len(pts)-1-i]
 		}
-		if start >= finalLo && start+labelRunes-1 <= finalHi {
-			c.writeText(finalRow, start, label, styleFooter)
+		if a.row != b.row {
+			continue
+		}
+		for col := b.col - n; col >= a.col; col-- {
+			at := col
+			if !fromEnd {
+				at = a.col + b.col - n - col
+			}
+			if c.writeLabel(a.row, at, text) {
+				return
+			}
 		}
 	}
 }
 
 func (c *canvas) drawBox(top, left, width int, n *graph.Node, hl graphNodeHighlight) {
+	style := componentStyle(n.Path[0])
 	right := left + width - 1
 	bottom := top + nodeBoxHeight - 1
-	c.set(top, left, '┌', styleBorder)
-	c.set(top, right, '┐', styleBorder)
-	c.set(bottom, left, '└', styleBorder)
-	c.set(bottom, right, '┘', styleBorder)
+	c.set(top, left, '╭', style)
+	c.set(top, right, '╮', style)
+	c.set(bottom, left, '╰', style)
+	c.set(bottom, right, '╯', style)
 	for x := left + 1; x < right; x++ {
-		c.set(top, x, '─', styleBorder)
-		c.set(bottom, x, '─', styleBorder)
+		c.set(top, x, '─', style)
+		c.set(bottom, x, '─', style)
 	}
 	for y := top + 1; y < bottom; y++ {
-		c.set(y, left, '│', styleBorder)
-		c.set(y, right, '│', styleBorder)
+		c.set(y, left, '│', style)
+		c.set(y, right, '│', style)
 	}
 
 	inner := width - 4
 	labelCol := left + 2
 	label := truncateLabel(strings.Join(n.Path, "."), inner)
-	if hl.label != nil {
-		c.writeTextMasked(top+1, labelCol, label, hl.label, styleLabel, styleLabelMatch)
-	} else {
-		c.writeText(top+1, labelCol, label, styleLabel)
-	}
+	c.writeTextMasked(top+1, labelCol, label, hl.label, style, styleLabelMatch)
 	c.writeText(top+2, labelCol, truncateLabel(nodeFooter(n), inner), styleFooter)
 }
 
@@ -558,22 +447,173 @@ func (c *canvas) lines() []string {
 	out := make([]string, c.h)
 	for i, row := range c.cells {
 		var b strings.Builder
-		j := 0
-		for j < len(row) {
-			k := j
-			for k < len(row) && row[k].style == row[j].style {
-				k++
+		var seg []rune
+		segStyle := styleDefault
+		flush := func() {
+			if len(seg) > 0 {
+				b.WriteString(cellStyles[segStyle].Render(string(seg)))
+				seg = seg[:0]
 			}
-			seg := make([]rune, 0, k-j)
-			for _, cell := range row[j:k] {
-				seg = append(seg, cell.r)
-			}
-			b.WriteString(cellStyles[row[j].style].Render(string(seg)))
-			j = k
 		}
+		for _, cell := range row {
+			r, style := cell.glyph()
+			if style != segStyle {
+				flush()
+				segStyle = style
+			}
+			seg = append(seg, r)
+		}
+		flush()
 		out[i] = b.String()
 	}
 	return out
+}
+
+// route is one drawn line running left to right through the layers: an
+// edge, or both edges of a two-node cycle, which share a path and get an
+// arrowhead at each end.
+type route struct {
+	first  int   // leftmost layer
+	rows   []int // the row the line holds while crossing each layer, from first onward
+	tracks []int // per hop to the next layer: which of the gap's vertical tracks it turns on (unused where the line stays level)
+	style  cellStyle
+	pts    []cellPos // the cells the line turns at, once drawn
+
+	forward, backward *graph.Edge // the edge pointing right and the one pointing left along the line; either may be nil
+}
+
+// buildRoutes turns placed edges into routes, in the graph's deterministic
+// edge order.
+func buildRoutes(g *graph.Graph, p layout.Placement) []*route {
+	weight := edgeWeightStyle(g)
+	byPair := map[[2]string]*route{}
+	var routes []*route
+	for _, ek := range graph.SortedEdgeKeys(g) {
+		placed := p.Edges[ek]
+		left, right := ek[0], ek[1]
+		if placed.Feedback {
+			left, right = right, left
+		}
+		r, ok := byPair[[2]string{left, right}]
+		if !ok {
+			r = &route{first: p.Nodes[left].Layer, style: styleEdgeFeedback}
+			r.rows = append(r.rows, placeOptions.Port(p.Nodes[left]))
+			for i := range placed.Waypoints {
+				w := placed.Waypoints[i]
+				if placed.Feedback {
+					w = placed.Waypoints[len(placed.Waypoints)-1-i]
+				}
+				r.rows = append(r.rows, w.Row)
+			}
+			r.rows = append(r.rows, placeOptions.Port(p.Nodes[right]))
+			r.tracks = make([]int, len(r.rows)-1)
+			byPair[[2]string{left, right}] = r
+			routes = append(routes, r)
+		}
+		if placed.Feedback {
+			r.backward = g.Edges[ek]
+		} else {
+			r.forward = g.Edges[ek]
+			r.style = weight(r.forward.Count)
+		}
+	}
+	return routes
+}
+
+// hop is the part of a route that changes row between two adjacent layers,
+// and so needs a vertical somewhere in the gap between them.
+type hop struct {
+	from, to int // rows on the left and right side of the gap
+	route    *route
+	index    int // which of the route's hops this is
+}
+
+// assignTracks gives every hop in one gap a vertical track, returning how
+// many tracks the gap needs.
+//
+// Hops are grouped into buses that share a track: all the hops leaving one
+// node, or all the hops arriving at one, whichever group is larger -- so a
+// fan-out or fan-in draws as one trunk with branches, and lines that have
+// nothing to do with each other never run along the same vertical. Buses
+// are then ordered left to right to keep one bus's horizontal from landing
+// on top of another's, and after that to cross as little as possible.
+func assignTracks(hops []hop) int {
+	leaving, arriving := map[int]int{}, map[int]int{}
+	for _, h := range hops {
+		leaving[h.from]++
+		arriving[h.to]++
+	}
+	type busKey struct {
+		arriving bool
+		row      int
+	}
+	index := map[busKey]int{}
+	var buses [][]hop
+	for _, h := range hops {
+		key := busKey{row: h.from}
+		if arriving[h.to] > leaving[h.from] {
+			key = busKey{arriving: true, row: h.to}
+		}
+		i, ok := index[key]
+		if !ok {
+			i = len(buses)
+			index[key] = i
+			buses = append(buses, nil)
+		}
+		buses[i] = append(buses[i], h)
+	}
+
+	// Each swap of neighbors strictly lowers the total cost, so this ends.
+	for swapped := true; swapped; {
+		swapped = false
+		for i := 0; i+1 < len(buses); i++ {
+			if trackCost(buses[i+1], buses[i]) < trackCost(buses[i], buses[i+1]) {
+				buses[i], buses[i+1] = buses[i+1], buses[i]
+				swapped = true
+			}
+		}
+	}
+	for i, bus := range buses {
+		for _, h := range bus {
+			h.route.tracks[h.index] = i
+		}
+	}
+	return len(buses)
+}
+
+// trackCost scores putting one bus's track to the left of another's. A hop
+// runs level from the left column to its track, vertically along it, then
+// level to the right column. So with a left of b: a's run into the right
+// column would overlap b's run out of the left column if they are on the
+// same row (heavily penalized -- two unrelated lines would merge), and each
+// place one hop's level run passes through the other's vertical is a
+// crossing.
+func trackCost(left, right []hop) int {
+	between := func(row, a, b int) bool {
+		return row > min(a, b) && row < max(a, b)
+	}
+	cost := 0
+	for _, a := range left {
+		for _, b := range right {
+			if a.to == b.from {
+				cost += 100
+			}
+			if between(b.from, a.from, a.to) {
+				cost++
+			}
+			if between(a.to, b.from, b.to) {
+				cost++
+			}
+		}
+	}
+	return cost
+}
+
+func countLabel(e *graph.Edge) string {
+	if e == nil || e.Count < 2 {
+		return ""
+	}
+	return fmt.Sprintf("×%d", e.Count)
 }
 
 type graphLayout struct {
@@ -584,120 +624,105 @@ func (l *graphLayout) lines() []string {
 	return l.c.lines()
 }
 
-// layoutGraph lays g out left-to-right: layers become columns, ordering
-// within a layer becomes rows. It builds the full-size canvas at whatever
-// width/height the graph naturally needs -- no attempt is made to fit the
-// current terminal size, since the result flows through the same
+// layoutGraph lays g out left-to-right: layers become columns, and
+// layout.Place decides each node's row. It builds the full-size canvas at
+// whatever width/height the graph naturally needs -- no attempt is made to
+// fit the current terminal size, since the result flows through the same
 // scroll/crop viewport the tree view already uses.
 func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *graphLayout {
-	forward, feedback := graph.DetectFeedbackEdges(g)
-	layer := graph.AssignLayers(g, forward)
-	positions, layers, unitEdges, routed := routeEdges(g, layer, feedback)
-	orderLayers(layers, positions, unitEdges)
+	p := layout.Place(g, placeOptions)
+	routes := buildRoutes(g, p)
 
-	maxLayer := 0
-	for l := range layers {
-		if l > maxLayer {
-			maxLayer = l
-		}
+	// A gap is the space between layer i and layer i+1, where every bend
+	// lives: lines only ever cross a column level, on a row no box in that
+	// column occupies.
+	type gap struct {
+		hops                 []hop
+		tracks               int
+		leadLabel, tailLabel int // widest count label sitting in the lead and in the tail
+		start, end           int // first and last column
 	}
-	maxRow := 0
-	for _, keys := range layers {
-		if len(keys) > maxRow {
-			maxRow = len(keys)
-		}
-	}
-
-	colWidth := make([]int, maxLayer+1)
-	colX := make([]int, maxLayer+1)
-	for l := 0; l <= maxLayer; l++ {
-		w := minColumnWidth
-		for _, key := range layers[l] {
-			p := positions[key]
-			if p.dummy {
-				continue
-			}
-			if bw := nodeBoxWidth(p.node); bw > w {
-				w = bw
+	gaps := make([]gap, max(0, p.Layers-1))
+	for _, r := range routes {
+		for i := 0; i+1 < len(r.rows); i++ {
+			if r.rows[i] != r.rows[i+1] {
+				gp := &gaps[r.first+i]
+				gp.hops = append(gp.hops, hop{from: r.rows[i], to: r.rows[i+1], route: r, index: i})
 			}
 		}
-		colWidth[l] = w
+		head, tail := &gaps[r.first], &gaps[r.first+len(r.rows)-2]
+		head.leadLabel = max(head.leadLabel, utf8.RuneCountInString(countLabel(r.backward)))
+		tail.tailLabel = max(tail.tailLabel, utf8.RuneCountInString(countLabel(r.forward)))
 	}
+
+	colWidth := make([]int, p.Layers)
+	for i := range colWidth {
+		colWidth[i] = minColumnWidth
+	}
+	for key, n := range p.Nodes {
+		colWidth[n.Layer] = max(colWidth[n.Layer], nodeBoxWidth(g.Nodes[key]))
+	}
+	colX := make([]int, p.Layers)
 	x := leftMargin
-	for l := 0; l <= maxLayer; l++ {
+	for l := range colX {
 		colX[l] = x
-		x += colWidth[l] + columnGap
-	}
-	totalWidth := x
-
-	rowSlot := nodeBoxHeight + rowGap
-	totalHeight := topMargin + max(1, maxRow)*rowSlot + rowGap
-
-	cv := newCanvas(totalWidth, totalHeight)
-
-	// rightPoint/leftPoint anchor every hop to the boundary of its layer's
-	// column -- for a real node that's just outside its box border, and a
-	// dummy waypoint (which has no box) is treated identically, as a
-	// zero-width placeholder at that same boundary. This keeps every
-	// bend/vertical strictly inside the gap between columns, never inside a
-	// column's own span -- which matters because a dummy shares its layer's
-	// column with whatever real nodes are also in that layer, and those
-	// nodes' boxes fill the column's full width at their own rows.
-	centerRow := func(p *positioned) int { return topMargin + p.row*rowSlot + nodeBoxHeight/2 }
-	boxLeft := func(p *positioned) int { return colX[p.layer] }
-	rightPoint := func(p *positioned) (int, int) { return centerRow(p), boxLeft(p) + colWidth[p.layer] }
-	leftPoint := func(p *positioned) (int, int) { return centerRow(p), boxLeft(p) - 1 }
-
-	for _, re := range routed {
-		style := styleEdge
-		if re.feedback {
-			style = styleEdgeFeedback
+		x += colWidth[l]
+		if l == len(gaps) {
+			break
 		}
-		for i := 0; i+1 < len(re.waypoints); i++ {
-			a := positions[re.waypoints[i]]
-			b := positions[re.waypoints[i+1]]
-			if a.layer == b.layer {
+		gp := &gaps[l]
+		gp.tracks = assignTracks(gp.hops)
+		gp.start = x
+		if gp.leadLabel > 0 {
+			gp.leadLabel++ // a cell of line between the arrowhead and its label
+		}
+		x += gapLead + gp.leadLabel + max(0, gp.tracks-1)*trackPitch + min(gp.tracks, 1) + gapTail + gp.tailLabel
+		gp.end = x - 1
+	}
+
+	cv := newCanvas(x+1, topMargin+p.Rows+1)
+
+	for _, r := range routes {
+		last := len(r.rows) - 1
+		head, tail := gaps[r.first], gaps[r.first+last-1]
+		pts := []cellPos{{topMargin + r.rows[0], head.start}}
+		for i := 0; i < last; i++ {
+			if r.rows[i] == r.rows[i+1] {
 				continue
 			}
-			forward := b.layer > a.layer
-			var fr, fc, tr, tc int
-			if forward {
-				fr, fc = rightPoint(a)
-				tr, tc = leftPoint(b)
-			} else {
-				fr, fc = leftPoint(a)
-				tr, tc = rightPoint(b)
-			}
-			arrow := i+2 == len(re.waypoints)
-			label := ""
-			if arrow && re.edge.Count > 1 {
-				label = fmt.Sprintf("(×%d)", re.edge.Count)
-			}
-			cv.drawSegment(fr, fc, tr, tc, style, arrow, forward, label)
+			gp := gaps[r.first+i]
+			track := gp.start + gapLead + gp.leadLabel + r.tracks[i]*trackPitch
+			pts = append(pts, cellPos{topMargin + r.rows[i], track}, cellPos{topMargin + r.rows[i+1], track})
 		}
+		pts = append(pts, cellPos{topMargin + r.rows[last], tail.end})
+		cv.trace(pts, r.style)
+		r.pts = pts
+	}
 
-		// Each interior dummy waypoint now anchors its incoming and outgoing
-		// hops to opposite boundaries of its own column (whichever boundary
-		// faces that neighbor), so it needs a straight bridge across its own
-		// row connecting those two boundaries -- safe because a dummy's row
-		// is never shared with a real box in that same layer.
-		for i := 1; i < len(re.waypoints)-1; i++ {
-			p := positions[re.waypoints[i]]
-			row, lc := leftPoint(p)
-			_, rc := rightPoint(p)
-			cv.drawSegment(row, lc, row, rc, style, false, true, "")
+	// Labels need every line down first, to know which stretches are one
+	// edge's alone; arrowheads go on after that so they can't be mistaken
+	// for line. Each count sits as near its own arrowhead as it can.
+	for _, r := range routes {
+		if label := countLabel(r.forward); label != "" {
+			cv.labelLine(r.pts, label, true)
+		}
+		if label := countLabel(r.backward); label != "" {
+			cv.labelLine(r.pts, label, false)
+		}
+	}
+	for _, r := range routes {
+		last := len(r.rows) - 1
+		if r.forward != nil {
+			cv.set(topMargin+r.rows[last], gaps[r.first+last-1].end, '▶', r.style)
+		}
+		if r.backward != nil {
+			cv.set(topMargin+r.rows[0], gaps[r.first].start, '◀', styleEdgeFeedback)
 		}
 	}
 
-	for _, keys := range layers {
-		for _, key := range keys {
-			p := positions[key]
-			if p.dummy {
-				continue
-			}
-			top := topMargin + p.row*rowSlot
-			cv.drawBox(top, boxLeft(p), colWidth[p.layer], p.node, highlights[p.node.Key])
-		}
+	for _, key := range graph.OrderedNodeKeys(g) {
+		n := p.Nodes[key]
+		cv.drawBox(topMargin+n.Row, colX[n.Layer], colWidth[n.Layer], g.Nodes[key], highlights[key])
 	}
 
 	return &graphLayout{c: cv}
