@@ -1,7 +1,7 @@
 ---
 title: Architecture
 summary: How praytel wraps one command, ingests its logs and OTLP data, joins them and renders a unified view.
-weight: 30
+weight: 80
 ---
 
 # Architecture
