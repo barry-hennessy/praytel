@@ -196,8 +196,8 @@ func (l functionLine) width() int {
 	return w
 }
 
-// boxHeight is the rows n's box takes: borders, label, span count, and a
-// row per listed function.
+// boxHeight is the rows n's box needs for what it says: borders, label,
+// span count, and a row per listed function.
 func boxHeight(n *graph.Node) int {
 	return nodeBoxHeight + len(nodeFunctions(n))
 }
@@ -468,9 +468,9 @@ func (c *canvas) writeLabel(row, col int, text string) bool {
 
 // labelLine writes text on the first free stretch of the line through pts,
 // searching from its last point back toward its first if fromEnd, so the
-// label sits as near that end as it can. It is dropped if the line has no
-// stretch to itself that is long enough.
-func (c *canvas) labelLine(pts []cellPos, text string, fromEnd bool) {
+// label sits as near that end as it can. It reports false if the line has
+// no level stretch to itself that is long enough.
+func (c *canvas) labelLine(pts []cellPos, text string, fromEnd bool) bool {
 	n := utf8.RuneCountInString(text)
 	for i := range len(pts) - 1 {
 		a, b := pts[i], pts[i+1]
@@ -486,17 +486,67 @@ func (c *canvas) labelLine(pts []cellPos, text string, fromEnd bool) {
 				at = a.col + b.col - n - col
 			}
 			if c.writeLabel(a.row, at, text) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// labelBeside is the fallback for a line with no level stretch of its own:
+// it writes text in the blank cells just right of one of the line's
+// verticals, as near the middle of the longest one as there is room. Only a
+// vertical that is this line's alone will do; beside a shared trunk the
+// count would seem to be the trunk's.
+func (c *canvas) labelBeside(pts []cellPos, text string) {
+	n := utf8.RuneCountInString(text)
+	blank := func(row, col int) bool {
+		if col+n+1 > c.w {
+			return false
+		}
+		for _, cell := range c.cells[row][col : col+n+1] { // the text and a cell of clearance
+			if cell.r != ' ' || cell.lineDirs != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	var best []cellPos // the two ends of the longest vertical that is the line's own
+	for i := range len(pts) - 1 {
+		a, b := pts[i], pts[i+1]
+		if a.col != b.col || a.row == b.row {
+			continue
+		}
+		lo, hi := min(a.row, b.row), max(a.row, b.row)
+		own := true
+		for row := lo + 1; row < hi; row++ {
+			if cell := c.cells[row][a.col]; cell.lines != 1 && cell.lineDirs == dirNorth|dirSouth {
+				own = false
+			}
+		}
+		if own && hi-lo >= 2 && (best == nil || hi-lo > best[1].row-best[0].row) {
+			best = []cellPos{{lo, a.col}, {hi, a.col}}
+		}
+	}
+	if best == nil {
+		return
+	}
+	mid := (best[0].row + best[1].row) / 2
+	for off := 0; mid-off > best[0].row || mid+off < best[1].row; off++ {
+		for _, row := range []int{mid - off, mid + off} {
+			if row > best[0].row && row < best[1].row && blank(row, best[0].col+1) {
+				c.writeText(row, best[0].col+1, text, styleFooter)
 				return
 			}
 		}
 	}
 }
 
-func (c *canvas) drawBox(top, left, width int, n *graph.Node, hl graphNodeHighlight) {
+func (c *canvas) drawBox(top, left, width, height int, n *graph.Node, hl graphNodeHighlight) {
 	style := depthStyle(n.Depth)
 	functions := nodeFunctions(n)
 	right := left + width - 1
-	bottom := top + nodeBoxHeight + len(functions) - 1
+	bottom := top + height - 1
 	c.set(top, left, '╭', style)
 	c.set(top, right, '╮', style)
 	c.set(bottom, left, '╰', style)
@@ -576,7 +626,14 @@ func buildRoutes(g *graph.Graph, p layout.Placement) []*route {
 		r, ok := byPair[[2]string{left, right}]
 		if !ok {
 			r = &route{first: p.Nodes[left].Layer, style: styleEdgeFeedback}
-			r.rows = append(r.rows, placeOptions.Port(p.Nodes[left]))
+			// The line runs from where the edge leaves its first node to
+			// where it arrives at its second, or for a feedback edge the
+			// other way about.
+			leave, arrive := placed.FromRow, placed.ToRow
+			if placed.Feedback {
+				leave, arrive = arrive, leave
+			}
+			r.rows = append(r.rows, leave)
 			for i := range placed.Waypoints {
 				w := placed.Waypoints[i]
 				if placed.Feedback {
@@ -584,7 +641,7 @@ func buildRoutes(g *graph.Graph, p layout.Placement) []*route {
 				}
 				r.rows = append(r.rows, w.Row)
 			}
-			r.rows = append(r.rows, placeOptions.Port(p.Nodes[right]))
+			r.rows = append(r.rows, arrive)
 			r.tracks = make([]int, len(r.rows)-1)
 			byPair[[2]string{left, right}] = r
 			routes = append(routes, r)
@@ -652,12 +709,35 @@ func assignTracks(hops []hop) int {
 			}
 		}
 	}
-	for i, bus := range buses {
+
+	// Neighboring buses whose verticals cover different rows, with a row to
+	// spare between them, can stand on the same track: a fan-in's branches
+	// from above and from below then share a column instead of each
+	// widening the gap.
+	type span struct{ lo, hi int }
+	track := -1
+	var onTrack []span
+	for _, bus := range buses {
+		s := span{bus[0].from, bus[0].from}
 		for _, h := range bus {
-			h.route.tracks[h.index] = i
+			s.lo, s.hi = min(s.lo, h.from, h.to), max(s.hi, h.from, h.to)
+		}
+		fits := track >= 0
+		for _, other := range onTrack {
+			if s.lo <= other.hi+1 && other.lo <= s.hi+1 {
+				fits = false
+			}
+		}
+		if !fits {
+			track++
+			onTrack = onTrack[:0]
+		}
+		onTrack = append(onTrack, s)
+		for _, h := range bus {
+			h.route.tracks[h.index] = track
 		}
 	}
-	return len(buses)
+	return track + 1
 }
 
 // trackCost scores putting one bus's track to the left of another's. A hop
@@ -786,13 +866,21 @@ func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *grap
 	// Labels need every line down first, to know which stretches are one
 	// edge's alone; arrowheads go on after that so they can't be mistaken
 	// for line. Each count sits as near its own arrowhead as it can.
+	type pending struct {
+		pts   []cellPos
+		label string
+	}
+	var beside []pending
 	for _, r := range routes {
-		if label := countLabel(r.forward); label != "" {
-			cv.labelLine(r.pts, label, true)
+		if label := countLabel(r.forward); label != "" && !cv.labelLine(r.pts, label, true) {
+			beside = append(beside, pending{r.pts, label})
 		}
-		if label := countLabel(r.backward); label != "" {
-			cv.labelLine(r.pts, label, false)
+		if label := countLabel(r.backward); label != "" && !cv.labelLine(r.pts, label, false) {
+			beside = append(beside, pending{r.pts, label})
 		}
+	}
+	for _, l := range beside {
+		cv.labelBeside(l.pts, l.label)
 	}
 	for _, r := range routes {
 		last := len(r.rows) - 1
@@ -806,7 +894,7 @@ func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *grap
 
 	for _, key := range graph.OrderedNodeKeys(g) {
 		n := p.Nodes[key]
-		cv.drawBox(topMargin+n.Row, colX[n.Layer], colWidth[n.Layer], g.Nodes[key], highlights[key])
+		cv.drawBox(topMargin+n.Row, colX[n.Layer], colWidth[n.Layer], n.Height, g.Nodes[key], highlights[key])
 	}
 
 	return &graphLayout{c: cv}

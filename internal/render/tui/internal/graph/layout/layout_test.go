@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestPlaceKeepsALinearChainOnOneRow(t *testing.T) {
 	}
 }
 
-func TestPlaceCentersADiamondsEndsBetweenItsMiddleNodes(t *testing.T) {
+func TestPlaceKeepsADiamondsEndsWithinItsMiddleNodesSpan(t *testing.T) {
 	p := layout.Place(build("a>b", "a>c", "b>d", "c>d"), opts)
 
 	a, b, c, d := p.Nodes[key("a")], p.Nodes[key("b")], p.Nodes[key("c")], p.Nodes[key("d")]
@@ -59,9 +60,6 @@ func TestPlaceCentersADiamondsEndsBetweenItsMiddleNodes(t *testing.T) {
 		if n.Row < lo || n.Row > hi {
 			t.Fatalf("node %s at row %d, want within the middle nodes' rows %d..%d", name, n.Row, lo, hi)
 		}
-	}
-	if a.Row != d.Row {
-		t.Fatalf("diamond ends at rows %d and %d, want them level", a.Row, d.Row)
 	}
 }
 
@@ -142,11 +140,39 @@ func TestPlaceMakesRoomForATallerBoxAndKeepsEdgesAtItsHeading(t *testing.T) {
 	} else if b.Row < c.Row+4+tall.RowGap {
 		t.Fatalf("the 9-row b at row %d overlaps c at row %d", b.Row, c.Row)
 	}
-	if tall.Port(b) != b.Row+2 {
-		t.Fatalf("b's port is row %d, want two below its top row %d", tall.Port(b), b.Row)
+	if in, out := p.Edges[edge("a", "b")].ToRow, p.Edges[edge("b", "d")].FromRow; in != b.Row+2 || out != b.Row+2 {
+		t.Fatalf("edges meet b on rows %d and %d, want both two below its top row %d", in, out, b.Row)
 	}
 	if p.Rows < b.Row+9 {
 		t.Fatalf("grid is %d rows, too short for b ending at row %d", p.Rows, b.Row+9)
+	}
+}
+
+func TestPlaceGivesEachEdgeIntoANodeItsOwnRowInsideTheBox(t *testing.T) {
+	p := layout.Place(build("a>t", "b>t", "c>t", "t>z"), opts)
+
+	target := p.Nodes[key("t")]
+	if target.Height != 5 {
+		t.Fatalf("target is %d rows tall, want 5: borders plus a row per incoming edge", target.Height)
+	}
+	var rows []int
+	level := 0
+	for _, from := range []string{"a", "b", "c"} {
+		e := p.Edges[edge(from, "t")]
+		rows = append(rows, e.ToRow-target.Row)
+		if e.FromRow == e.ToRow {
+			level++
+		}
+	}
+	slices.Sort(rows)
+	if !slices.Equal(rows, []int{1, 2, 3}) {
+		t.Fatalf("edges arrive %v rows below the box's top, want one each on 1, 2 and 3", rows)
+	}
+	if level != 1 {
+		t.Fatalf("%d of the three edges run level, want exactly the middle one", level)
+	}
+	if out := p.Edges[edge("t", "z")]; out.FromRow != target.Row+2 || out.ToRow != out.FromRow {
+		t.Fatalf("edge out leaves on row %d and arrives on %d, want level from the box's middle row %d", out.FromRow, out.ToRow, target.Row+2)
 	}
 }
 
@@ -199,9 +225,32 @@ func TestPlaceNeverOverlapsBoxesOrRunsEdgesThroughThem(t *testing.T) {
 			taken[layer][row] = who
 		}
 		for k, n := range p.Nodes {
-			for r := n.Row; r < n.Row+opts.NodeHeight; r++ {
+			for r := n.Row; r < n.Row+n.Height; r++ {
 				claim(n.Layer, r, k)
 			}
+		}
+		// Every edge arrives on an inside row of its box, and no two share
+		// one -- except the two directions of a two-node cycle, which are
+		// one line. A feedback edge is drawn from its To node back to its
+		// From node, so From is where its line arrives.
+		type arrival struct {
+			node string
+			row  int
+		}
+		arrivals := map[arrival][2]string{}
+		for ek, e := range p.Edges {
+			at, line := arrival{ek[1], e.ToRow}, ek
+			if e.Feedback {
+				at, line = arrival{ek[0], e.FromRow}, [2]string{ek[1], ek[0]}
+			}
+			box := p.Nodes[at.node]
+			if at.row <= box.Row || at.row >= box.Row+box.Height-1 {
+				t.Fatalf("trial %d %v: edge %v arrives on row %d, not inside its box on rows %d..%d", trial, specs, ek, at.row, box.Row, box.Row+box.Height-1)
+			}
+			if other, taken := arrivals[at]; taken && other != line {
+				t.Fatalf("trial %d %v: lines %v and %v arrive at %s on the same row %d", trial, specs, line, other, at.node, at.row)
+			}
+			arrivals[at] = line
 		}
 
 		// Both directions of a two-node cycle share one route, so claim

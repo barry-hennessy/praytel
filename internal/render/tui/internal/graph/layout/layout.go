@@ -39,18 +39,26 @@ type Point struct {
 	Layer, Row int
 }
 
-// Node is a placed node. Row is the top row of its box.
+// Node is a placed node. Row is the top row of its box and Height the rows
+// it spans, which is more than was asked for when the box needs extra rows
+// to give each incoming edge one of its own.
 type Node struct {
-	Layer, Row int
+	Layer, Row, Height int
 }
 
 // Edge is a placed edge. Waypoints lists the layers strictly between the
 // edge's endpoints, ordered from its From node to its To node; an edge
 // between adjacent layers has none. A Feedback edge is one that closes a
 // cycle, so it runs against the layering (To sits in an earlier layer).
+//
+// FromRow and ToRow are the rows it meets its two nodes on. Every edge
+// leaving a node's right side shares one row, so they can fan out from a
+// single trunk; every edge arriving at its left side gets a row to itself,
+// so each ends in its own arrowhead and none can be mistaken for another.
 type Edge struct {
-	Waypoints []Point
-	Feedback  bool
+	Waypoints      []Point
+	Feedback       bool
+	FromRow, ToRow int
 }
 
 // Placement is the full result. Layers and Rows are the grid's extent.
@@ -59,13 +67,6 @@ type Placement struct {
 	Edges  map[[2]string]Edge
 	Layers int
 	Rows   int
-}
-
-// Port returns the row an edge attaches to n on: the vertical middle of a
-// box of the standard height, and the same distance from the top of a
-// taller one, so that edges meet every box at its heading.
-func (o Options) Port(n Node) int {
-	return n.Row + o.NodeHeight/2
 }
 
 // Place lays g out.
@@ -93,9 +94,11 @@ func Place(g *graph.Graph, o Options) Placement {
 
 	p := Placement{Nodes: map[string]Node{}, Edges: map[[2]string]Edge{}}
 	bends := map[[2]string][]Point{}
+	ends := map[[2]string][2]int{} // the rows each pair leaves its first node and arrives at its second on
 	if len(pairs) > 0 {
-		layers, bendItems := buildLayers(g, pairs, forward, assignLayers(pairs), o)
+		layers, nodes, bendItems := buildLayers(g, pairs, forward, assignLayers(pairs), o)
 		reduceCrossings(layers)
+		assignPorts(layers, o)
 		assignRows(layers, o)
 
 		minTop := math.MaxInt
@@ -107,14 +110,18 @@ func Place(g *graph.Graph, o Options) Placement {
 				row := it.top - minTop
 				p.Rows = max(p.Rows, row+it.height)
 				if it.node != "" {
-					p.Nodes[it.node] = Node{Layer: l, Row: row}
+					p.Nodes[it.node] = Node{Layer: l, Row: row, Height: it.height}
 				}
 			}
 		}
-		for pair, its := range bendItems {
-			for _, it := range its {
+		for _, pair := range pairs {
+			first, last := nodes[pair[0]], nodes[pair[1]]
+			before := first
+			for _, it := range bendItems[pair] {
 				bends[pair] = append(bends[pair], Point{Layer: it.layer, Row: it.top - minTop})
+				before = it
 			}
+			ends[pair] = [2]int{first.portRow() - minTop, last.arriveRow(before) - minTop}
 		}
 		p.Layers = len(layers)
 	}
@@ -129,7 +136,7 @@ func Place(g *graph.Graph, o Options) Placement {
 		if row > 0 {
 			row += o.RowGap
 		}
-		p.Nodes[key] = Node{Layer: 0, Row: row}
+		p.Nodes[key] = Node{Layer: 0, Row: row, Height: o.height(key)}
 		p.Rows = row + o.height(key)
 		p.Layers = max(p.Layers, 1)
 	}
@@ -137,10 +144,12 @@ func Place(g *graph.Graph, o Options) Placement {
 	for ek := range g.Edges {
 		fb := feedback[ek]
 		way := slices.Clone(bends[dagPair(ek, fb)])
+		rows := ends[dagPair(ek, fb)]
 		if fb {
 			slices.Reverse(way)
+			rows[0], rows[1] = rows[1], rows[0]
 		}
-		p.Edges[ek] = Edge{Waypoints: way, Feedback: fb}
+		p.Edges[ek] = Edge{Waypoints: way, Feedback: fb, FromRow: rows[0], ToRow: rows[1]}
 	}
 	return p
 }
@@ -243,20 +252,35 @@ type item struct {
 	pos   int // index within the layer
 
 	height int     // rows occupied
-	port   int     // offset from top of the row edges attach on
+	port   int     // offset from top of the row edges leave on
 	weight float64 // how hard it holds its row against the layer's other items
 	top    int
 
-	left, right []*item // what it is connected to in the adjacent layers
+	left, right []*item       // what it is connected to in the adjacent layers
+	arrive      map[*item]int // offset from top of the row the edge from each of left arrives on; a bend has none, and takes them all on its one row
 }
 
+// portRow is the row every edge to it.right leaves on.
 func (it *item) portRow() int { return it.top + it.port }
+
+// arriveRow is the row the edge from the given one of it.left arrives on.
+func (it *item) arriveRow(from *item) int { return it.top + it.arrive[from] }
+
+// level returns the port row it would need for its connection to n, one of
+// its left neighbors if fromLeft and of its right neighbors otherwise, to
+// run level.
+func (it *item) level(n *item, fromLeft bool) int {
+	if fromLeft {
+		return n.portRow() - it.arrive[n] + it.port
+	}
+	return n.arriveRow(it)
+}
 
 // buildLayers lays the DAG out as items: a box per node, plus a bend in
 // every layer an edge has to pass through on the way to a non-adjacent one,
 // so that every connection is between neighboring layers. Each layer starts
 // in the order its nodes were first seen, bends after boxes.
-func buildLayers(g *graph.Graph, pairs [][2]string, forward map[[2]string]bool, layer map[string]int, o Options) (layers [][]*item, bends map[[2]string][]*item) {
+func buildLayers(g *graph.Graph, pairs [][2]string, forward map[[2]string]bool, layer map[string]int, o Options) (layers [][]*item, nodes map[string]*item, bends map[[2]string][]*item) {
 	add := func(it *item) *item {
 		for len(layers) <= it.layer {
 			layers = append(layers, nil)
@@ -265,7 +289,7 @@ func buildLayers(g *graph.Graph, pairs [][2]string, forward map[[2]string]bool, 
 		layers[it.layer] = append(layers[it.layer], it)
 		return it
 	}
-	nodes := map[string]*item{}
+	nodes = map[string]*item{}
 	for _, key := range graph.OrderedNodeKeys(g) {
 		if l, ok := layer[key]; ok {
 			nodes[key] = add(&item{node: key, layer: l, height: o.height(key), port: o.NodeHeight / 2, weight: boxWeight})
@@ -290,7 +314,7 @@ func buildLayers(g *graph.Graph, pairs [][2]string, forward map[[2]string]bool, 
 		}
 		link(last)
 	}
-	return layers, bends
+	return layers, nodes, bends
 }
 
 // reduceCrossings reorders each layer to cross as few edges as it can find.
@@ -411,6 +435,34 @@ func countCrossings(layers [][]*item) int {
 	return count
 }
 
+// assignPorts decides, now that each layer's order is settled, where on its
+// box each node's edges attach.
+//
+// Incoming edges take consecutive rows, in the order their sources sit in
+// the layer before, so they arrive without crossing. Outgoing edges all
+// leave from the middle one of those rows, which is also the row the middle
+// incoming edge arrives on: a node with one way in and one way out, or
+// lined up with the middle of a fan-in, still gets a straight line through
+// it. The box is made taller if it hasn't a row for each.
+func assignPorts(layers [][]*item, o Options) {
+	for _, items := range layers {
+		for _, it := range items {
+			if it.node == "" {
+				continue
+			}
+			above := max(len(it.left)-1, 0) / 2 // incoming edges arriving above the port row
+			it.port = max(o.NodeHeight/2, 1+above)
+			from := slices.Clone(it.left)
+			sort.SliceStable(from, func(i, j int) bool { return from[i].pos < from[j].pos })
+			it.arrive = map[*item]int{}
+			for i, n := range from {
+				it.arrive[n] = it.port - above + i
+			}
+			it.height = max(it.height, it.port-above+len(from)+1)
+		}
+	}
+}
+
 // How hard each kind of item holds its row when several compete for it. A
 // box moving a row costs a kink at its own edges; a bend moving costs a kink
 // in the middle of a long edge that would otherwise run straight past,
@@ -432,10 +484,8 @@ const (
 // number of neighbors lands exactly on one of them.
 func assignRows(layers [][]*item, o Options) {
 	for _, items := range layers {
-		settle(items, o, func(*item) []*item { return nil })
+		settle(items, o, againstNothing)
 	}
-	leftOf := func(it *item) []*item { return it.left }
-	rightOf := func(it *item) []*item { return it.right }
 
 	// The sweeps don't converge on a fixed point -- each undoes a little of
 	// the one before -- so keep whichever state looked best on the way.
@@ -446,7 +496,7 @@ func assignRows(layers [][]*item, o Options) {
 		for _, items := range layers {
 			for _, it := range items {
 				for _, n := range it.left {
-					cost += kinkCost(it.portRow() - n.portRow())
+					cost += kinkCost(it.arriveRow(n) - n.portRow())
 				}
 			}
 		}
@@ -462,11 +512,11 @@ func assignRows(layers [][]*item, o Options) {
 	}
 	for range 6 {
 		for l := 1; l < len(layers); l++ {
-			settle(layers[l], o, leftOf)
+			settle(layers[l], o, againstLeft)
 		}
 		keepIfBest()
 		for l := len(layers) - 2; l >= 0; l-- {
-			settle(layers[l], o, rightOf)
+			settle(layers[l], o, againstRight)
 		}
 		keepIfBest()
 	}
@@ -487,10 +537,11 @@ func assignRows(layers [][]*item, o Options) {
 func polish(layers [][]*item, o Options) {
 	cost := func(it *item, top int) float64 {
 		sum := 0.0
-		for _, side := range [][]*item{it.left, it.right} {
-			for _, n := range side {
-				sum += kinkCost(top + it.port - n.portRow())
-			}
+		for _, n := range it.left {
+			sum += kinkCost(top + it.port - it.level(n, true))
+		}
+		for _, n := range it.right {
+			sum += kinkCost(top + it.port - it.level(n, false))
 		}
 		return sum
 	}
@@ -553,7 +604,7 @@ func kinkCost(rows int) float64 {
 // as one. A block goes to the weighted median of its members' targets, not
 // their mean, so that some member lands exactly on its target and keeps a
 // straight edge, rather than every member missing by a little.
-func settle(items []*item, o Options, neighbors func(*item) []*item) {
+func settle(items []*item, o Options, against side) {
 	type block struct {
 		members []member
 		value   float64
@@ -568,8 +619,8 @@ func settle(items []*item, o Options, neighbors func(*item) []*item) {
 		// An item with nothing to line up with stays where it is, but
 		// gives way to anything that does have somewhere to be.
 		m := member{target: float64(it.portRow()), weight: 0.001}
-		if ns := neighbors(it); len(ns) > 0 {
-			m = member{target: aim(ns, o), weight: it.weight}
+		if ns := against.of(it); len(ns) > 0 {
+			m = member{target: aim(it, ns, against == againstLeft, o), weight: it.weight}
 		}
 		m.target -= float64(it.port + offsets[i])
 
@@ -601,22 +652,44 @@ func settle(items []*item, o Options, neighbors func(*item) []*item) {
 	}
 }
 
+// side says which of a layer's neighboring layers it is being settled
+// against.
+type side int
+
+const (
+	againstNothing side = iota
+	againstLeft
+	againstRight
+)
+
+func (s side) of(it *item) []*item {
+	switch s {
+	case againstLeft:
+		return it.left
+	case againstRight:
+		return it.right
+	}
+	return nil
+}
+
 // aim is the port row an item would take if nothing were in its way: the
-// median of its neighbors' port rows. With an even number of neighbors that
-// is halfway between the middle two, a symmetric fork -- unless those two
-// are too close for a fork to be more than a one-row wiggle on each side, in
-// which case it lines up with whichever of them holds its row harder.
-func aim(neighbors []*item, o Options) float64 {
+// median of the rows that would make each of its connections level. With an
+// even number of neighbors that is halfway between the middle two, a
+// symmetric fork -- unless those two are too close for a fork to be more
+// than a one-row wiggle on each side, in which case it lines up with
+// whichever of them holds its row harder.
+func aim(it *item, neighbors []*item, fromLeft bool, o Options) float64 {
 	ns := slices.Clone(neighbors)
-	sort.SliceStable(ns, func(i, j int) bool { return ns[i].portRow() < ns[j].portRow() })
+	row := func(n *item) int { return it.level(n, fromLeft) }
+	sort.SliceStable(ns, func(i, j int) bool { return row(ns[i]) < row(ns[j]) })
 	lo, hi := ns[(len(ns)-1)/2], ns[len(ns)/2]
 	switch {
-	case hi.portRow()-lo.portRow() >= o.NodeHeight:
-		return float64(lo.portRow()+hi.portRow()) / 2
+	case row(hi)-row(lo) >= o.NodeHeight:
+		return float64(row(lo)+row(hi)) / 2
 	case hi.weight > lo.weight:
-		return float64(hi.portRow())
+		return float64(row(hi))
 	}
-	return float64(lo.portRow())
+	return float64(row(lo))
 }
 
 type member struct {

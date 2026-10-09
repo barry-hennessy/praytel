@@ -164,6 +164,38 @@ func TestGraphBoxBorderTakesTheTreeViewsColorForItsDepth(t *testing.T) {
 	}
 }
 
+func TestGraphEdgesIntoOneNodeEachEndInTheirOwnArrowhead(t *testing.T) {
+	got := renderPlain(graphOf("web>db*2", "worker>db*3", "cron>db*4"))
+
+	if n := strings.Count(got, "▶"); n != 3 {
+		t.Fatalf("%d arrowheads into db, want one per edge:\n%s", n, got)
+	}
+	for _, count := range []string{"×2─▶", "×3─▶", "×4─▶"} {
+		if !strings.Contains(got, count) {
+			t.Fatalf("no arrowhead carrying %q:\n%s", count, got)
+		}
+	}
+}
+
+func TestGraphCountGoesBesideAVerticalWhenTheLineHasNoLevelStretchOfItsOwn(t *testing.T) {
+	c := newCanvas(12, 7)
+	line := []cellPos{{1, 0}, {1, 3}, {5, 3}, {5, 9}}
+	c.trace(line, styleEdge)
+	// A second line along both of the first one's level stretches, so
+	// neither is the first line's alone.
+	c.trace([]cellPos{{1, 0}, {1, 9}}, styleEdge)
+	c.trace([]cellPos{{5, 0}, {5, 9}}, styleEdge)
+
+	if c.labelLine(line, "×3", true) {
+		t.Fatalf("label was placed on a stretch another line shares")
+	}
+	c.labelBeside(line, "×3")
+
+	if got := string([]rune{c.cells[3][4].r, c.cells[3][5].r}); got != "×3" {
+		t.Fatalf("cells right of the vertical's middle hold %q, want the count", got)
+	}
+}
+
 func TestGraphUnrelatedEdgesNeverShareAVertical(t *testing.T) {
 	// a>y and b>x have to cross; each must keep its own track rather than
 	// merging into a junction that would read as a>x and b>y as well.
