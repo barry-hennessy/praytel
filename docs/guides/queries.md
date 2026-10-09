@@ -1,7 +1,7 @@
 ---
 title: Typed queries
 summary: How to select spans and logs with praytel's typed query language and emit the results for humans or machines.
-weight: 10
+weight: 70
 ---
 
 # Typed queries
