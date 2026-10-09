@@ -25,7 +25,7 @@ type printed struct {
 	emitted   bool
 }
 
-// Stream is the append-only renderer. See ARCHITECTURE.md.
+// Stream is the append-only renderer. See docs/guides/architecture.md.
 type Stream struct {
 	lt     observability.LoggingTracer
 	events <-chan domain.Event

@@ -3,7 +3,7 @@ package domain
 import "time"
 
 // Event is a value-copy message from the correlator to renderers.
-// See ARCHITECTURE.md.
+// See docs/guides/architecture.md.
 type Event interface {
 	isEvent()
 }
