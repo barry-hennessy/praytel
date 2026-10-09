@@ -32,7 +32,7 @@ type Limits struct {
 	MaxLogLines int
 }
 
-// Correlator owns the private forest and outbound events. See ARCHITECTURE.md.
+// Correlator owns the private forest and outbound events. See docs/guides/architecture.md.
 type Correlator struct {
 	lt    observability.LoggingTracer
 	out   chan<- domain.Event

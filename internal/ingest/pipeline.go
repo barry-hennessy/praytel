@@ -1,6 +1,6 @@
 // Package ingest wires a correlator to a listening OTLP receiver: the
 // setup every composition mode (direct CLI run, in-process agent session)
-// otherwise repeats. See ARCHITECTURE.md's Ingest and Join sections.
+// otherwise repeats. See docs/guides/architecture.md's Ingest and Join sections.
 package ingest
 
 import (

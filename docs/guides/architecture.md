@@ -1,8 +1,14 @@
+---
+title: Architecture
+summary: How praytel wraps one command, ingests its logs and OTLP data, joins them and renders a unified view.
+weight: 30
+---
+
 # Architecture
 
 Praytel is a **transparent CLI wrapper**: `praytel [flags] -- cmd …`. It forwards signals, runs one command to completion, captures that process’s logs and OpenTelemetry data, joins them, and prints a unified view. No daemon, no leftover files. The TUI may stay open after the child exits; everything else drains and exits.
 
-This document is the decided architecture. Decision detail lives in [`.scratch/MAP.md`](.scratch/MAP.md) and its tickets.
+This document is the decided architecture. Decision detail lives in [`.scratch/MAP.md`](../../.scratch/MAP.md) and its tickets.
 
 Go. [Bones](https://github.com/barry-hennessy/bones) for process lifecycle (`RootCtx`, `errgroup`) and `LoggingTracer`. [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the TUI renderer.
 
@@ -41,7 +47,7 @@ One correlator goroutine. Typed inbound channels (spans, OTLP logs, stdout lines
 
 Outbound **value-copy events** in `domain`: `SpanUpserted`, `SpanParentLinked`, `SpanClosed`, `LogReceived`, `LogAssigned`, `DrainComplete`, plus `ForestEvicted` / `ForestShed`. Child spans insert immediately; parent link may be late. Logs that **name** an unseen span wait until that span or drain; then assignment is sticky.
 
-Untagged logs never attach to a guessed real span. Global synthetic orphan (no IDs); per-trace synthetic orphan (`trace_id` only). See [Untagged log handling](.scratch/tickets/01-untagged-log-handling.md).
+Untagged logs never attach to a guessed real span. Global synthetic orphan (no IDs); per-trace synthetic orphan (`trace_id` only). See [Untagged log handling](../../.scratch/tickets/01-untagged-log-handling.md).
 
 ## Selection
 
@@ -56,7 +62,7 @@ component or span-name filtering when no typed query is supplied.
 - Stream and TUI: **live admit** (late admission OK; stream never un-prints).
 - Buffered renderers: **`InFocus` at paint**.
 
-Not a single drop-pipe in front of every renderer. [Filter and focus engine design](.scratch/tickets/03-filter-focus-engine.md).
+Not a single drop-pipe in front of every renderer. [Filter and focus engine design](../../.scratch/tickets/03-filter-focus-engine.md).
 
 ## Render
 
@@ -86,12 +92,12 @@ wraps one child, leaves no files, and is cancelled when the MCP server exits.
 
 | Ticket | Decision |
 |---|---|
-| [Untagged log handling](.scratch/tickets/01-untagged-log-handling.md) | Honest orphans; pending named spans |
-| [Internal storage representation](.scratch/tickets/02-internal-storage-representation.md) | Private forest; event stream |
-| [Filter and focus engine design](.scratch/tickets/03-filter-focus-engine.md) | Live admit vs InFocus; path globs |
-| [Renderer interface shape](.scratch/tickets/04-renderer-interface.md) | `Run(ctx)` |
-| [Buffered vs unbuffered output strategy](.scratch/tickets/05-buffering-strategy.md) | Renderer chooses; append-only stream |
-| [Memory and disk pressure management](.scratch/tickets/06-memory-pressure.md) | Caps; evict then shed |
-| [Error surface](.scratch/tickets/07-error-surface.md) | Child exit code; stderr warnings |
-| [OTLP log vs trace routing](.scratch/tickets/08-otlp-log-routing.md) | Two OTLP services; one `LogLine` |
-| [Praytel’s own observability](.scratch/tickets/09-internal-observability.md) | Stderr `LoggingTracer`; noop tracer |
+| [Untagged log handling](../../.scratch/tickets/01-untagged-log-handling.md) | Honest orphans; pending named spans |
+| [Internal storage representation](../../.scratch/tickets/02-internal-storage-representation.md) | Private forest; event stream |
+| [Filter and focus engine design](../../.scratch/tickets/03-filter-focus-engine.md) | Live admit vs InFocus; path globs |
+| [Renderer interface shape](../../.scratch/tickets/04-renderer-interface.md) | `Run(ctx)` |
+| [Buffered vs unbuffered output strategy](../../.scratch/tickets/05-buffering-strategy.md) | Renderer chooses; append-only stream |
+| [Memory and disk pressure management](../../.scratch/tickets/06-memory-pressure.md) | Caps; evict then shed |
+| [Error surface](../../.scratch/tickets/07-error-surface.md) | Child exit code; stderr warnings |
+| [OTLP log vs trace routing](../../.scratch/tickets/08-otlp-log-routing.md) | Two OTLP services; one `LogLine` |
+| [Praytel’s own observability](../../.scratch/tickets/09-internal-observability.md) | Stderr `LoggingTracer`; noop tracer |

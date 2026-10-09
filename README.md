@@ -13,6 +13,11 @@ can leverage both.
  - leverage logs and tracing yourself; focus you!
  - get value out of your logs in your development workflow without spinning up a docker container
 
+Full documentation lives in [`docs/`](docs/index.md): guides for
+[typed queries](docs/guides/queries.md), [agent integration](docs/guides/agents.md)
+and the [architecture](docs/guides/architecture.md), plus a
+[reference page per command](docs/index.md#reference).
+
 Run `praytel -- command` for the append-only stream, or `praytel --tui -- command`
 for a live trace/span tree. In the TUI, type to fuzzy-search traces (matches span
 names and attributes, including trace attributes), press Tab to search log bodies
