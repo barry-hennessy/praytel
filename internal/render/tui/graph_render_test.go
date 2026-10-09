@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,7 +18,9 @@ var updateGolden = flag.Bool("update", false, "rewrite the graph snapshots in te
 
 // graphOf builds a graph from "from>to" call specs, each optionally
 // suffixed "*N" for a call count, in the order given. Names are container
-// paths, so "api.auth" is the auth section of the api component.
+// paths, so "api.auth" is the auth section of the api component, and may
+// name the function making or receiving the call after a colon:
+// "api.auth:login".
 func graphOf(specs ...string) *graph.Graph {
 	g := graph.New()
 	for i, spec := range specs {
@@ -26,11 +29,17 @@ func graphOf(specs ...string) *graph.Graph {
 			spec = call
 			fmt.Sscan(n, &count)
 		}
+		node := func(name string) *graph.Node {
+			path, fn, _ := strings.Cut(name, ":")
+			n := g.EnsureNode(strings.Split(path, "."), i)
+			n.SpanCount += count
+			if fn != "" {
+				n.Functions[fn] += count
+			}
+			return n
+		}
 		from, to, _ := strings.Cut(spec, ">")
-		a := g.EnsureNode(strings.Split(from, "."), i)
-		a.SpanCount++
-		b := g.EnsureNode(strings.Split(to, "."), i)
-		b.SpanCount++
+		a, b := node(from), node(to)
 		g.EnsureEdge(a.Key, b.Key, i).Count += count
 	}
 	return g
@@ -65,6 +74,12 @@ func TestGraphSnapshots(t *testing.T) {
 		// forward path; the two-node cycle shares one line, an arrowhead
 		// at each end.
 		"cycle": {"api>orders", "orders>billing", "billing>api", "orders>api"},
+		// Boxes list their functions, busiest first, and grow to fit;
+		// edges still meet each box at its heading.
+		"functions": {
+			"web:render>api.orders:list*3", "web:submit>api.orders:create", "api.orders:create>db:insert",
+			"api.orders:list>db:select*3", "api.orders:create>mail:send",
+		},
 		"service-map": {
 			"web>api.auth*2", "web>api.orders*5", "api.auth>db.users", "api.orders>db.orders*5",
 			"api.orders>queue*3", "queue>worker*3", "worker>db.orders*3", "worker>mail", "api.orders>api.auth*2",
@@ -106,6 +121,46 @@ func TestGraphCellGlyphTellsACrossingFromAJunction(t *testing.T) {
 	// the edge's own style.
 	if r, style := (gridCell{lineDirs: all, style: styleEdge, bend: true}).glyph(); r != '┼' || style != styleEdge {
 		t.Fatalf("junction drew %q in style %d, want a cross in the edge's style", r, style)
+	}
+}
+
+func TestGraphBoxListsAtMostSixFunctionsThenCountsTheRest(t *testing.T) {
+	g := graph.New()
+	n := g.EnsureNode([]string{"api"}, 0)
+	for i, fn := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
+		n.Functions[fn] = 10 - i
+	}
+
+	got := renderPlain(g)
+	for _, want := range []string{"│ a ×10", "│ f ×5", "│ +2 more"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("box missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "│ g ") {
+		t.Fatalf("box lists a seventh function:\n%s", got)
+	}
+}
+
+func TestGraphBoxBorderTakesTheTreeViewsColorForItsDepth(t *testing.T) {
+	g := graphOf("api>db")
+	deep := g.Nodes[graph.ContainerKey([]string{"db"})]
+	deep.ObserveDepth(2)
+
+	c := layoutGraph(g, nil).c
+	var corners []cellStyle // each box's top-left corner, left to right
+	for col := range c.w {
+		for _, row := range c.cells {
+			if cell := row[col]; cell.r == '╭' && cell.lineDirs == 0 {
+				corners = append(corners, cell.style)
+			}
+		}
+	}
+	if want := []cellStyle{depthStyle(0), depthStyle(2)}; !slices.Equal(corners, want) {
+		t.Fatalf("box corner styles %v, want %v (api at depth 0, db at depth 2)", corners, want)
+	}
+	if depthStyle(0) == depthStyle(2) {
+		t.Fatalf("depths 0 and 2 share a style")
 	}
 }
 

@@ -134,6 +134,40 @@ func TestMatchGraphNodeMatchesOnAFoldedFunctionName(t *testing.T) {
 	}
 }
 
+func TestMatchGraphNodeMarksTheMatchedCharactersOfAFunctionName(t *testing.T) {
+	n := &graph.Node{Path: []string{"api"}, Functions: map[string]int{"frobnicate": 1, "list": 1}}
+
+	ok, h := matchGraphNode("frob", n)
+	if !ok {
+		t.Fatalf("expected a match on the function name")
+	}
+	want := []bool{true, true, true, true}
+	if got := h.fns["frobnicate"]; len(got) < 4 || !reflect.DeepEqual(got[:4], want) {
+		t.Fatalf("function mask %v, want it to start %v", got, want)
+	}
+	for _, hit := range h.fns["list"] {
+		if hit {
+			t.Fatalf("unmatched function marked: %v", h.fns["list"])
+		}
+	}
+}
+
+func TestBuildGraphGivesNodesTheirTreeDepth(t *testing.T) {
+	m := NewModel(nil, nil)
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "root", Component: "api", Name: "request"})
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "mid", Component: "orders", Name: "create"})
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "leaf", Component: "db", Name: "insert"})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "mid", ParentSpanID: "root"})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "leaf", ParentSpanID: "mid"})
+
+	g := m.buildGraph()
+	for name, want := range map[string]int{"api": 0, "orders": 1, "db": 2} {
+		if got := g.Nodes[graph.ContainerKey([]string{name})].Depth; got != want {
+			t.Fatalf("node %s at depth %d, want %d", name, got, want)
+		}
+	}
+}
+
 func TestGraphViewRendersBoxesLabelsAndAggregatedEdgeCount(t *testing.T) {
 	m := NewModel(nil, nil)
 	m.height = 30

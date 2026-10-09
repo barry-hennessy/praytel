@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"hash/fnv"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -26,12 +25,28 @@ func (m Model) buildGraph() *graph.Graph {
 	traceMatches := m.matchingTraces()
 	logMatches := m.matchingLogs()
 
+	// A span's depth here is its depth in the tree view: it hangs under its
+	// parent exactly when filteredForest kept that parent in scope.
+	depths := map[string]int{}
+	var depthOf func(sp *spanView) int
+	depthOf = func(sp *spanView) int {
+		key := selectionKey(sp.traceID, sp.id)
+		if d, ok := depths[key]; ok {
+			return d
+		}
+		depths[key] = 0 // a root; also what a span caught in a parent loop gets
+		if parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]; ok && sp.parentID != "" {
+			depths[key] = depthOf(parent) + 1
+		}
+		return depths[key]
+	}
+
 	facts := make([]graph.SpanFact, 0, len(inScope))
 	for _, sp := range inScope {
 		if !m.fuzzyVisible(sp, children, traceMatches, logMatches) {
 			continue
 		}
-		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order}
+		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order, Depth: depthOf(sp)}
 		if sp.parentID != "" {
 			if parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]; ok && m.fuzzyVisible(parent, children, traceMatches, logMatches) {
 				fact.HasParent = true
@@ -46,18 +61,17 @@ func (m Model) buildGraph() *graph.Graph {
 }
 
 // graphNodeHighlight mirrors spanHighlight at container granularity: which
-// runes of the node's own dotted label were consumed by a fuzzy match.
+// runes of the node's own dotted label, and of each function name listed
+// under it, were consumed by a fuzzy match.
 type graphNodeHighlight struct {
 	label []bool
+	fns   map[string][]bool
 }
 
 // matchGraphNode fuzzy-matches the query against the node's own dotted
 // label and every distinct function name folded into it (sorted for
 // deterministic results), so a query for a leaf function still highlights
-// the section node it collapsed into even though the function name never
-// appears in the node's own rendered label. Only the label's portion of the
-// match mask is returned -- functions aren't rendered as their own text, so
-// there's nothing to highlight them against.
+// the section node it collapsed into.
 func matchGraphNode(query string, n *graph.Node) (bool, graphNodeHighlight) {
 	label := strings.Join(n.Path, ".")
 	fnNames := make([]string, 0, len(n.Functions))
@@ -70,11 +84,21 @@ func matchGraphNode(query string, n *graph.Node) (bool, graphNodeHighlight) {
 	if !ok {
 		return false, graphNodeHighlight{}
 	}
-	labelLen := utf8.RuneCountInString(label)
-	if labelLen > len(mask) {
-		labelLen = len(mask)
+
+	// The mask covers the segments joined by single spaces; slice it back
+	// apart. It may stop short of the end of the joined text.
+	hl := graphNodeHighlight{fns: map[string][]bool{}}
+	at := 0
+	take := func(text string) []bool {
+		start := min(at, len(mask))
+		at += utf8.RuneCountInString(text) + 1
+		return mask[start:min(at-1, len(mask))]
 	}
-	return true, graphNodeHighlight{label: mask[:labelLen]}
+	hl.label = take(label)
+	for _, fn := range fnNames {
+		hl.fns[fn] = take(fn)
+	}
+	return true, hl
 }
 
 // Layout constants. Sizes are deliberately generous rather than tightly
@@ -97,6 +121,11 @@ const (
 	gapLead    = 2
 	gapTail    = 3
 	trackPitch = 2
+
+	// A box lists at most maxFunctionsShown of its functions, each name cut
+	// to maxFunctionWidth, so one busy section can't dwarf the graph.
+	maxFunctionsShown = 6
+	maxFunctionWidth  = 28
 )
 
 var placeOptions = layout.Options{NodeHeight: nodeBoxHeight, RowGap: rowGap}
@@ -120,21 +149,63 @@ func plural(n int) string {
 }
 
 func nodeFooter(n *graph.Node) string {
-	if len(n.Functions) == 0 {
-		return fmt.Sprintf("%d span%s", n.SpanCount, plural(n.SpanCount))
+	return fmt.Sprintf("%d span%s", n.SpanCount, plural(n.SpanCount))
+}
+
+// functionLine is one row of a box's function list.
+type functionLine struct {
+	fn    string // the function, or "" on the closing "+N more" row
+	name  string // fn as shown, cut to fit
+	count string // how often it was called, when more than once; or the "+N more" text
+}
+
+// nodeFunctions lists the functions whose spans were folded into n, most
+// called first, as the rows a box shows: up to maxFunctionsShown of them,
+// then a count of the rest.
+func nodeFunctions(n *graph.Node) []functionLine {
+	names := make([]string, 0, len(n.Functions))
+	for fn := range n.Functions {
+		names = append(names, fn)
 	}
-	return fmt.Sprintf("%d span%s · %d fn%s", n.SpanCount, plural(n.SpanCount), len(n.Functions), plural(len(n.Functions)))
+	sort.Slice(names, func(i, j int) bool {
+		if a, b := n.Functions[names[i]], n.Functions[names[j]]; a != b {
+			return a > b
+		}
+		return names[i] < names[j]
+	})
+	var lines []functionLine
+	for i, fn := range names {
+		if i == maxFunctionsShown {
+			lines = append(lines, functionLine{count: fmt.Sprintf("+%d more", len(names)-i)})
+			break
+		}
+		line := functionLine{fn: fn, name: truncateLabel(fn, maxFunctionWidth)}
+		if c := n.Functions[fn]; c > 1 {
+			line.count = fmt.Sprintf("×%d", c)
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func (l functionLine) width() int {
+	w := utf8.RuneCountInString(l.name) + utf8.RuneCountInString(l.count)
+	if l.name != "" && l.count != "" {
+		w++
+	}
+	return w
+}
+
+// boxHeight is the rows n's box takes: borders, label, span count, and a
+// row per listed function.
+func boxHeight(n *graph.Node) int {
+	return nodeBoxHeight + len(nodeFunctions(n))
 }
 
 func nodeBoxWidth(n *graph.Node) int {
-	label := strings.Join(n.Path, ".")
-	footer := nodeFooter(n)
-	inner := utf8.RuneCountInString(label)
-	if fl := utf8.RuneCountInString(footer); fl > inner {
-		inner = fl
-	}
-	if inner < minNodeInnerWidth {
-		inner = minNodeInnerWidth
+	inner := max(minNodeInnerWidth, utf8.RuneCountInString(strings.Join(n.Path, ".")), utf8.RuneCountInString(nodeFooter(n)))
+	for _, line := range nodeFunctions(n) {
+		inner = max(inner, line.width())
 	}
 	return inner + 4 // "│ " + inner + " │"
 }
@@ -147,8 +218,10 @@ type cellStyle uint8
 
 const (
 	styleDefault cellStyle = iota
+	styleLabel
 	styleLabelMatch
 	styleFooter
+	styleFunction
 	styleCrossing
 
 	// Edge styles are in precedence order: where lines of different styles
@@ -158,15 +231,17 @@ const (
 	styleEdge
 	styleEdgeHeavy
 
-	// styleComponent+i draws a box in depthColors[i].
-	styleComponent
+	// styleDepth+i draws a box border in depthColors[i].
+	styleDepth
 )
 
 var cellStyles = func() []lipgloss.Style {
 	styles := []lipgloss.Style{
 		styleDefault:      lipgloss.NewStyle(),
+		styleLabel:        lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true),
 		styleLabelMatch:   matchHighlightStyle,
 		styleFooter:       lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true),
+		styleFunction:     lipgloss.NewStyle().Foreground(lipgloss.Color("250")),
 		styleCrossing:     lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 		styleEdgeFeedback: lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
 		styleEdgeLight:    lipgloss.NewStyle().Foreground(lipgloss.Color("31")),
@@ -179,13 +254,11 @@ var cellStyles = func() []lipgloss.Style {
 	return styles
 }()
 
-// componentStyle picks a box color from the component name alone, so a
-// component keeps its color as other components come and go and all of one
-// component's sections read as a group.
-func componentStyle(component string) cellStyle {
-	h := fnv.New32a()
-	h.Write([]byte(component))
-	return styleComponent + cellStyle(h.Sum32()%uint32(len(depthColors)))
+// depthStyle is the border style for a box whose shallowest span sits at
+// the given depth of its call tree: the color the tree view's vertical bar
+// has at that depth, so a box and the spans behind it look alike.
+func depthStyle(depth int) cellStyle {
+	return styleDepth + cellStyle(max(depth, 0)%len(depthColors))
 }
 
 // edgeWeightStyle buckets an edge's call count against the graph's range,
@@ -420,9 +493,10 @@ func (c *canvas) labelLine(pts []cellPos, text string, fromEnd bool) {
 }
 
 func (c *canvas) drawBox(top, left, width int, n *graph.Node, hl graphNodeHighlight) {
-	style := componentStyle(n.Path[0])
+	style := depthStyle(n.Depth)
+	functions := nodeFunctions(n)
 	right := left + width - 1
-	bottom := top + nodeBoxHeight - 1
+	bottom := top + nodeBoxHeight + len(functions) - 1
 	c.set(top, left, '╭', style)
 	c.set(top, right, '╮', style)
 	c.set(bottom, left, '╰', style)
@@ -437,10 +511,15 @@ func (c *canvas) drawBox(top, left, width int, n *graph.Node, hl graphNodeHighli
 	}
 
 	inner := width - 4
-	labelCol := left + 2
+	col := left + 2
 	label := truncateLabel(strings.Join(n.Path, "."), inner)
-	c.writeTextMasked(top+1, labelCol, label, hl.label, style, styleLabelMatch)
-	c.writeText(top+2, labelCol, truncateLabel(nodeFooter(n), inner), styleFooter)
+	c.writeTextMasked(top+1, col, label, hl.label, styleLabel, styleLabelMatch)
+	c.writeText(top+2, col, truncateLabel(nodeFooter(n), inner), styleFooter)
+	for i, line := range functions {
+		row := top + 3 + i
+		c.writeTextMasked(row, col, line.name, hl.fns[line.fn], styleFunction, styleLabelMatch)
+		c.writeText(row, col+line.width()-utf8.RuneCountInString(line.count), line.count, styleFooter)
+	}
 }
 
 func (c *canvas) lines() []string {
@@ -630,7 +709,12 @@ func (l *graphLayout) lines() []string {
 // fit the current terminal size, since the result flows through the same
 // scroll/crop viewport the tree view already uses.
 func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *graphLayout {
-	p := layout.Place(g, placeOptions)
+	opts := placeOptions
+	opts.Heights = map[string]int{}
+	for key, n := range g.Nodes {
+		opts.Heights[key] = boxHeight(n)
+	}
+	p := layout.Place(g, opts)
 	routes := buildRoutes(g, p)
 
 	// A gap is the space between layer i and layer i+1, where every bend

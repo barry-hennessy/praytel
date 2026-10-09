@@ -129,6 +129,27 @@ func TestPlaceOfOnlyIsolatedNodesStartsAtTheTop(t *testing.T) {
 	}
 }
 
+func TestPlaceMakesRoomForATallerBoxAndKeepsEdgesAtItsHeading(t *testing.T) {
+	g := build("a>b", "a>c", "b>d", "c>d")
+	tall := layout.Options{NodeHeight: 4, RowGap: 1, Heights: map[string]int{key("b"): 9}}
+	p := layout.Place(g, tall)
+
+	b, c := p.Nodes[key("b")], p.Nodes[key("c")]
+	if upper, lower, height := b, c, 9; b.Row < c.Row {
+		if lower.Row < upper.Row+height+tall.RowGap {
+			t.Fatalf("c at row %d overlaps the 9-row b at row %d", c.Row, b.Row)
+		}
+	} else if b.Row < c.Row+4+tall.RowGap {
+		t.Fatalf("the 9-row b at row %d overlaps c at row %d", b.Row, c.Row)
+	}
+	if tall.Port(b) != b.Row+2 {
+		t.Fatalf("b's port is row %d, want two below its top row %d", tall.Port(b), b.Row)
+	}
+	if p.Rows < b.Row+9 {
+		t.Fatalf("grid is %d rows, too short for b ending at row %d", p.Rows, b.Row+9)
+	}
+}
+
 func TestPlaceIsDeterministic(t *testing.T) {
 	specs := randomSpecs(rand.New(rand.NewSource(7)), 14, 24)
 	want := layout.Place(build(specs...), opts)

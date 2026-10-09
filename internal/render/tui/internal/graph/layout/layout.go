@@ -24,8 +24,13 @@ import (
 
 // Options are the cell dimensions placement has to respect.
 type Options struct {
-	NodeHeight int // rows a node's box occupies
-	RowGap     int // minimum blank rows around a box within its layer
+	NodeHeight int            // rows a node's box occupies, unless Heights says otherwise
+	Heights    map[string]int // taller boxes, by node key
+	RowGap     int            // minimum blank rows around a box within its layer
+}
+
+func (o Options) height(key string) int {
+	return max(o.NodeHeight, o.Heights[key])
 }
 
 // Point is one cell-grid position an edge passes through: the row its line
@@ -56,7 +61,9 @@ type Placement struct {
 	Rows   int
 }
 
-// Port returns the row an edge attaches to n on: the box's vertical middle.
+// Port returns the row an edge attaches to n on: the vertical middle of a
+// box of the standard height, and the same distance from the top of a
+// taller one, so that edges meet every box at its heading.
 func (o Options) Port(n Node) int {
 	return n.Row + o.NodeHeight/2
 }
@@ -123,7 +130,7 @@ func Place(g *graph.Graph, o Options) Placement {
 			row += o.RowGap
 		}
 		p.Nodes[key] = Node{Layer: 0, Row: row}
-		p.Rows = row + o.NodeHeight
+		p.Rows = row + o.height(key)
 		p.Layers = max(p.Layers, 1)
 	}
 
@@ -261,7 +268,7 @@ func buildLayers(g *graph.Graph, pairs [][2]string, forward map[[2]string]bool, 
 	nodes := map[string]*item{}
 	for _, key := range graph.OrderedNodeKeys(g) {
 		if l, ok := layer[key]; ok {
-			nodes[key] = add(&item{node: key, layer: l, height: o.NodeHeight, port: o.NodeHeight / 2, weight: boxWeight})
+			nodes[key] = add(&item{node: key, layer: l, height: o.height(key), port: o.NodeHeight / 2, weight: boxWeight})
 		}
 	}
 	bends = map[[2]string][]*item{}

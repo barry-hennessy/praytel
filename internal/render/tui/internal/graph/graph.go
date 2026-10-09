@@ -62,6 +62,20 @@ type Node struct {
 	SpanCount int
 	Functions map[string]int
 	Order     int // min contributing span order, for deterministic layout
+
+	// Depth is how deep in its trace's call tree the shallowest
+	// contributing span sits (0 for a root), so the node can be drawn in
+	// the color the tree view gives that depth.
+	Depth    int
+	hasDepth bool
+}
+
+// ObserveDepth records that a span at the given tree depth contributed to
+// n, keeping the shallowest seen.
+func (n *Node) ObserveDepth(depth int) {
+	if !n.hasDepth || depth < n.Depth {
+		n.Depth, n.hasDepth = depth, true
+	}
 }
 
 // Edge is a directed, aggregated call from one container to another --
@@ -126,6 +140,7 @@ type SpanFact struct {
 	Component string
 	Name      string
 	Order     int
+	Depth     int // depth in the visible call tree; a visible parent is one shallower
 
 	HasParent       bool
 	ParentComponent string
@@ -144,6 +159,7 @@ func Build(facts []SpanFact) *Graph {
 		path, fn := HierarchyPath(f.Component, f.Name)
 		node := g.EnsureNode(path, f.Order)
 		node.SpanCount++
+		node.ObserveDepth(f.Depth)
 		if fn != "" {
 			node.Functions[fn]++
 		}
@@ -153,6 +169,7 @@ func Build(facts []SpanFact) *Graph {
 		}
 		parentPath, _ := HierarchyPath(f.ParentComponent, f.ParentName)
 		parentNode := g.EnsureNode(parentPath, f.ParentOrder)
+		parentNode.ObserveDepth(f.Depth - 1)
 		if parentNode.Key != node.Key {
 			g.EnsureEdge(parentNode.Key, node.Key, min(f.Order, f.ParentOrder)).Count++
 		}
