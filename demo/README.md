@@ -10,13 +10,22 @@ You need [Dagger](https://docs.dagger.io/install) and a container runtime.
 Nothing else is installed on the host.
 
 ```sh
-dagger call record --scenario traces export --path docs/assets
-dagger call record-all export --path docs/assets
-dagger call scenarios
+make docs                    # every scenario, into docs/assets
+make docs SCENARIO=traces    # one scenario
+make docs FRESH=1            # record again even if nothing changed
+make docs-list               # list the scenarios
 ```
 
 Each scenario writes `<name>.gif` and `<name>.mp4`. An unchanged scenario is
-served from cache; add `--fresh` to record it again.
+served from cache unless `FRESH=1` is set.
+
+The targets are thin wrappers over the Dagger module, which you can also call
+directly:
+
+```sh
+dagger call record-all export --path docs/assets
+dagger call record --scenario traces --fresh export --path docs/assets
+```
 
 Recordings are committed only when a release is published
 (`.github/workflows/demos.yml`). Other CI runs upload them as an artifact.
@@ -92,7 +101,7 @@ Start from an existing `scenario.tape`. The rules that keep recordings stable:
 - Only wait for text that is on screen. A long tree pushes later spans below
   the fold.
 - To try things by hand, open a shell in the same container:
-  `dagger call recorder --scenario traces terminal`.
+  `make docs-shell SCENARIO=traces`.
 
 ## Checking a tool before recording it
 

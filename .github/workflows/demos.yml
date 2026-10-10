@@ -1,7 +1,7 @@
 # Records the demo walkthroughs in demo/scenarios. The work is done by the
 # Dagger module in dagger/, so this is the same command you run locally:
 #
-#   dagger call record-all export --path docs/assets
+#   make docs
 #
 # Recordings are uploaded as an artifact on every run and committed to
 # docs/assets only when a release is published.
@@ -13,6 +13,7 @@ on:
       - "demo/**"
       - "dagger/**"
       - "dagger.json"
+      - "Makefile"
       - "cmd/**"
       - "internal/**"
       - ".github/workflows/demos.yml"
@@ -44,7 +45,7 @@ jobs:
       - name: Record
         run: |
           rm -rf docs/assets
-          "$HOME/.local/bin/dagger" call record-all export --path docs/assets
+          make docs DAGGER="$HOME/.local/bin/dagger"
 
       - uses: actions/upload-artifact@v4
         with:

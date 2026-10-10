@@ -34,7 +34,7 @@ type Demos struct {
 func New(
 	// The praytel repository.
 	// +defaultPath="/"
-	// +ignore=[".git", ".claude", ".idea", ".scratch", "docs/assets", "dagger"]
+	// +ignore=[".git", ".github", ".claude", ".idea", ".scratch", "docs", "design", "dagger", "Makefile", "**/*.md"]
 	source *dagger.Directory,
 ) *Demos {
 	return &Demos{Source: source}
