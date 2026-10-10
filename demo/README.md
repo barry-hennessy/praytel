@@ -10,14 +10,23 @@ You need [Dagger](https://docs.dagger.io/install) and a container runtime.
 Nothing else is installed on the host.
 
 ```sh
-make docs                    # every scenario, into docs/assets
-make docs SCENARIO=traces    # one scenario
-make docs FRESH=1            # record again even if nothing changed
-make docs-list               # list the scenarios
+make docs                      # every recording that is out of date
+make docs/assets/traces.gif    # one recording; its .mp4 is built with it
+make docs/assets/traces        # the same, without naming a format
+make docs-list                 # the recordings and what they are built from
 ```
 
-Each scenario writes `<name>.gif` and `<name>.mp4`. An unchanged scenario is
-served from cache unless `FRESH=1` is set.
+Each recording is a file target. It is rebuilt when its scenario directory,
+praytel's source, a workload or the shared recording setup is newer than it,
+so `make docs` after editing one tape records only that scenario.
+
+Make compares timestamps; Dagger caches on content. If make reruns a
+scenario whose inputs have not really changed, Dagger returns the earlier
+recording at once. To get a genuinely new take, add `FRESH=1`:
+
+```sh
+make docs/assets/traces.gif FRESH=1
+```
 
 The targets are thin wrappers over the Dagger module, which you can also call
 directly:
