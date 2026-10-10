@@ -21,6 +21,8 @@ That answers three kinds of question:
 
 ## Run it
 
+![Recording: switching from the span tree to the graph of components and the calls between them, then narrowing it with a search](../assets/overview.gif)
+
 ```sh
 praytel --tui -- ./server
 ```

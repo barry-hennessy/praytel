@@ -1,0 +1,10 @@
+# Illustrates docs/guides/tests.md.
+guide = "tests"
+workload = "shop"
+
+# The recording container has no Go toolchain, so the suite is compiled to a
+# test binary here. Running it is what `go test` does after compiling.
+[[stage]]
+image = "golang:1.26"
+run = ["go test -c -o /out/shop.test ."]
+copy = ["/out/shop.test:/usr/local/bin/shop.test"]

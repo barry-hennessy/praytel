@@ -1,0 +1,4 @@
+The tree shows one request at a time.
+Ctrl-G switches to the graph: which components ran, and which call which.
+Boxes come from service.name and dotted span names. Arrows are real parent/child calls.
+Search narrows the graph too: this is everything the failed gift-card order touched.

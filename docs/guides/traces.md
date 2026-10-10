@@ -14,6 +14,8 @@ good when something does go wrong.
 
 ## Run it
 
+![Recording: praytel wraps a small shop app, its traces fill in as a live tree, and a search narrows to one failing order](../assets/traces.gif)
+
 ```sh
 praytel --tui -- ./server
 ```
