@@ -12,7 +12,7 @@ line sits under the span that emitted it.
 
 ## Run it
 
-![Recording: an app's JSON logs shown raw, then under praytel with each line beneath the span that emitted it, then a search of log bodies](../assets/logs.gif)
+[![Recording: an app's JSON logs shown raw, then under praytel with each line beneath the span that emitted it, then a search of log bodies](../assets/logs.gif)](../assets/logs.mp4)
 
 ```sh
 praytel -- ./server           # append-only stream

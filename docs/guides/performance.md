@@ -15,7 +15,7 @@ dialect and is not compatible with Tempo's.
 
 ## Show only what is slow
 
-![Recording: a duration query leaves only the slow trace in the tree, first with its surrounding path and then as matches only](../assets/performance.gif)
+[![Recording: a duration query leaves only the slow trace in the tree, first with its surrounding path and then as matches only](../assets/performance.gif)](../assets/performance.mp4)
 
 ```sh
 praytel --tui --query 'span{ span:duration > 100ms }' -- ./server

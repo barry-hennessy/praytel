@@ -11,7 +11,7 @@ that can run a command under praytel knows what the code actually did: which
 spans ran, what they logged, and whether the hard part was wired up or only
 stubbed. That is what lets you build an app with an agent and trust the result.
 
-![Recording: the agent playbook, then two focused queries that each return a few evidence IDs](../assets/agents.gif)
+[![Recording: the agent playbook, then two focused queries that each return a few evidence IDs](../assets/agents.gif)](../assets/agents.mp4)
 
 The recording shows the command-line form of what an agent does through the
 MCP tools: the same queries, evaluated by the same engine.

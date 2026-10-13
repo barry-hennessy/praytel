@@ -12,7 +12,7 @@ logged, and what ran before it.
 
 ## Run it
 
-![Recording: a failing test suite run bare, then under praytel, where searching for the test shows the error marks leading down to the call that failed](../assets/tests.gif)
+[![Recording: a failing test suite run bare, then under praytel, where searching for the test shows the error marks leading down to the call that failed](../assets/tests.gif)](../assets/tests.mp4)
 
 ```sh
 praytel --tui -- go test ./...
