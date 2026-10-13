@@ -34,6 +34,9 @@ Change the view to change how much comes back:
 | `\| matches` | Only the slow spans. |
 | `\| trace` | The whole of every trace that contains a slow span. |
 
+[Example 5](../examples.md#5-performance) runs these queries against an app
+with one slow call to find.
+
 ## Ask a narrower question
 
 Slow spans in one service:

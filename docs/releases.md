@@ -10,16 +10,19 @@ Praytel is released in six steps. Each one is useful on its own and builds on
 the one before, so a reader can stop at any step and have a working tool.
 
 This is the proposed cut of what exists today. The releases are numbered in
-order; version numbers are not assigned yet.
+order. Release 1 is v0.1.0; later version numbers are not assigned yet.
 
-| # | Release | What you can do | Guide |
-|---|---|---|---|
-| 1 | Traces | Run an app and watch its traces as a live tree. | [View traces from a running app](guides/traces.md) |
-| 2 | Logs | See each log line under the span that emitted it. | [View logs correlated to traces](guides/logs.md) |
-| 3 | Tests | Run a test suite and see where a test fails. | [View traces of tests](guides/tests.md) |
-| 4 | Overview | See which components a run hits and how they connect. | [Get an overview of a system](guides/overview.md) |
-| 5 | Performance | Ask typed questions, starting with "what is slow?". | [Focus on performance](guides/performance.md) |
-| 6 | Agents | Let a coding agent run, query and verify. | [Using praytel with agents](guides/agents.md) |
+| # | Release | What you can do | Guide | Example |
+|---|---|---|---|---|
+| 1 | Traces | Run an app and watch its traces as a live tree. | [View traces from a running app](guides/traces.md) | [1](examples.md#1-traces) |
+| 2 | Logs | See each log line under the span that emitted it. | [View logs correlated to traces](guides/logs.md) | [2](examples.md#2-logs) |
+| 3 | Tests | Run a test suite and see where a test fails. | [View traces of tests](guides/tests.md) | [3](examples.md#3-tests) |
+| 4 | Overview | See which components a run hits and how they connect. | [Get an overview of a system](guides/overview.md) | [4](examples.md#4-overview) |
+| 5 | Performance | Ask typed questions, starting with "what is slow?". | [Focus on performance](guides/performance.md) | [5](examples.md#5-performance) |
+| 6 | Agents | Let a coding agent run, query and verify. | [Using praytel with agents](guides/agents.md) | [6](examples.md#6-agents) |
+
+Every release has a runnable example against the same small app; see
+[Examples](examples.md).
 
 ## What each release contains
 

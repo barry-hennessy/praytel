@@ -24,6 +24,9 @@ variables are inherited by the test binaries the runner starts.
 Praytel exits with the runner's exit code, so it is safe in scripts and CI: a
 failing suite still fails.
 
+[Example 3](../examples.md#3-tests) is a three-test suite with one deliberate
+failure to trace.
+
 ## What the tests need
 
 The code under test must export spans, exactly as in

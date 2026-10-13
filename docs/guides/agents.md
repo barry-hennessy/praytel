@@ -30,6 +30,9 @@ wraps one child, leaves no files, and is cancelled when the server exits. The
 child's inherited environment and raw output are never exposed to the agent;
 it sees joined telemetry.
 
+[Example 6](../examples.md#6-agents) has the queries from this guide in a form
+you can run yourself before handing them to an agent.
+
 ## The investigation loop
 
 The tools use progressive disclosure, so an agent searches compact evidence

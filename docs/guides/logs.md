@@ -19,6 +19,9 @@ praytel -- ./server           # append-only stream
 praytel --tui -- ./server     # logs nested in the span tree
 ```
 
+[Example 2](../examples.md#2-logs) shows the same app's logs raw and then
+joined.
+
 ## How a line gets joined
 
 Praytel reads the child's stdout and stderr line by line and accepts logs

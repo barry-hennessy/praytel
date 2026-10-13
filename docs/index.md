@@ -32,6 +32,10 @@ the [release plan](releases.md).
 6. [Using praytel with agents](guides/agents.md): keep an agent focused on the
    area of change and verify what it built.
 
+Each guide has a matching entry in [Examples](examples.md): one small
+instrumented app and a command to run against it, so you can try a guide
+before instrumenting anything of your own.
+
 Going deeper:
 
 - [Typed queries](guides/queries.md): select spans and logs precisely, and get

@@ -29,6 +29,9 @@ praytel --tui -- ./server
 
 Press Ctrl-G to switch from the tree to the graph. Press it again to go back.
 
+[Example 4](../examples.md#4-overview) draws the graph of a four-service app
+you can compare against its source.
+
 ## Reading the graph
 
 Each box is a container: a component, or a section inside one. An arrow from A
