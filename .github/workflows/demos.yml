@@ -1,0 +1,63 @@
+# Records the demo walkthroughs in demo/scenarios. The work is done by the
+# Dagger module in dagger/, so this is the same command you run locally:
+#
+#   make docs
+#
+# Recordings are uploaded as an artifact on every run and committed to
+# docs/assets only when a release is published.
+name: demos
+
+on:
+  pull_request:
+    paths:
+      - "demo/**"
+      - "dagger/**"
+      - "dagger.json"
+      - "Makefile"
+      - "cmd/**"
+      - "internal/**"
+      - ".github/workflows/demos.yml"
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  DAGGER_VERSION: "0.21.10"
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # A release checks out a tag; commit the recordings to the default
+          # branch instead.
+          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || '' }}
+
+      - name: Install Dagger
+        run: curl -fsSL https://dl.dagger.io/dagger/install.sh | BIN_DIR="$HOME/.local/bin" sh
+
+      - name: Record
+        run: |
+          rm -rf docs/assets
+          make docs DAGGER="$HOME/.local/bin/dagger"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: demos
+          path: docs/assets
+
+      - name: Commit recordings
+        if: github.event_name == 'release'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/assets
+          git diff --cached --quiet && exit 0
+          git commit -m "Update demo recordings for ${{ github.event.release.tag_name }}"
+          git push

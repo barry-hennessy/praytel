@@ -1,0 +1,11 @@
+#!/bin/sh
+# Set the tmux caption bar to line N of the scenario's captions file.
+# N = 0 clears it. Bound to prefix + digit in demo/tmux.conf.
+set -eu
+
+text=""
+if [ "${1:-0}" -gt 0 ]; then
+	text=$(sed -n "${1}p" "${DEMO_CAPTIONS:-/scenario/captions.txt}")
+fi
+tmux set -g @caption "$text"
+tmux refresh-client -S
