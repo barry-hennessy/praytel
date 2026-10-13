@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"reflect"
 	"strings"
 	"testing"
@@ -46,8 +48,8 @@ func TestTreeRendersLiveStateDurationLogsAndNesting(t *testing.T) {
 	if !strings.ContainsAny(view, "◐◓◑◒") {
 		t.Fatalf("running span has no spinner:\n%s", view)
 	}
-	if !strings.Contains(view, "┆ ┃ db.query") {
-		t.Fatalf("nested span does not have depth-coloured bars:\n%s", view)
+	if !strings.Contains(view, "┆ × db.query") {
+		t.Fatalf("nested span's status is not in its own column inside its parent's bar:\n%s", view)
 	}
 }
 
@@ -90,7 +92,7 @@ func TestTreeRendersAttributesUnderHeaderNotAsLogLine(t *testing.T) {
 		t.Fatalf("second attribute missing from attribute line:\n%s", lines[attrIdx])
 	}
 
-	prefix := m.bars(0, false)
+	prefix := bars([]lipgloss.Color{neutralColor}, false)
 	if !strings.HasPrefix(lines[attrIdx], prefix+detailIndent) || strings.HasPrefix(lines[attrIdx], prefix+detailIndent+" ") {
 		t.Fatalf("attribute line not indented one stop in from the header:\n%q", lines[attrIdx])
 	}
@@ -99,7 +101,15 @@ func TestTreeRendersAttributesUnderHeaderNotAsLogLine(t *testing.T) {
 	}
 }
 
-func TestTreeDrawsARuleAboveEverySpanButTheFirst(t *testing.T) {
+// spinnerFrames collapses whichever frame a running span is on to the first.
+var spinnerFrames = strings.NewReplacer("◓", "◐", "◑", "◐", "◒", "◐")
+
+func TestTreeDrawsABarAndRuleOnlyForSpansThatCallOthers(t *testing.T) {
+	// Colors are otherwise stripped when the tests' output isn't a terminal.
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+
 	m := NewModel(nil, nil)
 	m.width = 40
 	m.apply(domain.SpanUpserted{TraceID: "t1", SpanID: "root", Component: "api", Name: "request"})
@@ -107,26 +117,76 @@ func TestTreeDrawsARuleAboveEverySpanButTheFirst(t *testing.T) {
 	m.apply(domain.SpanParentLinked{TraceID: "t1", SpanID: "child", ParentSpanID: "root"})
 	m.apply(domain.SpanUpserted{TraceID: "t2", SpanID: "other", Component: "api", Name: "health"})
 
+	lines := m.treeLines()
 	var got []string
-	for _, line := range m.treeLines() {
-		got = append(got, strings.TrimRight(ansi.Strip(line), " "))
+	for _, line := range lines {
+		got = append(got, spinnerFrames.Replace(strings.TrimRight(ansi.Strip(line), " ")))
 	}
-	headers := []string{"api.request", "db.query", "api.health"}
-	if len(got) != 2*len(headers)-1 {
-		t.Fatalf("expected a header per span and a rule between each pair, got:\n%s", strings.Join(got, "\n"))
+	want := []string{
+		"◐ api.request", // status in the top cell of its own bar
+		"┆ " + strings.Repeat("─", 38),
+		"┆ ◐ db.query", // calls nothing: status where its bar would be...
+		"┆",            // ...and a blank row for a rule
+		"◐ api.health", // nothing follows the last span, so no row at all
 	}
-	for i, header := range headers {
-		if !strings.Contains(got[2*i], header) {
-			t.Fatalf("line %d = %q, want the %s header", 2*i, got[2*i], header)
+	if len(got) != len(want) {
+		t.Fatalf("tree =\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	for i := range want {
+		// Headers go on to a live duration.
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Fatalf("line %d = %q, want prefix %q", i, got[i], want[i])
 		}
 	}
-	// The child's rule starts at its own column, leaving the parent's bar
-	// unbroken; a root's rule spans the full width.
-	if want := "┆ " + strings.Repeat("─", 38); got[1] != want {
-		t.Fatalf("rule above nested span = %q, want %q", got[1], want)
+
+	// api.request calls db.query, so it is the first component to get a
+	// color. The child's blank row still carries its parent's bar in the
+	// parent's color.
+	paint := func(color lipgloss.Color, s string) string {
+		return lipgloss.NewStyle().Foreground(color).Render(s)
 	}
-	if want := strings.Repeat("─", 40); got[3] != want {
-		t.Fatalf("rule above root span = %q, want %q", got[3], want)
+	caller := componentPalette[0]
+	if want := paint(caller, "┆") + " " + paint(caller, strings.Repeat("─", 38)); lines[1] != want {
+		t.Fatalf("caller's rule = %q, want %q", lines[1], want)
+	}
+	if want := paint(caller, "┆") + "   "; lines[3] != want {
+		t.Fatalf("leaf's blank row = %q, want %q", lines[3], want)
+	}
+}
+
+func TestComponentsThatCallOthersKeepOneColorEach(t *testing.T) {
+	m := NewModel(nil, nil)
+	span := func(trace, id, parent, name string) *spanView {
+		m.apply(domain.SpanUpserted{TraceID: trace, SpanID: id, Component: "svc", Name: name})
+		if parent != "" {
+			m.apply(domain.SpanParentLinked{TraceID: trace, SpanID: id, ParentSpanID: parent})
+		}
+		return m.spans[selectionKey(trace, id)]
+	}
+
+	// The child arrives before the parent it names.
+	leaf := span("t1", "leaf", "mid", "leaf")
+	mid := span("t1", "mid", "root", "mid")
+	root := span("t1", "root", "", "root")
+	if got := m.componentColor(mid); got != componentPalette[0] {
+		t.Fatalf("first caller's color = %v, want the palette's first", got)
+	}
+	if got := m.componentColor(root); got != componentPalette[1] {
+		t.Fatalf("second caller's color = %v, want the palette's second", got)
+	}
+	if got := m.componentColor(leaf); got != neutralColor {
+		t.Fatalf("a component that calls nothing has color %v, want neutral", got)
+	}
+
+	// The same component in a later trace, this time calling nothing, and a
+	// new caller alongside it.
+	again := span("t2", "mid", "other", "mid")
+	other := span("t2", "other", "", "other")
+	if got := m.componentColor(again); got != componentPalette[0] {
+		t.Fatalf("component changed color across traces: %v", got)
+	}
+	if got := m.componentColor(other); got != componentPalette[2] {
+		t.Fatalf("third caller's color = %v, want the palette's third", got)
 	}
 }
 
@@ -287,7 +347,7 @@ func TestDeclaredLogContextCreatesLivePlaceholderThenHydrates(t *testing.T) {
 
 	complete := m.View()
 	if !strings.Contains(complete, "worker.dispatch") ||
-		!strings.Contains(complete, "● 20ms") ||
+		!strings.Contains(complete, "● worker.dispatch 20ms") ||
 		strings.Contains(complete, "span/12345678") {
 		t.Fatalf("completed span did not hydrate the placeholder:\n%s", complete)
 	}

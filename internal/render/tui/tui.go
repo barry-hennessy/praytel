@@ -39,13 +39,18 @@ const (
 	viewGraph
 )
 
-var depthColors = []lipgloss.Color{
+// componentPalette is handed out, in order and then round again, to each
+// component that calls another (see Model.colors). A component that calls
+// nothing is drawn in neutralColor.
+var componentPalette = []lipgloss.Color{
 	lipgloss.Color("39"),
 	lipgloss.Color("135"),
 	lipgloss.Color("214"),
 	lipgloss.Color("42"),
 	lipgloss.Color("207"),
 }
+
+var neutralColor = lipgloss.Color("240")
 
 type spanView struct {
 	id         string
@@ -89,6 +94,15 @@ type Model struct {
 	logs      map[string]*logView
 	nextOrder int
 
+	// callers holds the selectionKey of every span named as another's
+	// parent, whether or not it has arrived yet. colors gives each component
+	// (by spanLabel) that has such a span a 1-based index into
+	// componentPalette, in order of first appearance; once given it is
+	// never changed, so a component looks the same in the tree and the
+	// graph, across traces, and however the view is filtered.
+	callers map[string]bool
+	colors  map[string]int
+
 	mode     searchMode
 	view     viewMode
 	query    string
@@ -121,15 +135,17 @@ func NewQueryModel(events <-chan domain.Event, filt *filter.Filter, query *query
 	}
 
 	return Model{
-		events: events,
-		filt:   filt,
-		fixed:  query,
-		proj:   projection.New(),
-		spans:  make(map[string]*spanView),
-		logs:   make(map[string]*logView),
-		width:  80,
-		height: 24,
-		now:    time.Now(),
+		events:  events,
+		filt:    filt,
+		fixed:   query,
+		proj:    projection.New(),
+		spans:   make(map[string]*spanView),
+		logs:    make(map[string]*logView),
+		callers: make(map[string]bool),
+		colors:  make(map[string]int),
+		width:   80,
+		height:  24,
+		now:     time.Now(),
 	}
 }
 
@@ -248,8 +264,11 @@ func (m *Model) apply(ev domain.Event) {
 		sp.end = ev.EndTime
 		sp.status = ev.Status
 		sp.attributes = ev.Attributes
+		m.colorCallers(sp)
 	case domain.SpanParentLinked:
-		m.ensureSpan(ev.TraceID, ev.SpanID).parentID = ev.ParentSpanID
+		sp := m.ensureSpan(ev.TraceID, ev.SpanID)
+		sp.parentID = ev.ParentSpanID
+		m.colorCallers(sp)
 	case domain.SpanClosed:
 		m.ensureSpan(ev.TraceID, ev.SpanID).closed = true
 	case domain.LogReceived:
@@ -292,6 +311,38 @@ func (m *Model) apply(ev domain.Event) {
 	case domain.ForestShed:
 		m.warning = "data pressure: newest telemetry was dropped"
 	}
+}
+
+// colorCallers gives a color to sp's component if sp is known to be some
+// span's parent, and to its own parent's component, now that sp names it as
+// one. A declared placeholder is skipped until it hydrates with its real
+// name, so the placeholder name doesn't use up a color.
+func (m *Model) colorCallers(sp *spanView) {
+	assign := func(caller *spanView) {
+		if caller == nil || caller.declared {
+			return
+		}
+		if label := spanLabel(caller); m.colors[label] == 0 {
+			m.colors[label] = len(m.colors)%len(componentPalette) + 1
+		}
+	}
+	if m.callers[selectionKey(sp.traceID, sp.id)] {
+		assign(sp)
+	}
+	if sp.parentID != "" {
+		parentKey := selectionKey(sp.traceID, sp.parentID)
+		m.callers[parentKey] = true
+		assign(m.spans[parentKey])
+	}
+}
+
+// componentColor is the color everything belonging to sp's component is
+// drawn in.
+func (m Model) componentColor(sp *spanView) lipgloss.Color {
+	if i := m.colors[spanLabel(sp)]; i > 0 {
+		return componentPalette[(i-1)%len(componentPalette)]
+	}
+	return neutralColor
 }
 
 func (m *Model) ensureSpan(traceID, id string) *spanView {
@@ -338,6 +389,7 @@ func (m *Model) removeTrace(traceID string) {
 			delete(m.logs, logID)
 		}
 		delete(m.spans, id)
+		delete(m.callers, id)
 	}
 }
 
@@ -465,7 +517,10 @@ func (m Model) treeLines() []string {
 		if !m.fuzzyVisible(root, children, traceMatches, logMatches) {
 			continue
 		}
-		m.renderSpan(&lines, root, 0, children, logMatches, selectedLogs, highlights, visited)
+		m.renderSpan(&lines, root, nil, children, logMatches, selectedLogs, highlights, visited)
+	}
+	if len(lines) > 0 {
+		lines = lines[:len(lines)-1] // nothing follows the last span's rule
 	}
 	if len(lines) == 0 {
 		if m.query == "" && m.fixed == nil {
@@ -505,7 +560,7 @@ func (m Model) querySelection() (map[string]bool, map[string]bool) {
 func (m Model) renderSpan(
 	lines *[]string,
 	sp *spanView,
-	depth int,
+	ancestors []lipgloss.Color, // each enclosing span's component color, outermost first
 	children map[string][]*spanView,
 	logMatches map[string]bool,
 	selectedLogs map[string]bool,
@@ -522,23 +577,23 @@ func (m Model) renderSpan(
 	}
 
 	h := highlights[key]
-	if len(*lines) > 0 {
-		*lines = append(*lines, m.spanRule(depth))
-	}
-	prefix := m.bars(depth, sp.closed)
+	trail := append(ancestors[:len(ancestors):len(ancestors)], m.componentColor(sp))
+	prefix := bars(trail, sp.closed)
+	// The status symbol takes the span's own column on its header row: the
+	// top cell of its bar, or the cell left blank for a span with no bar.
 	symbol, style := m.state(sp)
 	header := fmt.Sprintf(
 		"%s%s %s %s",
-		prefix,
-		styleSegments(spanLabel(sp), h.label, lipgloss.NewStyle(), matchHighlightStyle),
+		bars(ancestors, false),
 		style.Render(symbol),
+		styleSegments(spanLabel(sp), h.label, lipgloss.NewStyle(), matchHighlightStyle),
 		m.duration(sp),
 	)
 	*lines = append(*lines, header)
 	if len(sp.attributes) > 0 {
 		*lines = append(
 			*lines,
-			m.bars(depth, sp.closed)+detailIndent+attributesLine(sp.attributes, h.attrs),
+			prefix+detailIndent+attributesLine(sp.attributes, h.attrs),
 		)
 	}
 	for _, id := range sp.logs {
@@ -548,14 +603,15 @@ func (m Model) renderSpan(
 			continue
 		}
 		body := clean(log.body)
-		line := m.bars(depth, sp.closed) + detailIndent +
+		line := prefix + detailIndent +
 			lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252")).
 				Render(body)
 		*lines = append(*lines, line)
 	}
+	*lines = append(*lines, m.spanRule(trail, sp.closed))
 	for _, child := range children[key] {
-		m.renderSpan(lines, child, depth+1, children, logMatches, selectedLogs, highlights, visited)
+		m.renderSpan(lines, child, trail, children, logMatches, selectedLogs, highlights, visited)
 	}
 }
 
@@ -567,43 +623,44 @@ const detailIndent = "   "
 // message arrives and at depths that would otherwise run it off-screen.
 const minSpanRuleWidth = 8
 
-func (m Model) bars(depth int, closed bool) string {
+// bars draws one vertical bar per span on the path from the root down to
+// the span being rendered -- trail holds their component colors, the span's
+// own last -- so each ancestor's color runs unbroken down the left of
+// everything it encloses. A span whose component calls nothing encloses
+// nothing, so its column is left blank rather than drawn in neutralColor.
+func bars(trail []lipgloss.Color, closed bool) string {
 	var b strings.Builder
-	for i := 0; i <= depth; i++ {
+	for i, color := range trail {
 		bar := "┆"
-		if closed && i == depth {
+		if closed && i == len(trail)-1 {
 			bar = "┃"
 		}
-		b.WriteString(
-			lipgloss.NewStyle().
-				Foreground(depthColors[i%len(depthColors)]).
-				Render(bar),
-		)
+		if color == neutralColor {
+			b.WriteString("  ")
+			continue
+		}
+		b.WriteString(lipgloss.NewStyle().Foreground(color).Render(bar))
 		b.WriteByte(' ')
 	}
 	return b.String()
 }
 
-// spanRule is the line drawn above a span's header to set it apart from
-// whatever precedes it. It starts at the span's own column, leaving its
-// ancestors' bars unbroken, and runs to the edge of the window.
-func (m Model) spanRule(depth int) string {
-	var b strings.Builder
-	for i := 0; i < depth; i++ {
-		b.WriteString(
-			lipgloss.NewStyle().
-				Foreground(depthColors[i%len(depthColors)]).
-				Render("┆"),
-		)
-		b.WriteByte(' ')
+// spanRule is the line drawn under a span -- its header, attributes and
+// logs -- to set it apart from whatever follows. It is in the span's own
+// color and sits inside its bars rather than interrupting them, so the
+// span's bar and its rule read as one bracket around what the span owns. A
+// span whose component calls nothing owns nothing, and gets only the blank
+// row, still crossed by its ancestors' bars.
+func (m Model) spanRule(trail []lipgloss.Color, closed bool) string {
+	own := trail[len(trail)-1]
+	if own == neutralColor {
+		return bars(trail, closed)
 	}
-	width := max(minSpanRuleWidth, m.width-2*depth)
-	b.WriteString(
+	width := max(minSpanRuleWidth, m.width-2*len(trail))
+	return bars(trail, closed) +
 		lipgloss.NewStyle().
-			Foreground(lipgloss.Color("238")).
-			Render(strings.Repeat("─", width)),
-	)
-	return b.String()
+			Foreground(own).
+			Render(strings.Repeat("─", width))
 }
 
 // attributesLine renders a span's attributes on one faint, italic line so

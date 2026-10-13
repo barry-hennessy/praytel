@@ -204,25 +204,36 @@ func TestGraphDrawsSeparateCallsBesideEachOtherNotOnTopOfEachOther(t *testing.T)
 	}
 }
 
-func TestGraphColorsACallLikeItsCalleesTreeDepth(t *testing.T) {
+func TestGraphDrawsAComponentsBorderAndOutgoingCallsInItsColor(t *testing.T) {
 	g := fanOutModel().buildGraph()
 	cv := layoutGraph(g, nil).c
 
-	// root->a/b/c land at tree depth 1; a->c is only ever seen at depth 2.
-	want := map[cellStyle]int{edgeStyle(1): 3, edgeStyle(2): 1}
-	got := map[cellStyle]int{}
+	// root is the first component seen calling another and makes three
+	// calls; a is the second and makes one; b and c call nothing.
+	first, second := stylePalette, stylePalette+1
+	wantArrows := map[cellStyle]int{first: 3, second: 1}
+	wantBoxes := map[cellStyle]int{first: 1, second: 1, styleNeutral: 2}
+	gotArrows, gotBoxes := map[cellStyle]int{}, map[cellStyle]int{}
 	for _, row := range cv.cells {
 		for _, cell := range row {
-			if cell.r == '▶' {
-				got[cell.style]++
+			switch {
+			case cell.r == '▶':
+				gotArrows[cell.style]++
+			case cell.r == '┌' && cell.lineDirs == 0: // a box's corner, not an edge's bend
+				gotBoxes[cell.style]++
 			}
 		}
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("arrowheads per style = %v, want %v:\n%s", got, want, plainLines(cv))
+	if !reflect.DeepEqual(gotArrows, wantArrows) {
+		t.Fatalf("arrowheads per style = %v, want %v:\n%s", gotArrows, wantArrows, plainLines(cv))
 	}
-	if cellStyles[edgeStyle(2)].GetForeground() != depthColors[2] {
-		t.Fatalf("edge style for depth 2 is not the tree's depth-2 bar color")
+	if !reflect.DeepEqual(gotBoxes, wantBoxes) {
+		t.Fatalf("boxes per border style = %v, want %v:\n%s", gotBoxes, wantBoxes, plainLines(cv))
+	}
+	for i, color := range componentPalette {
+		if cellStyles[stylePalette+cellStyle(i)].GetForeground() != color {
+			t.Fatalf("palette style %d is not the tree's color %d", i, i)
+		}
 	}
 }
 

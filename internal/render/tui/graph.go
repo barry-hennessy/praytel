@@ -29,7 +29,7 @@ func (m Model) buildGraph() *graph.Graph {
 		if !m.fuzzyVisible(sp, children, traceMatches, logMatches) {
 			continue
 		}
-		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order, Depth: treeDepth(sp, inScope)}
+		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order, Color: m.colors[spanLabel(sp)]}
 		if sp.parentID != "" {
 			if parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]; ok && m.fuzzyVisible(parent, children, traceMatches, logMatches) {
 				fact.HasParent = true
@@ -41,24 +41,6 @@ func (m Model) buildGraph() *graph.Graph {
 		facts = append(facts, fact)
 	}
 	return graph.Build(facts)
-}
-
-// treeDepth is the depth renderSpan draws sp at in the tree view: the number
-// of in-scope ancestors above it.
-func treeDepth(sp *spanView, inScope map[string]*spanView) int {
-	depth := 0
-	seen := map[string]bool{selectionKey(sp.traceID, sp.id): true}
-	for sp.parentID != "" {
-		key := selectionKey(sp.traceID, sp.parentID)
-		parent, ok := inScope[key]
-		if !ok || seen[key] {
-			break
-		}
-		seen[key] = true
-		depth++
-		sp = parent
-	}
-	return depth
 }
 
 // positioned is a node (real or a routing dummy) placed at a specific
@@ -306,32 +288,35 @@ type cellStyle uint8
 
 const (
 	styleDefault cellStyle = iota
-	styleBorder
 	styleLabel
 	styleLabelMatch
 	styleFooter
-	styleEdge // first of len(depthColors) edge styles; see edgeStyle
+	styleNeutral
+	stylePalette // first of len(componentPalette) styles; see componentStyle
 )
 
 var cellStyles = map[cellStyle]lipgloss.Style{
 	styleDefault:    lipgloss.NewStyle(),
-	styleBorder:     lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
 	styleLabel:      lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
 	styleLabelMatch: matchHighlightStyle,
 	styleFooter:     lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true),
+	styleNeutral:    lipgloss.NewStyle().Foreground(neutralColor),
 }
 
 func init() {
-	for i, color := range depthColors {
-		cellStyles[styleEdge+cellStyle(i)] = lipgloss.NewStyle().Foreground(color)
+	for i, color := range componentPalette {
+		cellStyles[stylePalette+cellStyle(i)] = lipgloss.NewStyle().Foreground(color)
 	}
 }
 
-// edgeStyle colors a call the same as the tree view's nesting bar for the
-// depth the callee is drawn at, so an edge and the indented span it stands
-// for read as the same thing across the two views.
-func edgeStyle(depth int) cellStyle {
-	return styleEdge + cellStyle(depth%len(depthColors))
+// componentStyle is a component's own color (see Model.colors), or neutral
+// for one that calls nothing. Its box border and every call leaving it are
+// drawn in it, the same color the tree view gives its bar and rule.
+func componentStyle(n *graph.Node) cellStyle {
+	if n.Color == 0 {
+		return styleNeutral
+	}
+	return stylePalette + cellStyle((n.Color-1)%len(componentPalette))
 }
 
 type gridCell struct {
@@ -543,6 +528,7 @@ func (c *canvas) drawHop(h *hop, gapStart, gapEnd int) {
 func (c *canvas) drawBox(top, left, width, height int, n *graph.Node, hl graphNodeHighlight) {
 	right := left + width - 1
 	bottom := top + height - 1
+	styleBorder := componentStyle(n)
 	c.set(top, left, '┌', styleBorder)
 	c.set(top, right, '┐', styleBorder)
 	c.set(bottom, left, '└', styleBorder)
@@ -631,7 +617,7 @@ func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *grap
 			if a.layer == b.layer {
 				continue
 			}
-			h := &hop{left: a, right: b, forward: true, style: edgeStyle(re.edge.Depth)}
+			h := &hop{left: a, right: b, forward: true, style: componentStyle(g.Nodes[re.edge.FromKey])}
 			if b.layer < a.layer {
 				h.left, h.right, h.forward = b, a, false
 			}

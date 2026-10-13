@@ -26,6 +26,7 @@ type Node struct {
 	Path      []string
 	SpanCount int
 	Order     int // min contributing span order, for deterministic layout
+	Color     int // see SpanFact.Color
 }
 
 // Label is the component's full name. Path elements below the Component
@@ -42,7 +43,6 @@ type Edge struct {
 	FromKey, ToKey string
 	Count          int
 	Order          int
-	Depth          int // shallowest trace-tree depth of any contributing callee span
 }
 
 // Graph is a set of components and the aggregated calls between them.
@@ -97,7 +97,7 @@ type SpanFact struct {
 	Component string
 	Name      string
 	Order     int
-	Depth     int // nesting depth in the trace tree; 0 for a root
+	Color     int // caller-chosen color tag, opaque here; 0 means none
 
 	HasParent       bool
 	ParentComponent string
@@ -126,6 +126,9 @@ func Build(facts []SpanFact) *Graph {
 	g := New()
 	for _, f := range facts {
 		node := g.EnsureNode(h.Path(f.Component, f.Name), f.Order)
+		if node.Color == 0 {
+			node.Color = f.Color
+		}
 		node.SpanCount++
 
 		if !f.HasParent {
@@ -133,11 +136,7 @@ func Build(facts []SpanFact) *Graph {
 		}
 		parentNode := g.EnsureNode(h.Path(f.ParentComponent, f.ParentName), f.ParentOrder)
 		if parentNode.Key != node.Key {
-			e := g.EnsureEdge(parentNode.Key, node.Key, min(f.Order, f.ParentOrder))
-			if e.Count == 0 || f.Depth < e.Depth {
-				e.Depth = f.Depth
-			}
-			e.Count++
+			g.EnsureEdge(parentNode.Key, node.Key, min(f.Order, f.ParentOrder)).Count++
 		}
 	}
 	return g
