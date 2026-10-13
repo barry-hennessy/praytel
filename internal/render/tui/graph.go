@@ -13,10 +13,10 @@ import (
 // buildGraph aggregates the currently filtered/visible spans (per
 // filteredForest and fuzzyVisible -- the same layers treeLines applies, so
 // the graph can never show something the tree wouldn't) into a graph.Graph:
-// one node per distinct hierarchy container, one edge per pair of
-// containers connected by an observed parent/child span call. The
-// aggregation rule itself (same-container calls fold into a function tally
-// rather than becoming self-edges) lives in the graph package, which knows
+// one node per distinct nested component, one edge per pair of components
+// connected by an observed parent/child span call. The aggregation rule
+// itself (how names nest, and that same-component calls never become
+// self-edges) lives in the graph package, which knows
 // nothing about Model or live filtering; buildGraph's own job is only to
 // decide which spans are visible right now and hand their facts over.
 func (m Model) buildGraph() *graph.Graph {
@@ -212,36 +212,20 @@ func orderLayers(layers map[int][]string, positions map[string]*positioned, unit
 	}
 }
 
-// graphNodeHighlight mirrors spanHighlight at container granularity: which
-// runes of the node's own dotted label were consumed by a fuzzy match.
+// graphNodeHighlight mirrors spanHighlight at component granularity: which
+// runes of the node's own label were consumed by a fuzzy match.
 type graphNodeHighlight struct {
 	label []bool
 }
 
-// matchGraphNode fuzzy-matches the query against the node's own dotted
-// label and every distinct function name folded into it (sorted for
-// deterministic results), so a query for a leaf function still highlights
-// the section node it collapsed into even though the function name never
-// appears in the node's own rendered label. Only the label's portion of the
-// match mask is returned -- functions aren't rendered as their own text, so
-// there's nothing to highlight them against.
+// matchGraphNode fuzzy-matches the query against the node's label and
+// returns which of its runes the match consumed.
 func matchGraphNode(query string, n *graph.Node) (bool, graphNodeHighlight) {
-	label := strings.Join(n.Path, ".")
-	fnNames := make([]string, 0, len(n.Functions))
-	for fn := range n.Functions {
-		fnNames = append(fnNames, fn)
-	}
-	sort.Strings(fnNames)
-	segments := append([]string{label}, fnNames...)
-	ok, mask := fuzzyMatch(query, strings.Join(segments, " "))
+	ok, mask := fuzzyMatch(query, n.Label())
 	if !ok {
 		return false, graphNodeHighlight{}
 	}
-	labelLen := utf8.RuneCountInString(label)
-	if labelLen > len(mask) {
-		labelLen = len(mask)
-	}
-	return true, graphNodeHighlight{label: mask[:labelLen]}
+	return true, graphNodeHighlight{label: mask}
 }
 
 // Layout constants. Sizes are deliberately generous rather than tightly
@@ -278,14 +262,11 @@ func plural(n int) string {
 }
 
 func nodeFooter(n *graph.Node) string {
-	if len(n.Functions) == 0 {
-		return fmt.Sprintf("%d span%s", n.SpanCount, plural(n.SpanCount))
-	}
-	return fmt.Sprintf("%d span%s · %d fn%s", n.SpanCount, plural(n.SpanCount), len(n.Functions), plural(len(n.Functions)))
+	return fmt.Sprintf("%d span%s", n.SpanCount, plural(n.SpanCount))
 }
 
 func nodeBoxWidth(n *graph.Node) int {
-	label := strings.Join(n.Path, ".")
+	label := n.Label()
 	footer := nodeFooter(n)
 	inner := utf8.RuneCountInString(label)
 	if fl := utf8.RuneCountInString(footer); fl > inner {
@@ -545,7 +526,7 @@ func (c *canvas) drawBox(top, left, width int, n *graph.Node, hl graphNodeHighli
 
 	inner := width - 4
 	labelCol := left + 2
-	label := truncateLabel(strings.Join(n.Path, "."), inner)
+	label := truncateLabel(n.Label(), inner)
 	if hl.label != nil {
 		c.writeTextMasked(top+1, labelCol, label, hl.label, styleLabel, styleLabelMatch)
 	} else {
@@ -703,7 +684,7 @@ func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *grap
 	return &graphLayout{c: cv}
 }
 
-// graphLines renders the current component/section interconnection graph
+// graphLines renders the current component interconnection graph
 // as a full ASCII node-link diagram, following exactly the same
 // focus/exclude, compiled-query, and live fuzzy search narrowing as
 // treeLines (see filteredForest and fuzzyVisible).

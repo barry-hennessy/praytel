@@ -13,7 +13,7 @@ import (
 )
 
 // The pure graph-aggregation and layering algorithm (containerKey,
-// hierarchyPath, componentGraph, assignLayers, detectFeedbackEdges, and
+// Hierarchy, componentGraph, assignLayers, detectFeedbackEdges, and
 // graph.Build's own aggregation rule) is tested directly, as an external
 // caller, in internal/render/tui/internal/graph. The tests below exercise
 // Model's live-filtering integration -- focus globs, typed queries, and
@@ -34,10 +34,10 @@ func TestBuildGraphRespectsFocusFilter(t *testing.T) {
 	m.apply(domain.SpanUpserted{TraceID: "t2", SpanID: "db-root", Component: "db", Name: "query"})
 
 	g := m.buildGraph()
-	if _, ok := g.Nodes[graph.ContainerKey([]string{"db"})]; ok {
+	if _, ok := g.Nodes[graph.ContainerKey([]string{"db", ".query"})]; ok {
 		t.Fatalf("expected db to be filtered out by focus, nodes = %v", nodeKeys(g))
 	}
-	if _, ok := g.Nodes[graph.ContainerKey([]string{"api"})]; !ok {
+	if _, ok := g.Nodes[graph.ContainerKey([]string{"api", ".request"})]; !ok {
 		t.Fatalf("expected api to remain in focus, nodes = %v", nodeKeys(g))
 	}
 }
@@ -55,10 +55,10 @@ func TestBuildGraphRespectsTypedQuery(t *testing.T) {
 	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "sibling", ParentSpanID: "root"})
 
 	g := m.buildGraph()
-	if _, ok := g.Nodes[graph.ContainerKey([]string{"cache"})]; ok {
+	if _, ok := g.Nodes[graph.ContainerKey([]string{"cache", ".get"})]; ok {
 		t.Fatalf("expected cache to be excluded by the typed query's path view, nodes = %v", nodeKeys(g))
 	}
-	if _, ok := g.Nodes[graph.ContainerKey([]string{"db"})]; !ok {
+	if _, ok := g.Nodes[graph.ContainerKey([]string{"db", ".query"})]; !ok {
 		t.Fatalf("expected db (the error span) to remain, nodes = %v", nodeKeys(g))
 	}
 }
@@ -73,9 +73,8 @@ func TestBuildGraphRespectsLiveFuzzySearchTraceMode(t *testing.T) {
 	if len(g.Nodes) != 1 {
 		t.Fatalf("expected only the matching trace's node, got %v", nodeKeys(g))
 	}
-	api := graph.ContainerKey([]string{"api"})
-	if g.Nodes[api] == nil || g.Nodes[api].Functions["orders"] == 0 {
-		t.Fatalf("expected api node with orders function, got %v", nodeKeys(g))
+	if g.Nodes[graph.ContainerKey([]string{"api", ".orders"})] == nil {
+		t.Fatalf("expected api.orders node, got %v", nodeKeys(g))
 	}
 }
 
@@ -90,10 +89,8 @@ func TestBuildGraphRespectsLiveFuzzySearchLogMode(t *testing.T) {
 	m.query = "db unav"
 	g := m.buildGraph()
 
-	api := graph.ContainerKey([]string{"api"})
-	node := g.Nodes[api]
-	if node == nil || node.Functions["health"] == 0 || node.Functions["orders"] != 0 {
-		t.Fatalf("expected only the health span to survive log search, got %+v", node)
+	if len(g.Nodes) != 1 || g.Nodes[graph.ContainerKey([]string{"api", ".health"})] == nil {
+		t.Fatalf("expected only the health span to survive log search, got %v", nodeKeys(g))
 	}
 }
 
@@ -107,29 +104,17 @@ func nodeKeys(g *graph.Graph) []string {
 
 func TestMatchGraphNodeMarksOnlyTheLabelsMatchedCharacters(t *testing.T) {
 	g := graph.New()
-	n := g.EnsureNode([]string{"api", "orders"}, 1)
-	n.Functions["create"] = 1
+	n := g.EnsureNode([]string{"api", ".orders"}, 1)
 
 	ok, h := matchGraphNode("apiord", n)
 	if !ok {
-		t.Fatalf("expected query to match node label %q", strings.Join(n.Path, "."))
+		t.Fatalf("expected query to match node label %q", n.Label())
 	}
 	// label is "api.orders"; "apiord" greedily consumes a-p-i-o-r-d, leaving
 	// the trailing "ers" unmatched.
 	want := []bool{true, true, true, false, true, true, true, false, false, false}
 	if !reflect.DeepEqual(h.label, want) {
 		t.Fatalf("label mask = %v, want %v", h.label, want)
-	}
-}
-
-func TestMatchGraphNodeMatchesOnAFoldedFunctionName(t *testing.T) {
-	g := graph.New()
-	n := g.EnsureNode([]string{"api", "orders"}, 1)
-	n.Functions["frobnicate"] = 1
-
-	ok, _ := matchGraphNode("frobnicate", n)
-	if !ok {
-		t.Fatalf("expected query matching a folded function name to still mark the node visible")
 	}
 }
 

@@ -7,104 +7,195 @@ import (
 	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
 )
 
-func TestHierarchyPathSplitsComponentSectionsAndFunction(t *testing.T) {
+func TestHierarchyPathNestsNamesUnderSharedAndObservedPrefixes(t *testing.T) {
+	type span struct{ component, name string }
 	cases := []struct {
-		name          string
-		component     string
-		spanName      string
-		wantContainer []string
-		wantFunction  string
+		name  string
+		spans []span
+		want  [][]string // parallel to spans
 	}{
 		{
-			name:          "component with nested sections",
-			component:     "Foo",
-			spanName:      "Bar.Qux.Baz",
-			wantContainer: []string{"Foo", "Bar", "Qux"},
-			wantFunction:  "Baz",
+			name: "names diverging after a shared prefix nest under it",
+			spans: []span{
+				{"api", "Handlers.Orders.validate"},
+				{"api", "Handlers.Orders.create"},
+				{"api", "Handlers.Payments.charge"},
+			},
+			want: [][]string{
+				{"api", ".Handlers", ".Orders", ".validate"},
+				{"api", ".Handlers", ".Orders", ".create"},
+				{"api", ".Handlers", ".Payments.charge"},
+			},
 		},
 		{
-			name:          "no dots in name",
-			component:     "Foo",
-			spanName:      "health",
-			wantContainer: []string{"Foo"},
-			wantFunction:  "health",
+			name: "no separator is assumed",
+			spans: []span{
+				{"api", "orders/validate::check"},
+				{"api", "orders/validate::reject"},
+				{"api", "orders/ship"},
+			},
+			want: [][]string{
+				{"api", ".orders", "/validate", "::check"},
+				{"api", ".orders", "/validate", "::reject"},
+				{"api", ".orders", "/ship"},
+			},
 		},
 		{
-			name:          "empty name",
-			component:     "Foo",
-			spanName:      "",
-			wantContainer: []string{"Foo"},
-			wantFunction:  "",
+			name: "an observed name that others extend is their parent",
+			spans: []span{
+				{"api", "orders"},
+				{"api", "orders/validate"},
+				{"api", "orders/validate/check"},
+			},
+			want: [][]string{
+				{"api", ".orders"},
+				{"api", ".orders", "/validate"},
+				{"api", ".orders", "/validate", "/check"},
+			},
 		},
 		{
-			name:          "empty component",
-			component:     "",
-			spanName:      "Bar.Baz",
-			wantContainer: []string{"Bar"},
-			wantFunction:  "Baz",
+			name: "prefixes only end at word boundaries",
+			spans: []span{
+				{"api", "get"},
+				{"api", "getAll"},
+				{"api", "validate"},
+				{"api", "view"},
+				{"api", "load_user"},
+				{"api", "load_order"},
+			},
+			want: [][]string{
+				{"api", ".get"},
+				{"api", ".getAll"},
+				{"api", ".validate"},
+				{"api", ".view"},
+				{"api", ".load_user"},
+				{"api", ".load_order"},
+			},
 		},
 		{
-			name:          "empty component and no dots in name",
-			component:     "",
-			spanName:      "span/12345678",
-			wantContainer: []string{"span/12345678"},
-			wantFunction:  "",
+			name:  "a name alone is one component under its Component",
+			spans: []span{{"Foo", "Bar.Qux.Baz"}},
+			want:  [][]string{{"Foo", ".Bar.Qux.Baz"}},
 		},
 		{
-			name:          "both empty",
-			component:     "",
-			spanName:      "",
-			wantContainer: nil,
-			wantFunction:  "",
+			name:  "empty name",
+			spans: []span{{"Foo", ""}},
+			want:  [][]string{{"Foo"}},
 		},
 		{
-			name:          "name redundantly prefixed with component",
-			component:     "Foo",
-			spanName:      "Foo.Bar.Baz",
-			wantContainer: []string{"Foo", "Bar"},
-			wantFunction:  "Baz",
+			name:  "name equals component",
+			spans: []span{{"Foo", "Foo"}},
+			want:  [][]string{{"Foo"}},
 		},
 		{
-			name:          "name equals component",
-			component:     "Foo",
-			spanName:      "Foo",
-			wantContainer: []string{"Foo"},
-			wantFunction:  "",
+			name: "name redundantly prefixed with component",
+			spans: []span{
+				{"Foo", "Foo.Bar.Baz"},
+				{"Foo", "Bar.Qux"},
+			},
+			want: [][]string{
+				{"Foo", ".Bar", ".Baz"},
+				{"Foo", ".Bar", ".Qux"},
+			},
+		},
+		{
+			name: "empty component",
+			spans: []span{
+				{"", "Bar.Baz"},
+				{"", "Bar.Qux"},
+			},
+			want: [][]string{
+				{"Bar", ".Baz"},
+				{"Bar", ".Qux"},
+			},
+		},
+		{
+			name:  "empty component and nothing shared",
+			spans: []span{{"", "span/12345678"}},
+			want:  [][]string{{"span/12345678"}},
+		},
+		{
+			name:  "both empty",
+			spans: []span{{"", ""}},
+			want:  [][]string{nil},
+		},
+		{
+			name: "components do not share prefixes",
+			spans: []span{
+				{"api", "Orders.create"},
+				{"db", "Orders.insert"},
+			},
+			want: [][]string{
+				{"api", ".Orders.create"},
+				{"db", ".Orders.insert"},
+			},
 		},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			gotContainer, gotFunction := graph.HierarchyPath(c.component, c.spanName)
-			if !reflect.DeepEqual(gotContainer, c.wantContainer) {
-				t.Fatalf("HierarchyPath(%q, %q) container = %v, want %v", c.component, c.spanName, gotContainer, c.wantContainer)
+			h := graph.NewHierarchy()
+			for _, s := range c.spans {
+				h.Add(s.component, s.name)
 			}
-			if gotFunction != c.wantFunction {
-				t.Fatalf("HierarchyPath(%q, %q) function = %q, want %q", c.component, c.spanName, gotFunction, c.wantFunction)
+			for i, s := range c.spans {
+				if got := h.Path(s.component, s.name); !reflect.DeepEqual(got, c.want[i]) {
+					t.Fatalf("Path(%q, %q) = %q, want %q", s.component, s.name, got, c.want[i])
+				}
 			}
 		})
 	}
 }
 
-func TestBuildFoldsSameContainerCallsIntoFunctionTallyNotEdges(t *testing.T) {
+func TestNodeLabelIsTheComponentsFullName(t *testing.T) {
+	g := graph.Build([]graph.SpanFact{
+		{Component: "api", Name: "orders/validate::check", Order: 1},
+		{Component: "api", Name: "orders/validate::reject", Order: 2},
+	})
+
+	node, ok := g.Nodes[graph.ContainerKey([]string{"api", ".orders/validate", "::check"})]
+	if !ok {
+		t.Fatalf("missing node; nodes = %q", nodeKeys(g))
+	}
+	if got, want := node.Label(), "api.orders/validate::check"; got != want {
+		t.Fatalf("Label() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildGivesEveryNamedSpanItsOwnNode(t *testing.T) {
 	g := graph.Build([]graph.SpanFact{
 		{Component: "api", Name: "Handlers.Orders.validate", Order: 1},
 		{Component: "api", Name: "Handlers.Orders.create", Order: 2, HasParent: true, ParentComponent: "api", ParentName: "Handlers.Orders.validate", ParentOrder: 1},
+		{Component: "api", Name: "Handlers.Orders.create", Order: 3},
+	})
+
+	validate := graph.ContainerKey([]string{"api", ".Handlers.Orders", ".validate"})
+	create := graph.ContainerKey([]string{"api", ".Handlers.Orders", ".create"})
+	if len(g.Nodes) != 2 {
+		t.Fatalf("expected one node per distinct span name and none for the shared prefix, got %q", nodeKeys(g))
+	}
+	if n := g.Nodes[validate]; n == nil || n.SpanCount != 1 {
+		t.Fatalf("validate node = %+v, want SpanCount 1", n)
+	}
+	if n := g.Nodes[create]; n == nil || n.SpanCount != 2 {
+		t.Fatalf("create node = %+v, want SpanCount 2", n)
+	}
+	if e, ok := g.Edges[[2]string{validate, create}]; !ok || e.Count != 1 {
+		t.Fatalf("expected one edge validate->create, got %+v (ok=%v)", e, ok)
+	}
+}
+
+func TestBuildFoldsSameNameCallsIntoSpanCountNotSelfEdges(t *testing.T) {
+	g := graph.Build([]graph.SpanFact{
+		{Component: "api", Name: "walk", Order: 1},
+		{Component: "api", Name: "walk", Order: 2, HasParent: true, ParentComponent: "api", ParentName: "walk", ParentOrder: 1},
 	})
 
 	if len(g.Edges) != 0 {
-		t.Fatalf("expected no edges for calls within the same container, got %v", g.Edges)
+		t.Fatalf("expected no self-edge for a span calling its own name, got %v", g.Edges)
 	}
-	orders := graph.ContainerKey([]string{"api", "Handlers", "Orders"})
-	node, ok := g.Nodes[orders]
-	if !ok {
-		t.Fatalf("missing node %q", orders)
-	}
-	if node.SpanCount != 2 {
-		t.Fatalf("SpanCount = %d, want 2", node.SpanCount)
-	}
-	if node.Functions["validate"] != 1 || node.Functions["create"] != 1 {
-		t.Fatalf("functions tally = %v, want validate:1 create:1", node.Functions)
+	if n := g.Nodes[graph.ContainerKey([]string{"api", ".walk"})]; n == nil || n.SpanCount != 2 {
+		t.Fatalf("walk node = %+v, want SpanCount 2", n)
 	}
 }
 
@@ -115,23 +206,23 @@ func TestBuildProducesCrossAndIntraComponentEdgesFromTheSameRule(t *testing.T) {
 		{Component: "db", Name: "query", Order: 3, HasParent: true, ParentComponent: "api", ParentName: "Handlers.Orders.validate", ParentOrder: 1},
 	})
 
-	orders := graph.ContainerKey([]string{"api", "Handlers", "Orders"})
-	payments := graph.ContainerKey([]string{"api", "Handlers", "Payments"})
-	db := graph.ContainerKey([]string{"db"})
+	validate := graph.ContainerKey([]string{"api", ".Handlers", ".Orders.validate"})
+	charge := graph.ContainerKey([]string{"api", ".Handlers", ".Payments.charge"})
+	query := graph.ContainerKey([]string{"db", ".query"})
 
-	for _, key := range []string{orders, payments, db} {
+	for _, key := range []string{validate, charge, query} {
 		if _, ok := g.Nodes[key]; !ok {
-			t.Fatalf("missing node %q; nodes = %v", key, nodeKeys(g))
+			t.Fatalf("missing node %q; nodes = %q", key, nodeKeys(g))
 		}
 	}
 
-	intra, ok := g.Edges[[2]string{orders, payments}]
+	intra, ok := g.Edges[[2]string{validate, charge}]
 	if !ok || intra.Count != 1 {
-		t.Fatalf("expected one intra-component edge Orders->Payments, got %+v (ok=%v)", intra, ok)
+		t.Fatalf("expected one intra-component edge validate->charge, got %+v (ok=%v)", intra, ok)
 	}
-	cross, ok := g.Edges[[2]string{orders, db}]
+	cross, ok := g.Edges[[2]string{validate, query}]
 	if !ok || cross.Count != 1 {
-		t.Fatalf("expected one cross-component edge Orders->db, got %+v (ok=%v)", cross, ok)
+		t.Fatalf("expected one cross-component edge validate->query, got %+v (ok=%v)", cross, ok)
 	}
 }
 
@@ -143,8 +234,8 @@ func TestBuildAggregatesRepeatedEdgesIntoOneCount(t *testing.T) {
 		{Component: "db", Name: "query", Order: 4, HasParent: true, ParentComponent: "api", ParentName: "request", ParentOrder: 3},
 	})
 
-	api := graph.ContainerKey([]string{"api"})
-	db := graph.ContainerKey([]string{"db"})
+	api := graph.ContainerKey([]string{"api", ".request"})
+	db := graph.ContainerKey([]string{"db", ".query"})
 	e, ok := g.Edges[[2]string{api, db}]
 	if !ok || e.Count != 2 {
 		t.Fatalf("expected aggregated edge count 2 across two traces, got %+v (ok=%v)", e, ok)

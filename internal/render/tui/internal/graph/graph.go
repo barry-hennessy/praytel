@@ -1,6 +1,6 @@
-// Package graph builds and lays out the TUI's component/section
-// interconnection graph: one node per distinct hierarchy container, one
-// aggregated edge per pair of containers connected by an observed
+// Package graph builds and lays out the TUI's component interconnection
+// graph: one node per distinct nested component that spans execute as, one
+// aggregated edge per pair of components connected by an observed
 // parent/child span call. It knows nothing about Model, live filtering, or
 // rendering styles -- callers hand it already-visible span facts and get
 // back a graph plus layering/layout primitives.
@@ -11,70 +11,40 @@ import (
 	"strings"
 )
 
-// HierarchyPath splits a span's component and name into a container
-// hierarchy -- Component, then nested "section" segments -- plus a
-// trailing "function" leaf segment. Component.section.section...function
-// is the convention this parses; e.g. component="Foo", name="Bar.Qux.Baz"
-// yields containerPath=["Foo","Bar","Qux"], function="Baz".
-//
-// A span with no component and no dots in its name has nothing to derive a
-// container from except the name itself, so that name becomes the
-// container (a node of its own, no separate function) rather than a
-// function with no container -- which would otherwise render as a
-// blank-labeled node.
-func HierarchyPath(component, name string) (containerPath []string, function string) {
-	if component != "" {
-		containerPath = append(containerPath, component)
-		if name == component {
-			return containerPath, ""
-		}
-		if strings.HasPrefix(name, component+".") {
-			name = name[len(component)+1:]
-		}
-	}
-	if name == "" {
-		return containerPath, ""
-	}
-	segments := strings.Split(name, ".")
-	if len(segments) == 1 {
-		if component == "" {
-			return []string{segments[0]}, ""
-		}
-		return containerPath, segments[0]
-	}
-	containerPath = append(containerPath, segments[:len(segments)-1]...)
-	return containerPath, segments[len(segments)-1]
-}
-
-// ContainerKey returns the stable map key for a container path.
+// ContainerKey returns the stable map key for a component path.
 func ContainerKey(path []string) string {
 	return strings.Join(path, "\x1f")
 }
 
-// Node is one container in the interconnection graph: a distinct
-// (Component, section...) path. The leaf function segment of any
-// contributing span is not itself promoted to a node (that would make the
-// graph "call graph of every method" scale); it is tallied in Functions
-// instead so the detail isn't lost, just not given node status.
+// Node is one component in the interconnection graph: a distinct path
+// through the Hierarchy, down to and including the innermost component a
+// span names. Every distinct span name is therefore a node of its own; a
+// component that only exists as a shared prefix, with no span of that exact
+// name, is not.
 type Node struct {
 	Key       string
 	Path      []string
 	SpanCount int
-	Functions map[string]int
 	Order     int // min contributing span order, for deterministic layout
 }
 
-// Edge is a directed, aggregated call from one container to another --
-// built whenever a visible span's parent lives in a different container,
-// whether that crosses a Component (service) boundary or just a section
-// boundary within one Component.
+// Label is the component's full name. Path elements below the Component
+// carry their own leading separator, so this is plain concatenation.
+func (n *Node) Label() string {
+	return strings.Join(n.Path, "")
+}
+
+// Edge is a directed, aggregated call from one component to another --
+// built whenever a visible span's parent resolves to a different path,
+// whether that crosses a top-level Component (service) boundary or stays
+// within one.
 type Edge struct {
 	FromKey, ToKey string
 	Count          int
 	Order          int
 }
 
-// Graph is a set of containers and the aggregated calls between them.
+// Graph is a set of components and the aggregated calls between them.
 type Graph struct {
 	Nodes map[string]*Node
 	Edges map[[2]string]*Edge
@@ -91,7 +61,7 @@ func (g *Graph) EnsureNode(path []string, order int) *Node {
 	key := ContainerKey(path)
 	n, ok := g.Nodes[key]
 	if !ok {
-		n = &Node{Key: key, Path: append([]string(nil), path...), Functions: map[string]int{}, Order: order}
+		n = &Node{Key: key, Path: append([]string(nil), path...), Order: order}
 		g.Nodes[key] = n
 		return n
 	}
@@ -134,25 +104,32 @@ type SpanFact struct {
 }
 
 // Build aggregates already-filtered/visible span facts into a Graph: one
-// node per distinct hierarchy container, one edge per pair of containers
-// connected by an observed parent/child span call. Same-container calls (a
-// function calling another function in the same section) are folded into
-// the node's own function tally rather than becoming self-edges.
+// node per distinct component path, one edge per pair of components
+// connected by an observed parent/child span call. A span whose parent
+// resolves to the same path (recursion, or a retry under the same name)
+// only adds to that node's span count rather than becoming a self-edge.
+//
+// Paths are derived from the names in facts alone (see Hierarchy), so the
+// same span can resolve to a differently nested path as the visible set
+// grows.
 func Build(facts []SpanFact) *Graph {
+	h := NewHierarchy()
+	for _, f := range facts {
+		h.Add(f.Component, f.Name)
+		if f.HasParent {
+			h.Add(f.ParentComponent, f.ParentName)
+		}
+	}
+
 	g := New()
 	for _, f := range facts {
-		path, fn := HierarchyPath(f.Component, f.Name)
-		node := g.EnsureNode(path, f.Order)
+		node := g.EnsureNode(h.Path(f.Component, f.Name), f.Order)
 		node.SpanCount++
-		if fn != "" {
-			node.Functions[fn]++
-		}
 
 		if !f.HasParent {
 			continue
 		}
-		parentPath, _ := HierarchyPath(f.ParentComponent, f.ParentName)
-		parentNode := g.EnsureNode(parentPath, f.ParentOrder)
+		parentNode := g.EnsureNode(h.Path(f.ParentComponent, f.ParentName), f.ParentOrder)
 		if parentNode.Key != node.Key {
 			g.EnsureEdge(parentNode.Key, node.Key, min(f.Order, f.ParentOrder)).Count++
 		}
@@ -202,7 +179,7 @@ func sortedEdgeKeys(g *Graph) [][2]string {
 // DetectFeedbackEdges splits g's edges into a forward DAG (adjacency list,
 // feedback edges excluded) plus the set of "back" edges that would close a
 // cycle in a DFS starting from nodes in order-sorted sequence. Aggregated
-// container-call graphs can cycle (A calls B in one trace, B calls A in
+// component-call graphs can cycle (A calls B in one trace, B calls A in
 // another) even though per-trace parent pointers can't, so layering must
 // tolerate this rather than assume a DAG.
 func DetectFeedbackEdges(g *Graph) (forward map[string][]string, feedback map[[2]string]bool) {

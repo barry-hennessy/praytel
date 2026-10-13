@@ -30,7 +30,7 @@ const (
 )
 
 // viewMode is orthogonal to searchMode: it picks the full-screen display
-// (tree vs. component/section graph), independent of which fuzzy search
+// (tree vs. component graph), independent of which fuzzy search
 // mode narrows it.
 type viewMode uint8
 
