@@ -26,7 +26,21 @@ type Config struct {
 	DrainTimeout time.Duration
 	MaxSpans     int
 	MaxLogLines  int
+	Focus        []string
+	Exclude      []string
 	TUI          bool
+}
+
+type stringList []string
+
+func (s *stringList) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+
+	return nil
 }
 
 // Parse splits args on "--" into flags and a child command, parses the
@@ -54,6 +68,10 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
 	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
 	tuiMode := fs.Bool("tui", false, "render an interactive live trace tree")
+	var focus stringList
+	var exclude stringList
+	fs.Var(&focus, "focus", "admit the span path matching this glob (repeatable, union)")
+	fs.Var(&exclude, "exclude", "drop matching names after focus expansion (repeatable)")
 
 	if err := fs.Parse(flags); err != nil {
 		return Config{}, err
@@ -74,6 +92,8 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		DrainTimeout: hard,
 		MaxSpans:     *maxSpans,
 		MaxLogLines:  *maxLogLines,
+		Focus:        append([]string(nil), focus...),
+		Exclude:      append([]string(nil), exclude...),
 		TUI:          *tuiMode,
 	}, nil
 }

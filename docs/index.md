@@ -27,6 +27,7 @@ together; each later release adds one.
    span that emitted it.
 3. [Get an overview of a system](guides/overview.md): which components are hit
    and how they are really wired together.
+4. [View traces of tests](guides/tests.md): see exactly where a test fails.
 
 Each guide has a matching entry in [Examples](examples.md): one small
 instrumented app and a command to run against it, so you can try a guide
