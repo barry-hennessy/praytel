@@ -29,7 +29,7 @@ func (m Model) buildGraph() *graph.Graph {
 		if !m.fuzzyVisible(sp, children, traceMatches, logMatches) {
 			continue
 		}
-		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order}
+		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order, Depth: treeDepth(sp, inScope)}
 		if sp.parentID != "" {
 			if parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]; ok && m.fuzzyVisible(parent, children, traceMatches, logMatches) {
 				fact.HasParent = true
@@ -41,6 +41,24 @@ func (m Model) buildGraph() *graph.Graph {
 		facts = append(facts, fact)
 	}
 	return graph.Build(facts)
+}
+
+// treeDepth is the depth renderSpan draws sp at in the tree view: the number
+// of in-scope ancestors above it.
+func treeDepth(sp *spanView, inScope map[string]*spanView) int {
+	depth := 0
+	seen := map[string]bool{selectionKey(sp.traceID, sp.id): true}
+	for sp.parentID != "" {
+		key := selectionKey(sp.traceID, sp.parentID)
+		parent, ok := inScope[key]
+		if !ok || seen[key] {
+			break
+		}
+		seen[key] = true
+		depth++
+		sp = parent
+	}
+	return depth
 }
 
 // positioned is a node (real or a routing dummy) placed at a specific
@@ -236,9 +254,11 @@ func matchGraphNode(query string, n *graph.Node) (bool, graphNodeHighlight) {
 const (
 	minNodeInnerWidth = 8
 	minColumnWidth    = 6
-	columnGap         = 6
+	minColumnGap      = 6
 	rowGap            = 1
-	nodeBoxHeight     = 4
+	minNodeInnerRows  = 2 // label + footer
+	gapLead           = 2 // cells between a column's edge and the nearest lane
+	laneSpacing       = 2
 	leftMargin        = 1
 	topMargin         = 1
 )
@@ -290,18 +310,28 @@ const (
 	styleLabel
 	styleLabelMatch
 	styleFooter
-	styleEdge
-	styleEdgeFeedback
+	styleEdge // first of len(depthColors) edge styles; see edgeStyle
 )
 
 var cellStyles = map[cellStyle]lipgloss.Style{
-	styleDefault:      lipgloss.NewStyle(),
-	styleBorder:       lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
-	styleLabel:        lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
-	styleLabelMatch:   matchHighlightStyle,
-	styleFooter:       lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true),
-	styleEdge:         lipgloss.NewStyle().Foreground(lipgloss.Color("39")),
-	styleEdgeFeedback: lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
+	styleDefault:    lipgloss.NewStyle(),
+	styleBorder:     lipgloss.NewStyle().Foreground(lipgloss.Color("240")),
+	styleLabel:      lipgloss.NewStyle().Foreground(lipgloss.Color("252")),
+	styleLabelMatch: matchHighlightStyle,
+	styleFooter:     lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true),
+}
+
+func init() {
+	for i, color := range depthColors {
+		cellStyles[styleEdge+cellStyle(i)] = lipgloss.NewStyle().Foreground(color)
+	}
+}
+
+// edgeStyle colors a call the same as the tree view's nesting bar for the
+// depth the callee is drawn at, so an edge and the indented span it stands
+// for read as the same thing across the two views.
+func edgeStyle(depth int) cellStyle {
+	return styleEdge + cellStyle(depth%len(depthColors))
 }
 
 type gridCell struct {
@@ -311,8 +341,8 @@ type gridCell struct {
 }
 
 // Direction bits for the box-drawing line glyphs a cell can connect to its
-// neighbors. Multiple edges' lines that cross or merge at the same cell
-// accumulate bits here (see canvas.addLine) so the rendered glyph is the
+// neighbors. Multiple edges' lines that cross at the same cell accumulate
+// bits here (see canvas.addLine) so the rendered glyph is the
 // correct junction (a T or a cross) instead of whichever edge happened to
 // draw last blindly overwriting the others.
 const (
@@ -398,119 +428,121 @@ func (c *canvas) writeTextMasked(row, col int, text string, mask []bool, base, h
 	}
 }
 
-// drawSegment draws one waypoint-to-waypoint hop as a single elbowed line
-// (straight if the row is unchanged), bending at a column midway between
-// the two endpoints. arrowAtEnd places an arrowhead at (rowTo, colTo);
-// forward picks a rightward (▶) vs. leftward (◀) arrowhead. When arrowAtEnd
-// and label is non-empty, the label is written just before the arrowhead if
-// there's room on the line -- used for a multi-edge's "(×N)" aggregate
-// count -- and silently dropped otherwise. Every non-arrow cell is drawn via
-// canvas.addLine rather than a direct rune, so a cell where two edges'
-// lines cross or merge resolves to the correct T/cross junction instead of
-// one edge's draw overwriting the other's.
-func (c *canvas) drawSegment(rowFrom, colFrom, rowTo, colTo int, style cellStyle, arrowAtEnd, forward bool, label string) {
-	arrowRune := '▶' // ▶
-	if !forward {
-		arrowRune = '◀' // ◀
-	}
+// hop is one drawn step of a routed edge across the gap between two
+// adjacent layers. left and right name its endpoints by which side of the
+// gap they are on, not by direction: a feedback edge's hops run right to
+// left.
+type hop struct {
+	left, right *positioned
+	forward     bool   // the call runs left to right
+	arrow       bool   // the edge's last hop: gets the arrowhead and label
+	label       string // "(×N)" aggregate count, or ""
+	style       cellStyle
 
-	var finalRow, finalLo, finalHi int
+	// Set by layout. Every hop has a port row of its own on each endpoint
+	// and, unless those rows coincide, a lane column of its own in the gap,
+	// so no two hops ever share a line.
+	leftRow, rightRow int
+	lane              int
+}
 
-	if rowFrom == rowTo {
-		lo, hi := colFrom, colTo
-		if lo > hi {
-			lo, hi = hi, lo
+func (h *hop) bent() bool { return h.leftRow != h.rightRow }
+
+// orderLanes decides which bent hops of one gap take which lane, left to
+// right. A hop runs along its left row from the gap's left edge to its
+// lane, then along its right row from the lane to the gap's right edge, so
+// when one hop's left row is another's right row the first must take the
+// lane further left or the two would overlap on that row. Within that
+// constraint hops are ordered so that a node's fan-out nests instead of
+// crossing itself. Two hops that swap rows constrain each other both ways;
+// that pair is left overlapping.
+func orderLanes(bent []*hop) []*hop {
+	down := func(h *hop) bool { return h.rightRow > h.leftRow }
+	sort.SliceStable(bent, func(i, j int) bool {
+		a, b := bent[i], bent[j]
+		if down(a) != down(b) {
+			return !down(a)
 		}
+		if down(a) {
+			return a.leftRow > b.leftRow
+		}
+		return a.leftRow < b.leftRow
+	})
+
+	byLeftRow := make(map[int]*hop, len(bent))
+	for _, h := range bent {
+		byLeftRow[h.leftRow] = h
+	}
+	placed := make(map[*hop]bool, len(bent))
+	out := make([]*hop, 0, len(bent))
+	for len(out) < len(bent) {
+		var next *hop
+		for _, h := range bent {
+			if placed[h] {
+				continue
+			}
+			if next == nil {
+				next = h // fallback if every remaining hop is waiting on another
+			}
+			if before := byLeftRow[h.rightRow]; before == nil || before == h || placed[before] {
+				next = h
+				break
+			}
+		}
+		placed[next] = true
+		out = append(out, next)
+	}
+	return out
+}
+
+// drawHop draws h across the gap spanning columns gapStart..gapEnd. Every
+// non-arrow cell goes through canvas.addLine, so where this hop crosses
+// another hop's lane the cell resolves to a cross rather than one line
+// erasing the other.
+func (c *canvas) drawHop(h *hop, gapStart, gapEnd int) {
+	arrowRow, arrowCol, arrowRune := h.rightRow, gapEnd, '▶'
+	if !h.forward {
+		arrowRow, arrowCol, arrowRune = h.leftRow, gapStart, '◀'
+	}
+	horizontal := func(row, lo, hi int) {
 		for x := lo; x <= hi; x++ {
-			if arrowAtEnd && x == colTo {
-				c.set(rowFrom, x, arrowRune, style)
+			if h.arrow && row == arrowRow && x == arrowCol {
+				c.set(row, x, arrowRune, h.style)
 				continue
 			}
-			c.addLine(rowFrom, x, dirEast|dirWest, style)
+			c.addLine(row, x, dirEast|dirWest, h.style)
 		}
-		finalRow, finalLo, finalHi = rowFrom, lo, hi
-	} else {
-		mid := colFrom + (colTo-colFrom)/2
-		if mid == colFrom {
-			if colTo > colFrom {
-				mid++
-			} else {
-				mid--
-			}
-		}
-
-		loH, hiH := colFrom, mid
-		if loH > hiH {
-			loH, hiH = hiH, loH
-		}
-		for x := loH; x <= hiH; x++ {
-			if x == mid {
-				continue // the bend cell is set below, combined with the vertical run
-			}
-			c.addLine(rowFrom, x, dirEast|dirWest, style)
-		}
-
-		loV, hiV := rowFrom, rowTo
-		if loV > hiV {
-			loV, hiV = hiV, loV
-		}
-		for y := loV; y <= hiV; y++ {
-			if y == rowFrom || y == rowTo {
-				continue // the two bend cells are set below
-			}
-			c.addLine(y, mid, dirNorth|dirSouth, style)
-		}
-
-		fromHoriz, fromVert := dirWest, dirSouth
-		if colFrom > mid {
-			fromHoriz = dirEast
-		}
-		if rowTo < rowFrom {
-			fromVert = dirNorth
-		}
-		c.addLine(rowFrom, mid, fromHoriz|fromVert, style)
-
-		toHoriz, toVert := dirEast, dirNorth
-		if mid > colTo {
-			toHoriz = dirWest
-		}
-		if rowFrom > rowTo {
-			toVert = dirSouth
-		}
-		c.addLine(rowTo, mid, toHoriz|toVert, style)
-
-		loH2, hiH2 := mid, colTo
-		if loH2 > hiH2 {
-			loH2, hiH2 = hiH2, loH2
-		}
-		for x := loH2; x <= hiH2; x++ {
-			if x == mid {
-				continue
-			}
-			if arrowAtEnd && x == colTo {
-				c.set(rowTo, x, arrowRune, style)
-				continue
-			}
-			c.addLine(rowTo, x, dirEast|dirWest, style)
-		}
-		finalRow, finalLo, finalHi = rowTo, loH2, hiH2
 	}
 
-	if arrowAtEnd && label != "" && colTo >= finalLo && colTo <= finalHi {
-		labelRunes := utf8.RuneCountInString(label)
-		start := colTo - labelRunes - 1
-		if !forward {
-			start = colTo + 2
+	if !h.bent() {
+		horizontal(h.leftRow, gapStart, gapEnd)
+	} else {
+		horizontal(h.leftRow, gapStart, h.lane-1)
+		horizontal(h.rightRow, h.lane+1, gapEnd)
+		lo, hi := min(h.leftRow, h.rightRow), max(h.leftRow, h.rightRow)
+		for y := lo + 1; y < hi; y++ {
+			c.addLine(y, h.lane, dirNorth|dirSouth, h.style)
 		}
-		if start >= finalLo && start+labelRunes-1 <= finalHi {
-			c.writeText(finalRow, start, label, styleFooter)
+		towardRight, towardLeft := dirSouth, dirNorth
+		if h.rightRow < h.leftRow {
+			towardRight, towardLeft = dirNorth, dirSouth
 		}
+		c.addLine(h.leftRow, h.lane, dirWest|towardRight, h.style)
+		c.addLine(h.rightRow, h.lane, dirEast|towardLeft, h.style)
+	}
+
+	if h.arrow && h.label != "" {
+		start := gapEnd - utf8.RuneCountInString(h.label) - 1
+		if !h.forward {
+			start = gapStart + 2
+		}
+		c.writeText(arrowRow, start, h.label, styleFooter)
 	}
 }
 
-func (c *canvas) drawBox(top, left, width int, n *graph.Node, hl graphNodeHighlight) {
+func (c *canvas) drawBox(top, left, width, height int, n *graph.Node, hl graphNodeHighlight) {
 	right := left + width - 1
-	bottom := top + nodeBoxHeight - 1
+	bottom := top + height - 1
 	c.set(top, left, '┌', styleBorder)
 	c.set(top, right, '┐', styleBorder)
 	c.set(bottom, left, '└', styleBorder)
@@ -570,6 +602,11 @@ func (l *graphLayout) lines() []string {
 // width/height the graph naturally needs -- no attempt is made to fit the
 // current terminal size, since the result flows through the same
 // scroll/crop viewport the tree view already uses.
+//
+// Separate calls are never drawn on top of each other: each one leaves and
+// enters a box at a row of its own (boxes grow to fit) and bends in a lane
+// of its own (gaps between columns widen to fit), so any two can be told
+// apart along their whole length.
 func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *graphLayout {
 	forward, feedback := graph.DetectFeedbackEdges(g)
 	layer := graph.AssignLayers(g, forward)
@@ -582,102 +619,134 @@ func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *grap
 			maxLayer = l
 		}
 	}
-	maxRow := 0
-	for _, keys := range layers {
-		if len(keys) > maxRow {
-			maxRow = len(keys)
-		}
-	}
 
-	colWidth := make([]int, maxLayer+1)
-	colX := make([]int, maxLayer+1)
-	for l := 0; l <= maxLayer; l++ {
-		w := minColumnWidth
-		for _, key := range layers[l] {
-			p := positions[key]
-			if p.dummy {
-				continue
-			}
-			if bw := nodeBoxWidth(p.node); bw > w {
-				w = bw
-			}
-		}
-		colWidth[l] = w
-	}
-	x := leftMargin
-	for l := 0; l <= maxLayer; l++ {
-		colX[l] = x
-		x += colWidth[l] + columnGap
-	}
-	totalWidth := x
-
-	rowSlot := nodeBoxHeight + rowGap
-	totalHeight := topMargin + max(1, maxRow)*rowSlot + rowGap
-
-	cv := newCanvas(totalWidth, totalHeight)
-
-	// rightPoint/leftPoint anchor every hop to the boundary of its layer's
-	// column -- for a real node that's just outside its box border, and a
-	// dummy waypoint (which has no box) is treated identically, as a
-	// zero-width placeholder at that same boundary. This keeps every
-	// bend/vertical strictly inside the gap between columns, never inside a
-	// column's own span -- which matters because a dummy shares its layer's
-	// column with whatever real nodes are also in that layer, and those
-	// nodes' boxes fill the column's full width at their own rows.
-	centerRow := func(p *positioned) int { return topMargin + p.row*rowSlot + nodeBoxHeight/2 }
-	boxLeft := func(p *positioned) int { return colX[p.layer] }
-	rightPoint := func(p *positioned) (int, int) { return centerRow(p), boxLeft(p) + colWidth[p.layer] }
-	leftPoint := func(p *positioned) (int, int) { return centerRow(p), boxLeft(p) - 1 }
-
+	// Every hop occupies one port on the facing side of each endpoint.
+	// gaps[l] holds the hops between layers l and l+1.
+	gaps := make([][]*hop, maxLayer+1)
+	leftPorts := map[string][]*hop{}  // hops attached to a waypoint's left side
+	rightPorts := map[string][]*hop{} // ...and to its right side
 	for _, re := range routed {
-		style := styleEdge
-		if re.feedback {
-			style = styleEdgeFeedback
-		}
 		for i := 0; i+1 < len(re.waypoints); i++ {
-			a := positions[re.waypoints[i]]
-			b := positions[re.waypoints[i+1]]
+			a, b := positions[re.waypoints[i]], positions[re.waypoints[i+1]]
 			if a.layer == b.layer {
 				continue
 			}
-			forward := b.layer > a.layer
-			var fr, fc, tr, tc int
-			if forward {
-				fr, fc = rightPoint(a)
-				tr, tc = leftPoint(b)
-			} else {
-				fr, fc = leftPoint(a)
-				tr, tc = rightPoint(b)
+			h := &hop{left: a, right: b, forward: true, style: edgeStyle(re.edge.Depth)}
+			if b.layer < a.layer {
+				h.left, h.right, h.forward = b, a, false
 			}
-			arrow := i+2 == len(re.waypoints)
-			label := ""
-			if arrow && re.edge.Count > 1 {
-				label = fmt.Sprintf("(×%d)", re.edge.Count)
+			if h.arrow = i+2 == len(re.waypoints); h.arrow && re.edge.Count > 1 {
+				h.label = fmt.Sprintf("(×%d)", re.edge.Count)
 			}
-			cv.drawSegment(fr, fc, tr, tc, style, arrow, forward, label)
+			gaps[h.left.layer] = append(gaps[h.left.layer], h)
+			rightPorts[h.left.key] = append(rightPorts[h.left.key], h)
+			leftPorts[h.right.key] = append(leftPorts[h.right.key], h)
 		}
+	}
+	// Ports run top to bottom in the order of what they connect to, so a
+	// node's own hops fan out without crossing each other.
+	for _, hops := range rightPorts {
+		sort.SliceStable(hops, func(i, j int) bool { return hops[i].right.row < hops[j].right.row })
+	}
+	for _, hops := range leftPorts {
+		sort.SliceStable(hops, func(i, j int) bool { return hops[i].left.row < hops[j].left.row })
+	}
 
-		// Each interior dummy waypoint now anchors its incoming and outgoing
-		// hops to opposite boundaries of its own column (whichever boundary
-		// faces that neighbor), so it needs a straight bridge across its own
-		// row connecting those two boundaries -- safe because a dummy's row
-		// is never shared with a real box in that same layer.
-		for i := 1; i < len(re.waypoints)-1; i++ {
-			p := positions[re.waypoints[i]]
-			row, lc := leftPoint(p)
-			_, rc := rightPoint(p)
-			cv.drawSegment(row, lc, row, rc, style, false, true, "")
+	// Rows: each layer stacks its own waypoints. A dummy is a single row; a
+	// box is tall enough for its busier side's ports.
+	innerRows := func(p *positioned) int {
+		return max(minNodeInnerRows, len(leftPorts[p.key]), len(rightPorts[p.key]))
+	}
+	top := map[string]int{}
+	totalHeight := 0
+	for l := 0; l <= maxLayer; l++ {
+		y := topMargin
+		for _, key := range layers[l] {
+			p := positions[key]
+			top[key] = y
+			if p.dummy {
+				y += 1 + rowGap
+			} else {
+				y += innerRows(p) + 2 + rowGap
+			}
+		}
+		totalHeight = max(totalHeight, y)
+	}
+	portRow := func(p *positioned, ports []*hop, h *hop) int {
+		if p.dummy {
+			return top[p.key]
+		}
+		i := 0
+		for ports[i] != h {
+			i++
+		}
+		return top[p.key] + 1 + (innerRows(p)-len(ports))/2 + i
+	}
+
+	// Columns: each layer is as wide as its widest box, and each gap as
+	// wide as its lanes plus room for the longest count label at either end.
+	colWidth := make([]int, maxLayer+1)
+	colX := make([]int, maxLayer+1)
+	x := leftMargin
+	for l := 0; l <= maxLayer; l++ {
+		w := minColumnWidth
+		for _, key := range layers[l] {
+			if p := positions[key]; !p.dummy {
+				w = max(w, nodeBoxWidth(p.node))
+			}
+		}
+		colWidth[l] = w
+		colX[l] = x
+		x += w
+
+		lead, tail := gapLead, gapLead
+		var bent []*hop
+		for _, h := range gaps[l] {
+			h.leftRow = portRow(h.left, rightPorts[h.left.key], h)
+			h.rightRow = portRow(h.right, leftPorts[h.right.key], h)
+			if h.bent() {
+				bent = append(bent, h)
+			}
+			if room := utf8.RuneCountInString(h.label) + 3; h.label != "" && h.forward {
+				tail = max(tail, room)
+			} else if h.label != "" {
+				lead = max(lead, room)
+			}
+		}
+		lanes := 0
+		for i, h := range orderLanes(bent) {
+			h.lane = x + lead + i*laneSpacing
+			lanes = (i+1)*laneSpacing - 1
+		}
+		x += max(minColumnGap, lead+lanes+tail)
+	}
+
+	cv := newCanvas(x, totalHeight)
+
+	for l, hops := range gaps {
+		if len(hops) == 0 {
+			continue
+		}
+		gapStart, gapEnd := colX[l]+colWidth[l], colX[l+1]-1
+		for _, h := range hops {
+			cv.drawHop(h, gapStart, gapEnd)
 		}
 	}
 
 	for _, keys := range layers {
 		for _, key := range keys {
 			p := positions[key]
-			if p.dummy {
+			if !p.dummy {
+				cv.drawBox(top[key], colX[p.layer], colWidth[p.layer], innerRows(p)+2, p.node, highlights[p.node.Key])
 				continue
 			}
-			top := topMargin + p.row*rowSlot
-			cv.drawBox(top, boxLeft(p), colWidth[p.layer], p.node, highlights[p.node.Key])
+			// A dummy has no box, so the edge passing through it needs a
+			// straight bridge across its column joining its two hops.
+			for _, h := range leftPorts[key] {
+				for dx := 0; dx < colWidth[p.layer]; dx++ {
+					cv.addLine(top[key], colX[p.layer]+dx, dirEast|dirWest, h.style)
+				}
+			}
 		}
 	}
 

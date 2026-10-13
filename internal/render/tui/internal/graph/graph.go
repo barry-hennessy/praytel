@@ -42,6 +42,7 @@ type Edge struct {
 	FromKey, ToKey string
 	Count          int
 	Order          int
+	Depth          int // shallowest trace-tree depth of any contributing callee span
 }
 
 // Graph is a set of components and the aggregated calls between them.
@@ -96,6 +97,7 @@ type SpanFact struct {
 	Component string
 	Name      string
 	Order     int
+	Depth     int // nesting depth in the trace tree; 0 for a root
 
 	HasParent       bool
 	ParentComponent string
@@ -131,7 +133,11 @@ func Build(facts []SpanFact) *Graph {
 		}
 		parentNode := g.EnsureNode(h.Path(f.ParentComponent, f.ParentName), f.ParentOrder)
 		if parentNode.Key != node.Key {
-			g.EnsureEdge(parentNode.Key, node.Key, min(f.Order, f.ParentOrder)).Count++
+			e := g.EnsureEdge(parentNode.Key, node.Key, min(f.Order, f.ParentOrder))
+			if e.Count == 0 || f.Depth < e.Depth {
+				e.Depth = f.Depth
+			}
+			e.Count++
 		}
 	}
 	return g

@@ -159,3 +159,80 @@ func TestGraphViewTogglesIndependentlyOfSearchMode(t *testing.T) {
 		t.Fatalf("second ctrl+g did not switch back to tree view")
 	}
 }
+
+// fanOutModel is one trace where root calls a, b (twice) and c, and a calls
+// c as well -- so root has several outgoing calls, c several incoming, and
+// root->c spans two layers.
+func fanOutModel() Model {
+	m := NewModel(nil, nil)
+	add := func(id, parent, name string) {
+		m.apply(domain.SpanUpserted{TraceID: "t", SpanID: id, Component: "svc", Name: name})
+		if parent != "" {
+			m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: id, ParentSpanID: parent})
+		}
+	}
+	add("root", "", "root")
+	add("a", "root", "a")
+	add("b1", "root", "b")
+	add("b2", "root", "b")
+	add("c1", "root", "c")
+	add("c2", "a", "c")
+	return m
+}
+
+func TestGraphDrawsSeparateCallsBesideEachOtherNotOnTopOfEachOther(t *testing.T) {
+	g := fanOutModel().buildGraph()
+	cv := layoutGraph(g, nil).c
+
+	// Lines that merge or branch render as a T; lines of separate calls may
+	// only ever cross. Every call must also still reach its own arrowhead.
+	arrows := 0
+	for y, row := range cv.cells {
+		for x, cell := range row {
+			switch cell.r {
+			case '├', '┤', '┬', '┴':
+				if cell.lineDirs != 0 {
+					t.Fatalf("calls share a line at row %d col %d:\n%s", y, x, plainLines(cv))
+				}
+			case '▶', '◀':
+				arrows++
+			}
+		}
+	}
+	if arrows != len(g.Edges) {
+		t.Fatalf("drew %d arrowheads for %d calls:\n%s", arrows, len(g.Edges), plainLines(cv))
+	}
+}
+
+func TestGraphColorsACallLikeItsCalleesTreeDepth(t *testing.T) {
+	g := fanOutModel().buildGraph()
+	cv := layoutGraph(g, nil).c
+
+	// root->a/b/c land at tree depth 1; a->c is only ever seen at depth 2.
+	want := map[cellStyle]int{edgeStyle(1): 3, edgeStyle(2): 1}
+	got := map[cellStyle]int{}
+	for _, row := range cv.cells {
+		for _, cell := range row {
+			if cell.r == '▶' {
+				got[cell.style]++
+			}
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("arrowheads per style = %v, want %v:\n%s", got, want, plainLines(cv))
+	}
+	if cellStyles[edgeStyle(2)].GetForeground() != depthColors[2] {
+		t.Fatalf("edge style for depth 2 is not the tree's depth-2 bar color")
+	}
+}
+
+func plainLines(cv *canvas) string {
+	var b strings.Builder
+	for _, row := range cv.cells {
+		for _, cell := range row {
+			b.WriteRune(cell.r)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
