@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"github.com/charmbracelet/x/ansi"
 	"reflect"
 	"strings"
 	"testing"
@@ -90,11 +91,42 @@ func TestTreeRendersAttributesUnderHeaderNotAsLogLine(t *testing.T) {
 	}
 
 	prefix := m.bars(0, false)
-	if !strings.HasPrefix(lines[attrIdx], prefix+"http.method") {
-		t.Fatalf("attribute line not flush under header (indented like a log line instead):\n%q", lines[attrIdx])
+	if !strings.HasPrefix(lines[attrIdx], prefix+detailIndent) || strings.HasPrefix(lines[attrIdx], prefix+detailIndent+" ") {
+		t.Fatalf("attribute line not indented one stop in from the header:\n%q", lines[attrIdx])
 	}
-	if !strings.HasPrefix(lines[logIdx], prefix+"   ") {
-		t.Fatalf("log line lost its extra indent:\n%q", lines[logIdx])
+	if !strings.HasPrefix(lines[logIdx], prefix+detailIndent) {
+		t.Fatalf("log line lost its indent:\n%q", lines[logIdx])
+	}
+}
+
+func TestTreeDrawsARuleAboveEverySpanButTheFirst(t *testing.T) {
+	m := NewModel(nil, nil)
+	m.width = 40
+	m.apply(domain.SpanUpserted{TraceID: "t1", SpanID: "root", Component: "api", Name: "request"})
+	m.apply(domain.SpanUpserted{TraceID: "t1", SpanID: "child", Component: "db", Name: "query"})
+	m.apply(domain.SpanParentLinked{TraceID: "t1", SpanID: "child", ParentSpanID: "root"})
+	m.apply(domain.SpanUpserted{TraceID: "t2", SpanID: "other", Component: "api", Name: "health"})
+
+	var got []string
+	for _, line := range m.treeLines() {
+		got = append(got, strings.TrimRight(ansi.Strip(line), " "))
+	}
+	headers := []string{"api.request", "db.query", "api.health"}
+	if len(got) != 2*len(headers)-1 {
+		t.Fatalf("expected a header per span and a rule between each pair, got:\n%s", strings.Join(got, "\n"))
+	}
+	for i, header := range headers {
+		if !strings.Contains(got[2*i], header) {
+			t.Fatalf("line %d = %q, want the %s header", 2*i, got[2*i], header)
+		}
+	}
+	// The child's rule starts at its own column, leaving the parent's bar
+	// unbroken; a root's rule spans the full width.
+	if want := "┆ " + strings.Repeat("─", 38); got[1] != want {
+		t.Fatalf("rule above nested span = %q, want %q", got[1], want)
+	}
+	if want := strings.Repeat("─", 40); got[3] != want {
+		t.Fatalf("rule above root span = %q, want %q", got[3], want)
 	}
 }
 

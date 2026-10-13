@@ -522,6 +522,9 @@ func (m Model) renderSpan(
 	}
 
 	h := highlights[key]
+	if len(*lines) > 0 {
+		*lines = append(*lines, m.spanRule(depth))
+	}
 	prefix := m.bars(depth, sp.closed)
 	symbol, style := m.state(sp)
 	header := fmt.Sprintf(
@@ -535,7 +538,7 @@ func (m Model) renderSpan(
 	if len(sp.attributes) > 0 {
 		*lines = append(
 			*lines,
-			m.bars(depth, sp.closed)+attributesLine(sp.attributes, h.attrs),
+			m.bars(depth, sp.closed)+detailIndent+attributesLine(sp.attributes, h.attrs),
 		)
 	}
 	for _, id := range sp.logs {
@@ -545,7 +548,7 @@ func (m Model) renderSpan(
 			continue
 		}
 		body := clean(log.body)
-		line := m.bars(depth, sp.closed) + "   " +
+		line := m.bars(depth, sp.closed) + detailIndent +
 			lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252")).
 				Render(body)
@@ -555,6 +558,14 @@ func (m Model) renderSpan(
 		m.renderSpan(lines, child, depth+1, children, logMatches, selectedLogs, highlights, visited)
 	}
 }
+
+// detailIndent sets a span's attributes and logs one stop in from its
+// header, so the header is the only thing on the span's own bar.
+const detailIndent = "   "
+
+// minSpanRuleWidth keeps the rule visible before the first window size
+// message arrives and at depths that would otherwise run it off-screen.
+const minSpanRuleWidth = 8
 
 func (m Model) bars(depth int, closed bool) string {
 	var b strings.Builder
@@ -573,9 +584,31 @@ func (m Model) bars(depth int, closed bool) string {
 	return b.String()
 }
 
+// spanRule is the line drawn above a span's header to set it apart from
+// whatever precedes it. It starts at the span's own column, leaving its
+// ancestors' bars unbroken, and runs to the edge of the window.
+func (m Model) spanRule(depth int) string {
+	var b strings.Builder
+	for i := 0; i < depth; i++ {
+		b.WriteString(
+			lipgloss.NewStyle().
+				Foreground(depthColors[i%len(depthColors)]).
+				Render("┆"),
+		)
+		b.WriteByte(' ')
+	}
+	width := max(minSpanRuleWidth, m.width-2*depth)
+	b.WriteString(
+		lipgloss.NewStyle().
+			Foreground(lipgloss.Color("238")).
+			Render(strings.Repeat("─", width)),
+	)
+	return b.String()
+}
+
 // attributesLine renders a span's attributes on one faint, italic line so
 // they read as metadata attached to the header above rather than as a log
-// entry (which is plain-styled and indented one level further in). masks,
+// entry (which is plain-styled). masks,
 // when non-nil, highlights the runes of the matching attribute(s) that made
 // the span match the current trace search (see matchSpan); it is nil
 // outside of a search or for spans not shown for their own sake.
