@@ -29,6 +29,8 @@ together; each later release adds one.
    and how they are really wired together.
 4. [View traces of tests](guides/tests.md): see exactly where a test fails.
 5. [Focus on performance](guides/performance.md): query for the slow segments.
+6. [Using praytel with agents](guides/agents.md): keep an agent focused on the
+   area of change and verify what it built.
 
 Each guide has a matching entry in [Examples](examples.md): one small
 instrumented app and a command to run against it, so you can try a guide
@@ -38,6 +40,8 @@ Going deeper:
 
 - [Typed queries](guides/queries.md): select spans and logs precisely, and get
   machine-readable output.
+- [Architecture](guides/architecture.md): how ingest, join, selection and
+  rendering fit together.
 
 ## Reference
 
@@ -45,6 +49,9 @@ Going deeper:
   and exit status.
 - [praytel-query(1)](reference/praytel-query.1.md): check, format and explain a
   query without running a child.
+- [praytel-mcp(1)](reference/praytel-mcp.1.md): the stdio MCP server and its
+  tools.
+- [praytel-agent(1)](reference/praytel-agent.1.md): print the agent playbook.
 - [praytel-query-language(7)](reference/praytel-query-language.7.md): selectors,
   fields, operators and views.
 

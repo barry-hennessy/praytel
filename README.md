@@ -13,9 +13,9 @@ can leverage both.
  - leverage logs and tracing yourself; focus you!
  - get value out of your logs in your development workflow without spinning up a docker container
 
-Full documentation lives in [`docs/`](docs/index.md): five guides that build on
+Full documentation lives in [`docs/`](docs/index.md): six guides that build on
 each other, from [viewing traces](docs/guides/traces.md) to
-[finding what is slow](docs/guides/performance.md), a
+[working with agents](docs/guides/agents.md), a
 [reference page per command](docs/index.md#reference), and
 [runnable examples](docs/examples.md) for each guide.
 
@@ -57,3 +57,18 @@ praytel query explain 'span{ span:name = api } >> log{ log:body *= "failed" }'
 For a long-running process, `--emit settled --format ndjson` emits a closed trace
 after it has been quiet for `--settle-after`. “Settled” is provisional: late OTLP
 can produce a newer revision. Only a drained `final` result is terminal.
+
+## Agent integration
+
+`praytel mcp` runs a stdio MCP server rooted at its working directory. It exposes
+`start_run`, `wait_for_matches`, `get_trace_topology`, `get_span_details`,
+`get_logs`, and `stop_run`. Tools use progressive disclosure so an agent searches
+compact evidence before loading span or log detail. Configure an MCP client to run:
+
+```json
+{"command":"praytel","args":["mcp"]}
+```
+
+Run `praytel agent instructions` for the concise playbook to include in an agent
+skill. A “no match” conclusion is valid only after the run is terminal and both
+`truncated` and `incomplete_reasons` show that the result is complete.

@@ -94,6 +94,6 @@ benchmark: for a number you would defend, repeat the run and compare.
 
 ## Next
 
-The full language is in
+[Using praytel with agents](agents.md). The full language is in
 [Typed queries](queries.md) and
 [praytel-query-language(7)](../reference/praytel-query-language.7.md).

@@ -1,0 +1,4 @@
+An agent follows a short playbook: query first, details only for evidence.
+A focused query returns a few evidence IDs, not a whole suite's output.
+Did saving an order make a real outbound call, or was it stubbed? Ask the trace.
+The MCP server (praytel mcp) gives an agent this same engine as tools.
