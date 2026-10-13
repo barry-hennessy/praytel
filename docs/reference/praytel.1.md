@@ -10,6 +10,7 @@ weight: 10
 
 ```
 praytel [flags] -- command [args ...]
+praytel query <check|fmt|explain> QUERY
 ```
 
 ## Description
@@ -19,7 +20,11 @@ stdout and stderr, receives the OTLP traces and logs it exports, joins them and
 prints a unified view. The `--` separator is required.
 
 By default the output is an append-only stream. `--tui` renders a live
-trace/span tree instead.
+trace/span tree instead, and `--query` selects records with a
+[typed query](praytel-query-language.7.md).
+
+The `query` subcommand is documented in
+[praytel-query(1)](praytel-query.1.md).
 
 ## Flags
 
@@ -28,6 +33,17 @@ trace/span tree instead.
 | Flag | Default | Meaning |
 |---|---|---|
 | `--tui` | off | Render an interactive live trace tree. |
+
+### Selection
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--query QUERY`, `-q QUERY` | | Select logs and traces with a typed query. |
+| `--query-file PATH` | | Read a typed query from a file. |
+| `--format FORMAT` | `text` | Query output format: `text`, `json` or `ndjson`. |
+| `--emit LIFECYCLE` | `final` | Query lifecycle to emit: `final` or `settled`. |
+| `--settle-after DURATION` | `250ms` | Quiet period before a closed trace is settled. |
+| `--limit N` | `100` | Maximum query results per output envelope. Must be positive. |
 
 ### Ingest and drain
 
@@ -47,6 +63,13 @@ trace/span tree instead.
 
 When a limit is reached praytel evicts the oldest closed traces, then sheds the
 newest data. It reports both on stderr.
+
+### Flag combinations
+
+- `--query` and `--query-file` are mutually exclusive.
+- `--format` and `--emit` require `--query` or `--query-file`.
+- `--emit settled` requires `--format ndjson`.
+- `--format` and `--emit` are not used with `--tui`.
 
 ## Environment
 
@@ -92,5 +115,10 @@ Warnings and praytel's own logs go to stderr.
 ```sh
 praytel -- go test ./...
 praytel --tui -- ./server
+praytel --query 'span{ span:status = error }' --format ndjson -- ./server
 praytel --grpc-port 14317 --http-port 14318 -- ./server
 ```
+
+## See also
+
+[Typed queries](../guides/queries.md)

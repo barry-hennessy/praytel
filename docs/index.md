@@ -26,11 +26,21 @@ before instrumenting any code of your own[^1].
    use, and have good traces ready for when something breaks.
 2. [View logs correlated to traces](guides/logs.md): each log line under the
    span that emitted it.
+3. [Focus on performance](guides/performance.md): query for the slow segments.
+
+Going deeper:
+
+- [Typed queries](guides/queries.md): select spans and logs precisely, and get
+  machine-readable output.
 
 ## Reference
 
 - [praytel(1)](reference/praytel.1.md): the wrapper command, its flags, TUI keys
   and exit status.
+- [praytel-query(1)](reference/praytel-query.1.md): check, format and explain a
+  query without running a child.
+- [praytel-query-language(7)](reference/praytel-query-language.7.md): selectors,
+  fields, operators and views.
 
 
   [1]: If it's not useful I'd love to know why. Feel free to reach out via barryhennessy.com.

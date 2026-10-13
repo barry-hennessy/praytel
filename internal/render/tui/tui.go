@@ -14,6 +14,8 @@ import (
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	"github.com/barry-hennessy/praytel/internal/projection"
+	querylang "github.com/barry-hennessy/praytel/internal/query"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -75,6 +77,8 @@ type tickMsg time.Time
 type Model struct {
 	events <-chan domain.Event
 	filt   *filter.Filter
+	fixed  *querylang.Query
+	proj   *projection.Projection
 
 	spans     map[string]*spanView
 	logs      map[string]*logView
@@ -108,6 +112,13 @@ const hscrollStep = 8
 // NewModel constructs a model. It is exported for embedding and deterministic
 // tests.
 func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
+	return NewQueryModel(events, filt, nil)
+}
+
+// NewQueryModel constructs a model with an optional checked query that limits
+// the displayed records. The interactive fuzzy search remains available and
+// narrows the query-selected view further.
+func NewQueryModel(events <-chan domain.Event, filt *filter.Filter, query *querylang.Query) Model {
 	if filt == nil {
 		filt, _ = filter.New(filter.Query{})
 	}
@@ -115,6 +126,8 @@ func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
 	return Model{
 		events:  events,
 		filt:    filt,
+		fixed:   query,
+		proj:    projection.New(),
 		spans:   make(map[string]*spanView),
 		logs:    make(map[string]*logView),
 		callers: make(map[string]bool),
@@ -219,6 +232,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) apply(ev domain.Event) {
+	m.proj.Observe(ev, m.now)
 	m.filt.Observe(ev)
 	switch ev := ev.(type) {
 	case domain.SpanUpserted:
@@ -401,21 +415,29 @@ func (m Model) contentHeight() int {
 	return max(1, m.height-3)
 }
 
-// filteredForest applies the glob focus/exclude filter (m.filt.InFocus) to
-// m.spans -- but NOT the live fuzzy search, which fuzzyVisible applies separately since its
+// filteredForest applies the glob focus/exclude filter (m.filt.InFocus) and
+// the compiled-query selection (m.querySelection) to m.spans -- but NOT the
+// live fuzzy search, which fuzzyVisible applies separately since its
 // mode-dependent semantics (whole-trace vs. per-branch) differ from simple
 // inclusion.
 func (m Model) filteredForest() (
 	children map[string][]*spanView,
 	roots []*spanView,
+	selectedLogs map[string]bool,
 ) {
+	selectedSpans, selectedLogs := m.querySelection()
 	children = make(map[string][]*spanView)
 	for _, sp := range m.spans {
 		if !m.filt.InFocus(sp.id) {
 			continue
 		}
+		if selectedSpans != nil && !selectedSpans[selectionKey(sp.traceID, sp.id)] {
+			continue
+		}
 		parent := m.spans[selectionKey(sp.traceID, sp.parentID)]
-		if sp.parentID != "" && parent != nil && m.filt.InFocus(parent.id) {
+		if sp.parentID != "" && parent != nil &&
+			m.filt.InFocus(parent.id) &&
+			(selectedSpans == nil || selectedSpans[selectionKey(parent.traceID, parent.id)]) {
 			children[selectionKey(sp.traceID, sp.parentID)] = append(children[selectionKey(sp.traceID, sp.parentID)], sp)
 		} else {
 			roots = append(roots, sp)
@@ -430,7 +452,7 @@ func (m Model) filteredForest() (
 	for id := range children {
 		byOrder(children[id])
 	}
-	return children, roots
+	return children, roots, selectedLogs
 }
 
 // fuzzyVisible reports whether sp should be considered "in view" under the
@@ -456,7 +478,7 @@ func (m Model) fuzzyVisible(
 }
 
 func (m Model) treeLines() []string {
-	children, roots := m.filteredForest()
+	children, roots, selectedLogs := m.filteredForest()
 
 	traceMatches := m.matchingTraces()
 	logMatches := m.matchingLogs()
@@ -467,13 +489,13 @@ func (m Model) treeLines() []string {
 		if !m.fuzzyVisible(root, children, traceMatches, logMatches) {
 			continue
 		}
-		m.renderSpan(&lines, root, nil, children, logMatches, highlights, visited)
+		m.renderSpan(&lines, root, nil, children, logMatches, selectedLogs, highlights, visited)
 	}
 	if len(lines) > 0 {
 		lines = lines[:len(lines)-1] // nothing follows the last span's rule
 	}
 	if len(lines) == 0 {
-		if m.query == "" {
+		if m.query == "" && m.fixed == nil {
 			return []string{
 				lipgloss.NewStyle().
 					Foreground(lipgloss.Color("245")).
@@ -491,12 +513,29 @@ func (m Model) treeLines() []string {
 
 func selectionKey(traceID, spanID string) string { return traceID + "\x00" + spanID }
 
+func (m Model) querySelection() (map[string]bool, map[string]bool) {
+	if m.fixed == nil {
+		return nil, nil
+	}
+	spans, logs := map[string]bool{}, map[string]bool{}
+	for _, result := range m.proj.Results(m.fixed, m.now) {
+		for _, id := range result.Evidence.SelectedSpanIDs {
+			spans[selectionKey(result.TraceID, id)] = true
+		}
+		for _, id := range result.Evidence.SelectedLogIDs {
+			logs[id] = true
+		}
+	}
+	return spans, logs
+}
+
 func (m Model) renderSpan(
 	lines *[]string,
 	sp *spanView,
 	ancestors []lipgloss.Color, // each enclosing span's component color, outermost first
 	children map[string][]*spanView,
 	logMatches map[string]bool,
+	selectedLogs map[string]bool,
 	highlights map[string]spanHighlight,
 	visited map[string]bool,
 ) {
@@ -531,7 +570,8 @@ func (m Model) renderSpan(
 	}
 	for _, id := range sp.logs {
 		log := m.logs[id]
-		if log == nil || (m.mode == searchLogs && m.query != "" && !logMatches[id]) {
+		if log == nil || (selectedLogs != nil && !selectedLogs[id]) ||
+			(m.mode == searchLogs && m.query != "" && !logMatches[id]) {
 			continue
 		}
 		body := clean(log.body)
@@ -543,7 +583,7 @@ func (m Model) renderSpan(
 	}
 	*lines = append(*lines, m.spanRule(trail, sp.closed))
 	for _, child := range children[key] {
-		m.renderSpan(lines, child, trail, children, logMatches, highlights, visited)
+		m.renderSpan(lines, child, trail, children, logMatches, selectedLogs, highlights, visited)
 	}
 }
 
@@ -928,19 +968,22 @@ type TUI struct {
 	lt     observability.LoggingTracer
 	events <-chan domain.Event
 	filt   *filter.Filter
+	query  *querylang.Query
 	in     io.Reader
 	out    io.Writer
 }
 
-// New constructs a TUI over the event stream. A nil filt shows everything.
-func New(
+// NewWithQuery constructs a TUI whose tree is constrained by query. Query must
+// have been checked before the child starts; nil preserves the unfiltered view.
+func NewWithQuery(
 	lt observability.LoggingTracer,
 	events <-chan domain.Event,
 	in io.Reader,
 	out io.Writer,
 	filt *filter.Filter,
+	query *querylang.Query,
 ) TUI {
-	return TUI{lt: lt.Name("tui"), events: events, filt: filt, in: in, out: out}
+	return TUI{lt: lt.Name("tui"), events: events, filt: filt, query: query, in: in, out: out}
 }
 
 func (t TUI) Run(ctx context.Context) error {
@@ -951,7 +994,7 @@ func (t TUI) Run(ctx context.Context) error {
 	}
 
 	p := tea.NewProgram(
-		NewModel(t.events, t.filt),
+		NewQueryModel(t.events, t.filt, t.query),
 		tea.WithContext(ctx),
 		tea.WithInput(t.in),
 		tea.WithOutput(t.out),

@@ -27,6 +27,12 @@ type Config struct {
 	MaxSpans     int
 	MaxLogLines  int
 	TUI          bool
+	Query        string
+	QueryFile    string
+	Format       string
+	Emit         string
+	SettleAfter  time.Duration
+	ResultLimit  int
 }
 
 // Parse splits args on "--" into flags and a child command, parses the
@@ -54,6 +60,13 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
 	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
 	tuiMode := fs.Bool("tui", false, "render an interactive live trace tree")
+	queryText := fs.String("query", "", "select logs and traces with a typed query")
+	fs.StringVar(queryText, "q", "", "shorthand for --query")
+	queryFile := fs.String("query-file", "", "read a typed query from a file")
+	format := fs.String("format", "text", "query output format: text, json, or ndjson")
+	emit := fs.String("emit", "final", "query lifecycle to emit: final or settled")
+	settleAfter := fs.Duration("settle-after", 250*time.Millisecond, "quiet period before a closed trace is settled")
+	resultLimit := fs.Int("limit", 100, "maximum query results per output envelope")
 
 	if err := fs.Parse(flags); err != nil {
 		return Config{}, err
@@ -61,6 +74,27 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 
 	if fs.NArg() != 0 {
 		return Config{}, ErrUsage
+	}
+	if *queryText != "" && *queryFile != "" {
+		return Config{}, errors.New("--query and --query-file are mutually exclusive")
+	}
+	if *format != "text" && *format != "json" && *format != "ndjson" {
+		return Config{}, fmt.Errorf("invalid --format %q", *format)
+	}
+	if *emit != "final" && *emit != "settled" {
+		return Config{}, fmt.Errorf("invalid --emit %q", *emit)
+	}
+	if *emit == "settled" && *format != "ndjson" {
+		return Config{}, errors.New("--emit settled requires --format ndjson")
+	}
+	if (*format != "text" || *emit != "final") && *queryText == "" && *queryFile == "" {
+		return Config{}, errors.New("--format and --emit require --query or --query-file")
+	}
+	if *tuiMode && (*format != "text" || *emit != "final") {
+		return Config{}, errors.New("--format and --emit are not used with --tui")
+	}
+	if *resultLimit <= 0 {
+		return Config{}, errors.New("--limit must be positive")
 	}
 
 	idle := max(0, *drainIdle)
@@ -75,6 +109,12 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		MaxSpans:     *maxSpans,
 		MaxLogLines:  *maxLogLines,
 		TUI:          *tuiMode,
+		Query:        *queryText,
+		QueryFile:    *queryFile,
+		Format:       *format,
+		Emit:         *emit,
+		SettleAfter:  max(time.Duration(0), *settleAfter),
+		ResultLimit:  *resultLimit,
 	}, nil
 }
 

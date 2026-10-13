@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/query"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -221,6 +222,28 @@ func TestSearchModesChooseTracesOrMatchingLogs(t *testing.T) {
 	if strings.Contains(logView, "orders") ||
 		strings.Contains(logView, "payment accepted") {
 		t.Fatalf("log search retained a non-match:\n%s", logView)
+	}
+}
+
+func TestTypedQueryConstrainsTreeUsingPathView(t *testing.T) {
+	q, err := query.Parse(`span{ span:status = error } | path`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewQueryModel(nil, nil, q)
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "root", Name: "root"})
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "bad", Name: "bad", Status: domain.SpanStatusError})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "bad", ParentSpanID: "root"})
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "sibling", Name: "sibling"})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "sibling", ParentSpanID: "root"})
+	m.apply(domain.LogReceived{ID: "root-log", TraceID: "t", SpanID: "root", Body: "context"})
+
+	view := strings.Join(m.treeLines(), "\n")
+	if !strings.Contains(view, "root") || !strings.Contains(view, "bad") || !strings.Contains(view, "context") {
+		t.Fatalf("path view omitted selected context:\n%s", view)
+	}
+	if strings.Contains(view, "sibling") {
+		t.Fatalf("path view included an unrelated sibling:\n%s", view)
 	}
 }
 
