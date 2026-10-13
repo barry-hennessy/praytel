@@ -25,6 +25,8 @@ together; each later release adds one.
    use, and have good traces ready for when something breaks.
 2. [View logs correlated to traces](guides/logs.md): each log line under the
    span that emitted it.
+3. [Get an overview of a system](guides/overview.md): which components are hit
+   and how they are really wired together.
 
 Each guide has a matching entry in [Examples](examples.md): one small
 instrumented app and a command to run against it, so you can try a guide
