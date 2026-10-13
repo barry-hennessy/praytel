@@ -1,0 +1,44 @@
+name: Announce release
+
+# Tells barryhennessy.com that this project pushed a tag. The site decides
+# whether the tag is a release and proposes its post as a pull request there.
+#
+# This file is a copy of tools/project-release/announce-release.yml in
+# barry-hennessy/barryhennessy.com: change it there, then copy it. To set a
+# project up, see "Adding a project" in content/projects/plans/AGENTS.md of
+# that repository. In short:
+#
+#   1. Save this file as .github/workflows/announce-release.yml.
+#   2. Set PROJECT below to the directory name of the project's page on the
+#      site (content/projects/<project>).
+#   3. Give this repository the secret WEBSITE_RELEASE_TOKEN: a fine-grained
+#      token on barry-hennessy/barryhennessy.com alone, with Actions: write.
+#
+# A tag pushed by a workflow with its own GITHUB_TOKEN starts no workflow, so
+# not this one either: such a workflow needs the step below as its own last
+# step.
+on:
+  push:
+    tags: ["**"]
+
+permissions: {}
+
+env:
+  PROJECT: praytel
+  WEBSITE: barry-hennessy/barryhennessy.com
+
+jobs:
+  website:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Start the site's release workflow
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_RELEASE_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::The secret WEBSITE_RELEASE_TOKEN is not set: the site was not told about $GITHUB_REF_NAME."
+            exit 1
+          fi
+          gh workflow run project-release.yml --repo "$WEBSITE" -f project="$PROJECT"
+          echo "Started: https://github.com/$WEBSITE/actions/workflows/project-release.yml" >>"$GITHUB_STEP_SUMMARY"
