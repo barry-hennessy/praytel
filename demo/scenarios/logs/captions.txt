@@ -1,0 +1,4 @@
+The app logs JSON to stdout with trace_id and span_id on each line.
+praytel puts every log line under the span that emitted it.
+Lines with no IDs are never guessed at. They land in an orphan group.
+Tab switches the search from traces to log bodies.

@@ -1,0 +1,4 @@
+Put praytel in front of any command. No collector, no config.
+Each trace is a live tree: a spinner while a span is open, ● when it closes, × on error.
+Type to search span names and attributes. One match brings up its whole trace.
+The tree stays open after the app exits. Ctrl-C quits.
