@@ -15,7 +15,7 @@ the one before, so a reader can stop at any step and have a working tool.
 | v0.0.2 | Overview | See which components a run hits and how they connect. | [Get an overview of a system](guides/overview.md) | [2](examples.md#2-overview) |
 | v0.0.3 | Tests | Run a test suite, see where a test fails, and cut a large run down. | [View traces of tests](guides/tests.md) | [3](examples.md#3-tests) |
 | v0.0.4 | Performance | Ask typed questions, starting with "what is slow?". | [Focus on performance](guides/performance.md) | [4](examples.md#4-performance) |
-| v0.0.5 | Agents (planned) | Let a coding agent run, query and verify. | Using praytel with agents | 5 |
+| v0.0.5 | Agents | Let a coding agent run, query and verify. | [Using praytel with agents](guides/agents.md) | [5](examples.md#5-agents) |
 
 Every release has a runnable example against the same small app; see
 [Examples](examples.md).
@@ -64,6 +64,9 @@ Reference: [praytel-query(1)](reference/praytel-query.1.md),
 
 - `praytel mcp` and its six tools.
 - `praytel agent instructions`.
+
+Reference: [praytel-mcp(1)](reference/praytel-mcp.1.md),
+[praytel-agent(1)](reference/praytel-agent.1.md).
 
 ## Documentation per release
 

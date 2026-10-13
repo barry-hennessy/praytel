@@ -1,0 +1,8 @@
+# Illustrates docs/guides/agents.md.
+guide = "agents"
+workload = "shop"
+
+[[stage]]
+image = "golang:1.26"
+run = ["go test -c -o /out/shop.test ."]
+copy = ["/out/shop.test:/usr/local/bin/shop.test"]

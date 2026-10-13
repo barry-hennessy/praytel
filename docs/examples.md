@@ -134,3 +134,48 @@ praytel --query 'span{ span:duration > 100ms } > log{ log:body *= "retry" }' -- 
 ```
 
 Guide: [Focus on performance](guides/performance.md).
+
+## 5. Agents
+
+These are the command-line forms of what an agent does through `start_run`.
+Build the test binary once so the queries run without recompiling:
+
+```sh
+cd demo/workloads/shop
+go test -c -o shop.test .
+```
+
+Focus on the area of change: did anything in `payments` fail?
+
+```sh
+praytel -q 'span{ resource.service.name = "payments" && span:status = error } | matches' -- ./shop.test
+```
+
+One trace comes back, with two span IDs: `Gateway.Charge` and
+`Gateway.Bank.Authorize`. Praytel exits 1 because the suite did; the exit code
+is the child's, not a verdict on the query.
+
+Check the work is real: did placing an order actually reach the repository?
+
+```sh
+praytel -q 'span{ span:name = "Orders.Place" } > span{ span:name = "Orders.Repo.Save" && span:kind = client } | matches' -- ./shop.test
+```
+
+Two traces match, not three. The gift-card order never saved, which is correct:
+its payment was refused first.
+
+A performance budget is the same shape. This prints nothing, so the budget
+held:
+
+```sh
+praytel -q 'span{ span:name = "Orders.Create" && span:duration > 2s }' -- shop -pace 50ms
+```
+
+To hand the same loop to an agent, print the playbook and connect the MCP
+server:
+
+```sh
+praytel agent instructions
+```
+
+Guide: [Using praytel with agents](guides/agents.md).
