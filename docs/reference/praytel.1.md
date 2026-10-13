@@ -29,6 +29,13 @@ trace/span tree instead.
 |---|---|---|
 | `--tui` | off | Render an interactive live trace tree. |
 
+### Selection
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--focus GLOB` | | Admit the span path matching this glob. Repeatable; the globs are unioned. |
+| `--exclude GLOB` | | Drop matching names after focus expansion. Repeatable. |
+
 ### Ingest and drain
 
 | Flag | Default | Meaning |

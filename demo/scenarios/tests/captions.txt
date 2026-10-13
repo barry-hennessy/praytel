@@ -1,0 +1,4 @@
+A test suite with one failing test. The output says what failed, not where.
+Run the same suite under praytel. Each test is its own trace.
+Search for the failing test by name.
+Follow the × marks down: the bank call refused the card, and its log line says why.

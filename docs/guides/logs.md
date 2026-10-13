@@ -163,3 +163,7 @@ Press Tab to toggle the search between traces and log bodies.
 
 `--max-log-lines` caps retained lines (one million by default), with the same
 evict-then-shed behaviour as spans.
+
+## Next
+
+[View traces of tests](tests.md).
