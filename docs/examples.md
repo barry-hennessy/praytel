@@ -68,3 +68,20 @@ stdout Gateway.Bank.Authorize 4a2aac9c... 18e4b9ff... {"level":"ERROR","msg":"au
 `praytel --tui -- shop`, press Tab and type `refused` to search log bodies.
 
 Guide: [View logs correlated to traces](guides/logs.md).
+
+## 2. Overview
+
+```sh
+praytel --tui -- shop
+```
+
+Press Ctrl-G. There is one box per span name, labelled with its service:
+`web.Orders.Create` calls `checkout.Orders.Place`, which fans out to
+`inventory.Stock.Reserve`, `payments.Gateway.Charge` and
+`checkout.Orders.Repo.Save`. Compare it with the calls in
+[`main.go`](../demo/workloads/shop/main.go). The arrow into
+`checkout.Orders.Repo.Save` reads `×3`, not `×4`: one order never saved. Type
+`gift` and the graph shrinks to what that order touched, with
+`inventory.Stock.Release` in place of the save.
+
+Guide: [Get an overview of a system](guides/overview.md).

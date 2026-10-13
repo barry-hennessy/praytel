@@ -13,9 +13,9 @@ can leverage both.
  - leverage logs and tracing yourself; focus you!
  - get value out of your logs in your development workflow without spinning up a docker container
 
-Full documentation lives in [`docs/`](docs/index.md): two guides that build on
-each other, [viewing traces](docs/guides/traces.md) and
-[viewing logs correlated to them](docs/guides/logs.md), a
+Full documentation lives in [`docs/`](docs/index.md): three guides that build on
+each other, from [viewing traces](docs/guides/traces.md) to
+[seeing how a system fits together](docs/guides/overview.md), a
 [reference page per command](docs/index.md#reference),
 [runnable examples](docs/examples.md) for each guide, and the
 [release plan](docs/releases.md).
