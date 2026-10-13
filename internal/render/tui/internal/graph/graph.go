@@ -229,50 +229,6 @@ func DetectFeedbackEdges(g *Graph) (forward map[string][]string, feedback map[[2
 	return forward, feedback
 }
 
-// AssignLayers computes a longest-path layer (rank/column) for every node
-// using only forward edges -- feedback edges are ignored here, though they
-// are still routed and drawn later. Nodes with no forward incoming edges
-// (true roots, and nodes whose only edges were fed back) start at layer 0;
-// every other node's layer is one more than its deepest forward
-// predecessor. This is Kahn's algorithm: a node is only dequeued once every
-// forward predecessor has already been finalized, so the result is
-// deterministic regardless of queue/map iteration order.
-func AssignLayers(g *Graph, forward map[string][]string) map[string]int {
-	indegree := make(map[string]int, len(g.Nodes))
-	for k := range g.Nodes {
-		indegree[k] = 0
-	}
-	for _, tos := range forward {
-		for _, to := range tos {
-			indegree[to]++
-		}
-	}
-
-	layer := make(map[string]int, len(g.Nodes))
-	var queue []string
-	for _, key := range orderedNodeKeys(g) {
-		if indegree[key] == 0 {
-			queue = append(queue, key)
-			layer[key] = 0
-		}
-	}
-
-	for len(queue) > 0 {
-		key := queue[0]
-		queue = queue[1:]
-		for _, to := range forward[key] {
-			if layer[key]+1 > layer[to] {
-				layer[to] = layer[key] + 1
-			}
-			indegree[to]--
-			if indegree[to] == 0 {
-				queue = append(queue, to)
-			}
-		}
-	}
-	return layer
-}
-
 // OrderedNodeKeys exposes orderedNodeKeys to callers (rendering) that need
 // the same deterministic sequence.
 func OrderedNodeKeys(g *Graph) []string { return orderedNodeKeys(g) }
