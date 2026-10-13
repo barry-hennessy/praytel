@@ -24,6 +24,8 @@ internal/ingest      wires one correlator to its listening receiver
 internal/filter      span admission consulted by every renderer
 internal/render/stream
 internal/render/tui  live span tree
+internal/session     bounded in-process runs for agent integrations
+internal/agentapi    transport-neutral progressive investigation tools
 ```
 
 `main` constructs one renderer and `Run`s it. Flags are primary; env vars only where OTel already uses them (`OTEL_EXPORTER_OTLP_*`). Default ports 4317/4318 with `--grpc-port` / `--http-port`.
@@ -53,6 +55,14 @@ Shared interface: `Run(ctx context.Context) error`. Constructor takes event sour
 Every renderer consults `internal/filter` before showing a span: the stream and TUI **live admit** (late admission OK; the stream never un-prints), and buffered renderers check **`InFocus` at paint**. It is not a single drop-pipe in front of every renderer.
 
 Visual design (colours, TUI chrome, how orphans look) is not specified here.
+
+## Agent sessions
+
+`praytel mcp` is a separate composition mode: its process owns several bounded,
+in-memory sessions (`internal/session`) for one MCP client. Each session still
+wraps one child, leaves no files, and is cancelled when the MCP server exits.
+`internal/agentapi` exposes them as transport-neutral tools that disclose
+evidence progressively, using the same query evaluator.
 
 ## Pressure and errors
 
