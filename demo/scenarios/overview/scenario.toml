@@ -1,0 +1,8 @@
+# Illustrates docs/guides/overview.md.
+guide = "overview"
+workload = "shop"
+
+[[stage]]
+image = "golang:1.26"
+run = ["go build -o /out/shop ."]
+copy = ["/out/shop:/usr/local/bin/shop"]

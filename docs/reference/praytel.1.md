@@ -72,6 +72,7 @@ and attributes; a single matching span surfaces its whole trace.
 | Backspace | Delete the last character. |
 | Esc | Clear the search. |
 | Tab | Switch between searching traces and searching log bodies. |
+| Ctrl-G | Switch between the tree view and the call graph view. |
 | ↑ / ↓ (or Ctrl-K / Ctrl-J) | Scroll one line. |
 | PgUp / PgDn | Scroll one page. |
 | ← / → (or Ctrl-B / Ctrl-F) | Scroll horizontally. |
