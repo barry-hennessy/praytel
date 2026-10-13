@@ -61,6 +61,12 @@ func fmtUsage(w io.Writer) {
 }
 
 func runProcess(ctx context.Context, lt observability.LoggingTracer, mapErr bones.ErrMapper[int], argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(argv) > 0 && argv[0] == "query" {
+		if err := runQueryCommand(argv[1:], stdout); err != nil {
+			return mapErr(err)
+		}
+		return 0
+	}
 	cfg, err := args.Parse(argv, stderr)
 	if err != nil {
 		return mapErr(err)

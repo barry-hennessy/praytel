@@ -166,6 +166,38 @@ func TestPlainTextDoesNotWarn(t *testing.T) {
 	})
 }
 
+func TestQueryNDJSONReturnsEvidenceAndChildExit(t *testing.T) {
+	sweet.Run(t, "typed query returns final machine evidence", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir,
+			"--query", `log{ log:body *= "needle" } | matches`,
+			"--format", "ndjson",
+			"--", childBin, "-exit", "7", "-stdout", "needle-line\n",
+		)
+		if res.exit != 7 {
+			t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+		}
+		var envelope struct {
+			SchemaVersion int    `json:"schema_version"`
+			Type          string `json:"type"`
+			RunState      string `json:"run_state"`
+			ChildExitCode int    `json:"child_exit_code"`
+			Matched       int    `json:"matched"`
+			Items         []struct {
+				Evidence struct {
+					LogIDs []string `json:"log_ids"`
+				} `json:"evidence"`
+			} `json:"items"`
+		}
+		if err := json.Unmarshal([]byte(res.stdout), &envelope); err != nil {
+			t.Fatalf("decode %q: %v", res.stdout, err)
+		}
+		if envelope.SchemaVersion != 1 || envelope.Type != "run_finished" || envelope.RunState != "final" || envelope.ChildExitCode != 7 || envelope.Matched != 1 || len(envelope.Items) != 1 || len(envelope.Items[0].Evidence.LogIDs) != 1 {
+			t.Fatalf("envelope=%+v", envelope)
+		}
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
 func TestMalformedJSONWarnsOnStderr(t *testing.T) {
 	sweet.Run(t, "broken JSON warns on stderr and still streams the line", wrapFactory, func(t *testing.T, d wrapDeps) {
 		res := runPraytel(t, d.dir, "--", childBin, "-stdout", "{not-json")

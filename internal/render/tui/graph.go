@@ -20,7 +20,7 @@ import (
 // nothing about Model or live filtering; buildGraph's own job is only to
 // decide which spans are visible right now and hand their facts over.
 func (m Model) buildGraph() *graph.Graph {
-	children, _, inScope := m.filteredForest()
+	children, _, inScope, _ := m.filteredForest()
 	traceMatches := m.matchingTraces()
 	logMatches := m.matchingLogs()
 
@@ -768,12 +768,12 @@ func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *grap
 
 // graphLines renders the current component/section interconnection graph
 // as a full ASCII node-link diagram, following exactly the same
-// focus/exclude and live fuzzy search narrowing as
+// focus/exclude, compiled-query, and live fuzzy search narrowing as
 // treeLines (see filteredForest and fuzzyVisible).
 func (m Model) graphLines() []string {
 	g := m.buildGraph()
 	if len(g.Nodes) == 0 {
-		if m.query == "" {
+		if m.query == "" && m.fixed == nil {
 			return []string{
 				lipgloss.NewStyle().
 					Foreground(lipgloss.Color("245")).

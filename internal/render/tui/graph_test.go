@@ -7,6 +7,7 @@ import (
 
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	"github.com/barry-hennessy/praytel/internal/query"
 	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -16,8 +17,8 @@ import (
 // aggregation rule) is tested directly, as an external caller, in
 // internal/render/tui/internal/graph, and node placement in its layout
 // subpackage. The tests below exercise
-// Model's live-filtering integration -- focus globs and fuzzy search
-// narrowing the graph -- which has no meaning apart from
+// Model's live-filtering integration -- focus globs, typed queries, and
+// fuzzy search narrowing the graph -- which has no meaning apart from
 // Model's own state, so there is no cleaner surface to test it through
 // than Model itself.
 
@@ -39,6 +40,27 @@ func TestBuildGraphRespectsFocusFilter(t *testing.T) {
 	}
 	if _, ok := g.Nodes[graph.ContainerKey([]string{"api", ".request"})]; !ok {
 		t.Fatalf("expected api to remain in focus, nodes = %v", nodeKeys(g))
+	}
+}
+
+func TestBuildGraphRespectsTypedQuery(t *testing.T) {
+	q, err := query.Parse(`span{ span:status = error } | path`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := NewQueryModel(nil, nil, q)
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "root", Component: "api", Name: "request"})
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "bad", Component: "db", Name: "query", Status: domain.SpanStatusError})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "bad", ParentSpanID: "root"})
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "sibling", Component: "cache", Name: "get"})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "sibling", ParentSpanID: "root"})
+
+	g := m.buildGraph()
+	if _, ok := g.Nodes[graph.ContainerKey([]string{"cache", ".get"})]; ok {
+		t.Fatalf("expected cache to be excluded by the typed query's path view, nodes = %v", nodeKeys(g))
+	}
+	if _, ok := g.Nodes[graph.ContainerKey([]string{"db", ".query"})]; !ok {
+		t.Fatalf("expected db (the error span) to remain, nodes = %v", nodeKeys(g))
 	}
 }
 
