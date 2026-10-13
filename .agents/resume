@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# This project has no services or per-session authentication to restore.
+exit 0

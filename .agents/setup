@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly go_version="1.26.0"
+readonly go_root="$HOME/.local/go"
+readonly repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+step() {
+	local label="$1"
+	shift
+	local started=$SECONDS
+	printf '==> %s\n' "$label"
+	"$@"
+	printf '    completed in %ss\n' "$((SECONDS - started))"
+}
+
+install_go() {
+	local arch checksum archive_url archive
+	case "$(dpkg --print-architecture)" in
+		amd64)
+			arch="amd64"
+			checksum="aac1b08a0fb0c4e0a7c1555beb7b59180b05dfc5a3d62e40e9de90cd42f88235"
+			;;
+		arm64)
+			arch="arm64"
+			checksum="bd03b743eb6eb4193ea3c3fd3956546bf0e3ca5b7076c8226334afe6b75704cd"
+			;;
+		*) printf 'unsupported architecture: %s\n' "$(dpkg --print-architecture)" >&2; return 1 ;;
+	esac
+
+	archive_url="https://go.dev/dl/go${go_version}.linux-${arch}.tar.gz"
+	archive="$(mktemp)"
+	curl --fail --location --retry 3 --output "$archive" "$archive_url"
+	printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --status
+	rm -rf "$go_root"
+	mkdir -p "$(dirname "$go_root")"
+	tar -C "$(dirname "$go_root")" -xzf "$archive"
+	rm -f "$archive"
+}
+
+if [[ ! -x "$go_root/bin/go" ]] || [[ "$($go_root/bin/go version 2>/dev/null || true)" != "go version go${go_version} "* ]]; then
+	step "Install Go ${go_version}" install_go
+else
+	printf '==> Go %s is already installed\n' "$go_version"
+fi
+
+readonly profile_marker="# praytel Go toolchain"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+	cat >> "$HOME/.bash_profile" <<EOF
+
+$profile_marker
+export PATH="$go_root/bin:\$PATH"
+EOF
+fi
+export PATH="$go_root/bin:$PATH"
+
+step "Download praytel dependencies" "$go_root/bin/go" -C "$repo_root" mod download
+
+child_sum="$repo_root/cmd/praytel/testdata/child/go.sum"
+child_sum_existed=false
+[[ -f "$child_sum" ]] && child_sum_existed=true
+step "Download test child dependencies" "$go_root/bin/go" -C "$repo_root/cmd/praytel/testdata/child" mod download
+if [[ "$child_sum_existed" == false ]]; then
+	rm -f "$child_sum"
+fi
+
+printf 'Orb setup complete.\n'
