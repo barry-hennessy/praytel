@@ -27,6 +27,16 @@ const (
 	searchLogs
 )
 
+// viewMode is orthogonal to searchMode: it picks the full-screen display
+// (tree vs. component graph), independent of which fuzzy search
+// mode narrows it.
+type viewMode uint8
+
+const (
+	viewTree viewMode = iota
+	viewGraph
+)
+
 // componentPalette is handed out, in order and then round again, to each
 // component that calls another (see Model.colors). A component that calls
 // nothing is drawn in neutralColor.
@@ -84,12 +94,13 @@ type Model struct {
 	// parent, whether or not it has arrived yet. colors gives each component
 	// (by spanLabel) that has such a span a 1-based index into
 	// componentPalette, in order of first appearance; once given it is
-	// never changed, so a component looks the same across traces and
-	// however the view is filtered.
+	// never changed, so a component looks the same in the tree and the
+	// graph, across traces, and however the view is filtered.
 	callers map[string]bool
 	colors  map[string]int
 
 	mode     searchMode
+	view     viewMode
 	query    string
 	width    int
 	height   int
@@ -172,6 +183,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = searchLogs
 			} else {
 				m.mode = searchTraces
+			}
+			m.scroll = 0
+			m.hscroll = 0
+		case "ctrl+g":
+			if m.view == viewTree {
+				m.view = viewGraph
+			} else {
+				m.view = viewTree
 			}
 			m.scroll = 0
 			m.hscroll = 0
@@ -366,7 +385,12 @@ func (m Model) View() string {
 		return ""
 	}
 
-	lines := m.treeLines()
+	var lines []string
+	if m.view == viewGraph {
+		lines = m.graphLines()
+	} else {
+		lines = m.treeLines()
+	}
 	height := m.contentHeight()
 	maxScroll := max(0, len(lines)-height)
 	if m.scroll > maxScroll {
@@ -404,16 +428,20 @@ func (m Model) contentHeight() int {
 // filteredForest applies the glob focus/exclude filter (m.filt.InFocus) to
 // m.spans -- but NOT the live fuzzy search, which fuzzyVisible applies separately since its
 // mode-dependent semantics (whole-trace vs. per-branch) differ from simple
-// inclusion.
+// inclusion. treeLines and buildGraph both call this so they can never
+// disagree about what's in scope.
 func (m Model) filteredForest() (
 	children map[string][]*spanView,
 	roots []*spanView,
+	inScope map[string]*spanView,
 ) {
 	children = make(map[string][]*spanView)
+	inScope = make(map[string]*spanView)
 	for _, sp := range m.spans {
 		if !m.filt.InFocus(sp.id) {
 			continue
 		}
+		inScope[selectionKey(sp.traceID, sp.id)] = sp
 		parent := m.spans[selectionKey(sp.traceID, sp.parentID)]
 		if sp.parentID != "" && parent != nil && m.filt.InFocus(parent.id) {
 			children[selectionKey(sp.traceID, sp.parentID)] = append(children[selectionKey(sp.traceID, sp.parentID)], sp)
@@ -430,7 +458,7 @@ func (m Model) filteredForest() (
 	for id := range children {
 		byOrder(children[id])
 	}
-	return children, roots
+	return children, roots, inScope
 }
 
 // fuzzyVisible reports whether sp should be considered "in view" under the
@@ -456,7 +484,7 @@ func (m Model) fuzzyVisible(
 }
 
 func (m Model) treeLines() []string {
-	children, roots := m.filteredForest()
+	children, roots, _ := m.filteredForest()
 
 	traceMatches := m.matchingTraces()
 	logMatches := m.matchingLogs()
@@ -891,18 +919,24 @@ func (m Model) panel() string {
 	} else {
 		logStyle = active
 	}
+	viewLabel := "tree"
+	if m.view == viewGraph {
+		viewLabel = "graph"
+	}
+	viewStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("135")).Bold(true)
 	state := "running"
 	if m.done {
 		state = "complete"
 	}
 	line := fmt.Sprintf(
-		" %s  %s   › %s",
+		" %s  %s   %s   › %s",
 		traceStyle.Render("traces"),
 		logStyle.Render("logs"),
+		viewStyle.Render(viewLabel),
 		m.query,
 	)
 	help := fmt.Sprintf(
-		" tab mode • ↑/↓ scroll • ←/→ pan • esc clear • ctrl+q quit • %s",
+		" tab mode • ctrl+g graph • ↑/↓ scroll • ←/→ pan • esc clear • ctrl+q quit • %s",
 		state,
 	)
 	if m.hscroll > 0 {
