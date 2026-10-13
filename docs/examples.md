@@ -85,3 +85,25 @@ Press Ctrl-G. There is one box per span name, labelled with its service:
 `inventory.Stock.Release` in place of the save.
 
 Guide: [Get an overview of a system](guides/overview.md).
+
+## 3. Tests
+
+The workload has three tests; `TestGiftCardOrderIsConfirmed` fails on purpose.
+
+```sh
+cd demo/workloads/shop
+praytel --tui -- go test -count=1 .
+```
+
+Each test is its own trace, named after the test. Type `TestGift`, then follow
+the `×` marks: the test, `Orders.Create`, `Orders.Place`, `Gateway.Charge`,
+and last `Gateway.Bank.Authorize`, with `authorization refused` logged beneath
+it. That span is where the test failed. Praytel exits 1, as `go test` did.
+
+To cut the run down to the payment path:
+
+```sh
+praytel --tui --focus 'Gateway*' -- go test -count=1 .
+```
+
+Guide: [View traces of tests](guides/tests.md).

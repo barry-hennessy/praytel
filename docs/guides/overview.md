@@ -63,7 +63,14 @@ one box; put an order ID in the span name and you get a box per order.
 
 ## Scope the graph
 
-The graph always shows the same spans the tree would. Type to search, and the
-graph shrinks to the matching traces.
+The graph always shows the same spans the tree would. Anything that narrows the
+tree narrows the graph:
+
+- type to search, and the graph shrinks to the matching traces;
+- start praytel with `--focus` or `--exclude` to drop noise for the whole run.
 
 Scroll with the arrow keys, including left and right for wide graphs.
+
+## Next
+
+[View traces of tests](tests.md).

@@ -13,7 +13,7 @@ the one before, so a reader can stop at any step and have a working tool.
 |---|---|---|---|---|
 | v0.0.1 | Traces and logs | Run an app, watch its traces as a live tree, and see each log line under the span that emitted it. | [View traces from a running app](guides/traces.md), [View logs correlated to traces](guides/logs.md) | [1](examples.md#1-traces-and-logs) |
 | v0.0.2 | Overview | See which components a run hits and how they connect. | [Get an overview of a system](guides/overview.md) | [2](examples.md#2-overview) |
-| v0.0.3 | Tests (planned) | Run a test suite, see where a test fails, and cut a large run down. | View traces of tests | 3 |
+| v0.0.3 | Tests | Run a test suite, see where a test fails, and cut a large run down. | [View traces of tests](guides/tests.md) | [3](examples.md#3-tests) |
 | v0.0.4 | Performance (planned) | Ask typed questions, starting with "what is slow?". | Focus on performance | 4 |
 | v0.0.5 | Agents (planned) | Let a coding agent run, query and verify. | Using praytel with agents | 5 |
 
