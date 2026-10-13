@@ -107,3 +107,30 @@ praytel --tui --focus 'Gateway*' -- go test -count=1 .
 ```
 
 Guide: [View traces of tests](guides/tests.md).
+
+## 4. Performance
+
+```sh
+praytel --tui --query 'span{ span:duration > 300ms }' -- shop
+```
+
+Only the `amex` order is left. Without `--tui` the same query prints one line
+of evidence per matching trace, which is the form a script can use:
+
+```sh
+praytel --query 'span{ span:duration > 300ms } | matches' -- shop -pace 50ms
+```
+
+```
+05b66746... revision=25 state=final spans=[4adbc203... 8cfe1c03... ad8c1747... b7315de3...] logs=[] incomplete=[]
+```
+
+Four spans match because the slow bank call makes each of its ancestors slow
+too. To get the cause rather than everything above it, ask for the slow span
+that logged a retry:
+
+```sh
+praytel --query 'span{ span:duration > 100ms } > log{ log:body *= "retry" }' -- shop -pace 50ms
+```
+
+Guide: [Focus on performance](guides/performance.md).

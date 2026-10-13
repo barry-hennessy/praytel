@@ -28,15 +28,25 @@ together; each later release adds one.
 3. [Get an overview of a system](guides/overview.md): which components are hit
    and how they are really wired together.
 4. [View traces of tests](guides/tests.md): see exactly where a test fails.
+5. [Focus on performance](guides/performance.md): query for the slow segments.
 
 Each guide has a matching entry in [Examples](examples.md): one small
 instrumented app and a command to run against it, so you can try a guide
 before instrumenting anything of your own.
 
+Going deeper:
+
+- [Typed queries](guides/queries.md): select spans and logs precisely, and get
+  machine-readable output.
+
 ## Reference
 
 - [praytel(1)](reference/praytel.1.md): the wrapper command, its flags, TUI keys
   and exit status.
+- [praytel-query(1)](reference/praytel-query.1.md): check, format and explain a
+  query without running a child.
+- [praytel-query-language(7)](reference/praytel-query-language.7.md): selectors,
+  fields, operators and views.
 
 ## Writing these docs
 

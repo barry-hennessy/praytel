@@ -1,0 +1,3 @@
+Ask for what is slow: a typed query on span duration.
+Only the trace with a span over 300ms is left, with the path to the slow call and its logs.
+Add "| matches" to get just the slow spans, with no surrounding path.
