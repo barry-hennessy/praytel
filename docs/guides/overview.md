@@ -1,7 +1,7 @@
 ---
 title: Get an overview of a system
 summary: How to use the graph view to see which components a run touches and how they call each other.
-weight: 40
+weight: 30
 ---
 
 # Get an overview of a system
@@ -29,30 +29,37 @@ praytel --tui -- ./server
 
 Press Ctrl-G to switch from the tree to the graph. Press it again to go back.
 
-[Example 4](../examples.md#4-overview) draws the graph of a four-service app
+[Example 2](../examples.md#2-overview) draws the graph of a four-service app
 you can compare against its source.
 
 ## Reading the graph
 
-Each box is a container: a component, or a section inside one. An arrow from A
-to B means a span in A was the parent of a span in B. Calls that stay inside
-one container are counted on that box instead of drawn as arrows, so the graph
-stays the size of your architecture rather than the size of your call stack.
+Each box is one span name in one service, with the number of spans that ran
+under that name. An arrow from A to B means a span named A was the parent of a
+span named B; `×3` on an arrow means that call was seen three times. A span
+that calls another of the same name, as a retry or a recursion does, adds to
+its box's count rather than drawing an arrow back to itself.
+
+| You see | It means |
+|---|---|
+| A coloured box | This span calls others. Its arrows leave in the same colour, and the tree view draws its bar in that colour too. |
+| A grey box | This span calls nothing. |
+| A solid arrow | A call. |
+| A dashed arrow | A call that closes a cycle: somewhere, B also leads back to A. |
+
+Calls leaving one box share a trunk and branch off to each target, so a box
+with many callees stays readable.
 
 ## Where the boxes come from
 
-| Level | Taken from |
-|---|---|
-| Component | The `service.name` resource attribute. |
-| Section | The dotted segments of the span name, except the last. |
-| Function | The last segment of the span name. |
+A box is labelled with the service, from the `service.name` resource
+attribute, followed by the span name: a span named `Orders.Repo.Save` in
+service `checkout` is the box `checkout.Orders.Repo.Save`.
 
-A span named `Orders.Repo.Save` in service `checkout` belongs to the container
-`checkout` → `Orders` → `Repo`, as function `Save`.
-
-So the graph is only as good as your naming. Set `service.name` per service and
-name spans `Section.function`, and the graph reads like your design. Name every
-span `handler` and you get one box.
+Every distinct span name gets a box, so the graph is only as good as your
+naming. Give each operation a stable name and set `service.name` per service,
+and the graph reads like your design. Name every span `handler` and you get
+one box; put an order ID in the span name and you get a box per order.
 
 ## Scope the graph
 
@@ -66,4 +73,4 @@ Scroll with the arrow keys, including left and right for wide graphs.
 
 ## Next
 
-[Focus on performance](performance.md).
+[View traces of tests](tests.md).

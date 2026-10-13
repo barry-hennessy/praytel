@@ -1,7 +1,7 @@
 ---
 title: View traces of tests
 summary: How to run a test suite under praytel and see exactly where in the call tree a test fails.
-weight: 30
+weight: 40
 ---
 
 # View traces of tests
@@ -69,4 +69,4 @@ introduction and [Typed queries](queries.md) for the detail.
 
 ## Next
 
-[Get an overview of a system](overview.md).
+[Focus on performance](performance.md).

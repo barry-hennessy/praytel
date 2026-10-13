@@ -18,16 +18,16 @@ praytel --tui -- ./server         # live trace/span tree
 
 ## Guides
 
-Read these in order. Each builds on the one before, and each matches a step in
-the [release plan](releases.md).
+Read these in order. Each builds on the one before, and they follow the
+[release plan](releases.md): the first two ship together, then one per release.
 
 1. [View traces from a running app](guides/traces.md): understand the apps you
    use, and have good traces ready for when something breaks.
 2. [View logs correlated to traces](guides/logs.md): each log line under the
    span that emitted it.
-3. [View traces of tests](guides/tests.md): see exactly where a test fails.
-4. [Get an overview of a system](guides/overview.md): which components are hit
+3. [Get an overview of a system](guides/overview.md): which components are hit
    and how they are really wired together.
+4. [View traces of tests](guides/tests.md): see exactly where a test fails.
 5. [Focus on performance](guides/performance.md): query for the slow segments.
 6. [Using praytel with agents](guides/agents.md): keep an agent focused on the
    area of change and verify what it built.

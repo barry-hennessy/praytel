@@ -24,7 +24,7 @@ Everything after `--` is your command, run unchanged. Praytel forwards signals
 to it and exits with its exit code, so it can sit in front of anything you
 already run.
 
-No instrumented app to hand? [Example 1](../examples.md#1-traces) runs this
+No instrumented app to hand? [Example 1](../examples.md#traces) runs this
 against a small shop app that ships with praytel.
 
 ## What the app needs

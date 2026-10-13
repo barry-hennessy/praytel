@@ -19,7 +19,7 @@ praytel -- ./server           # append-only stream
 praytel --tui -- ./server     # logs nested in the span tree
 ```
 
-[Example 2](../examples.md#2-logs) shows the same app's logs raw and then
+[Example 1](../examples.md#logs) shows the same app's logs raw and then
 joined.
 
 ## How a line gets joined
@@ -78,4 +78,4 @@ evict-then-shed behaviour as spans.
 
 ## Next
 
-[View traces of tests](tests.md).
+[Get an overview of a system](overview.md).

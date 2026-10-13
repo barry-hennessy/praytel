@@ -35,7 +35,9 @@ exporting nothing, so you can compare the two.
 There is one example per release, in [release order](releases.md). Each uses
 only what that release and the ones before it provide.
 
-## 1. Traces
+## 1. Traces and logs
+
+### Traces
 
 ```sh
 praytel --tui -- shop
@@ -47,7 +49,7 @@ Four traces fill in, one per order, each rooted at `Orders.Create`. Type
 
 Guide: [View traces from a running app](guides/traces.md).
 
-## 2. Logs
+### Logs
 
 First see what the app prints on its own, then the same lines joined:
 
@@ -67,6 +69,23 @@ stdout Gateway.Bank.Authorize 4a2aac9c... 18e4b9ff... {"level":"ERROR","msg":"au
 
 Guide: [View logs correlated to traces](guides/logs.md).
 
+## 2. Overview
+
+```sh
+praytel --tui -- shop
+```
+
+Press Ctrl-G. There is one box per span name, labelled with its service:
+`web.Orders.Create` calls `checkout.Orders.Place`, which fans out to
+`inventory.Stock.Reserve`, `payments.Gateway.Charge` and
+`checkout.Orders.Repo.Save`. Compare it with the calls in
+[`main.go`](../demo/workloads/shop/main.go). The arrow into
+`checkout.Orders.Repo.Save` reads `×3`, not `×4`: one order never saved. Type
+`gift` and the graph shrinks to what that order touched, with
+`inventory.Stock.Release` in place of the save.
+
+Guide: [Get an overview of a system](guides/overview.md).
+
 ## 3. Tests
 
 The workload has three tests; `TestGiftCardOrderIsConfirmed` fails on purpose.
@@ -81,25 +100,15 @@ the `×` marks: the test, `Orders.Create`, `Orders.Place`, `Gateway.Charge`,
 and last `Gateway.Bank.Authorize`, with `authorization refused` logged beneath
 it. That span is where the test failed. Praytel exits 1, as `go test` did.
 
-Guide: [View traces of tests](guides/tests.md).
-
-## 4. Overview
+To cut the run down to the payment path:
 
 ```sh
-praytel --tui -- shop
+praytel --tui --focus 'Gateway*' -- go test -count=1 .
 ```
 
-Press Ctrl-G. The graph has one box per service, with sections inside:
-`web` calls `checkout`, which calls `inventory` and `payments`. Compare it with
-the span names in
-[`main.go`](../demo/workloads/shop/main.go): `Stock.Repo.Lock` in service
-`inventory` is function `Lock` in section `Repo` of `Stock`. Type `gift` and
-the graph shrinks to what the failed order touched, which now includes
-`Stock.Release`.
+Guide: [View traces of tests](guides/tests.md).
 
-Guide: [Get an overview of a system](guides/overview.md).
-
-## 5. Performance
+## 4. Performance
 
 ```sh
 praytel --tui --query 'span{ span:duration > 300ms }' -- shop
@@ -126,7 +135,7 @@ praytel --query 'span{ span:duration > 100ms } > log{ log:body *= "retry" }' -- 
 
 Guide: [Focus on performance](guides/performance.md).
 
-## 6. Agents
+## 5. Agents
 
 These are the command-line forms of what an agent does through `start_run`.
 Build the test binary once so the queries run without recompiling:
