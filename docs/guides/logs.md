@@ -19,8 +19,38 @@ praytel -- ./server           # append-only stream
 praytel --tui -- ./server     # logs nested in the span tree
 ```
 
-[Example 1](../examples.md#logs) shows the same app's logs raw and then
-joined.
+## Try it yourself
+
+With `shop` installed as in
+[View traces from a running app](traces.md#the-shop-app), first see what it
+prints on its own, then the same lines joined:
+
+```sh
+shop -pace 50ms | head -4
+praytel -- shop -pace 50ms
+```
+
+In the joined stream each line gains the name of the span that emitted it:
+
+```
+stdout Gateway.Bank.Authorize 4a2aac9c... 18e4b9ff... {"level":"ERROR","msg":"authorization refused", ...}
+```
+
+`shop: taking orders` carries no IDs, so it is reported as an orphan. Under
+`praytel --tui -- shop`, press Tab and type `refused` to search log bodies.
+
+The two tools from the first guide show both kinds of line:
+
+```sh
+praytel --tui -- dagger functions
+praytel --tui -- docker buildx build --call=check .
+```
+
+Dagger exports its own output as OTLP logs that carry trace context, so a line
+such as `INF connected` sits under the `connect` span that produced it. Buildx
+writes its progress (`#3 [internal] load .dockerignore`) to stderr with no IDs,
+so those lines land in the orphan group described below, even though buildx
+exports spans.
 
 ## How a line gets joined
 

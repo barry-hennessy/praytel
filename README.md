@@ -16,8 +16,7 @@ can leverage both.
 Full documentation lives in [`docs/`](docs/index.md): six guides that build on
 each other, from [viewing traces](docs/guides/traces.md) to
 [working with agents](docs/guides/agents.md), a
-[reference page per command](docs/index.md#reference),
-[runnable examples](docs/examples.md) for each guide, and the
+[reference page per command](docs/index.md#reference), and the
 [release plan](docs/releases.md).
 
 Run `praytel -- command` for the append-only stream, or `praytel --tui -- command`

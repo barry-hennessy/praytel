@@ -32,8 +32,8 @@ Read these in order. Each builds on the one before, and they follow the
 6. [Using praytel with agents](guides/agents.md): keep an agent focused on the
    area of change and verify what it built.
 
-Each guide has a matching entry in [Examples](examples.md): one small
-instrumented app and a command to run against it, so you can try a guide
+Every guide has commands you can run yourself, against a small app that ships
+with praytel and against tools you may already have, so you can try each one
 before instrumenting anything of your own.
 
 Going deeper:

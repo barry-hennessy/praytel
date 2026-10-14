@@ -24,8 +24,65 @@ Everything after `--` is your command, run unchanged. Praytel forwards signals
 to it and exits with its exit code, so it can sit in front of anything you
 already run.
 
-No instrumented app to hand? [Example 1](../examples.md#traces) runs this
-against a small shop app that ships with praytel.
+## Try it yourself
+
+You do not need an instrumented app of your own to follow the guides. Each one
+has commands to run against `shop`, a small app that ships with praytel, and
+most also against a tool you may already have installed.
+
+### The shop app
+
+`shop` is a small Go program in
+[`demo/workloads/shop`](../../demo/workloads/shop) that places four orders
+across four in-process services (`web`, `checkout`, `inventory`, `payments`).
+It exports OTLP traces and writes JSON logs tagged with trace and span IDs. It
+is the app the recordings in these guides are made from.
+
+Two of its orders are there to be found:
+
+| Order | Card | What happens |
+|---|---|---|
+| A-1002 | `amex` | `Gateway.Bank.Authorize` takes 450ms and logs a retry. |
+| A-1003 | `gift` | `Gateway.Bank.Authorize` refuses the card; the error travels up to `Orders.Create`. |
+
+Install it and praytel from the repository root, with Go installed:
+
+```sh
+go install ./cmd/praytel
+(cd demo/workloads/shop && go install .)
+```
+
+Both binaries land in `$(go env GOPATH)/bin`. `shop` also runs without
+praytel, exporting nothing, so you can compare the two. Then:
+
+```sh
+praytel --tui -- shop
+```
+
+Four traces fill in, one per order, each rooted at `Orders.Create`. Type
+`gift` to narrow to the order that failed, and follow the `×` marks down to
+`Gateway.Bank.Authorize`. Esc clears the search; Ctrl-C quits.
+
+### A tool you already have
+
+Some tools export traces themselves. Neither command below changes anything:
+one lints, the other lists.
+
+```sh
+praytel --tui -- docker buildx build --call=check .   # lint the Dockerfile in .
+praytel --tui -- dagger functions                     # in a Dagger module
+```
+
+| Tool | What the trace shows |
+|---|---|
+| `docker buildx` | A `build` span over the gRPC calls buildx makes to BuildKit, such as `moby.buildkit.v1.Control/Solve`. |
+| `dagger` | The CLI starting and connecting to its engine, then the engine loading the module. |
+
+Dagger starts its engine container if it is not already running. Not every
+command is instrumented, even within one tool: `docker ps` and `docker version`
+run normally under praytel but send no spans, and neither does
+`docker buildx ls`. These were checked with Docker 29.6 (buildx 0.35) and
+Dagger 0.21.
 
 ## What the app needs
 

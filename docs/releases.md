@@ -9,16 +9,16 @@ weight: 5
 Praytel is released in five steps. Each one is useful on its own and builds on
 the one before, so a reader can stop at any step and have a working tool.
 
-| Version | Release | What you can do | Guide | Example |
-|---|---|---|---|---|
-| v0.0.1 | Traces and logs | Run an app, watch its traces as a live tree, and see each log line under the span that emitted it. | [View traces from a running app](guides/traces.md), [View logs correlated to traces](guides/logs.md) | [1](examples.md#1-traces-and-logs) |
-| v0.0.2 | Overview | See which components a run hits and how they connect. | [Get an overview of a system](guides/overview.md) | [2](examples.md#2-overview) |
-| v0.0.3 | Tests | Run a test suite, see where a test fails, and cut a large run down. | [View traces of tests](guides/tests.md) | [3](examples.md#3-tests) |
-| v0.0.4 | Performance | Ask typed questions, starting with "what is slow?". | [Focus on performance](guides/performance.md) | [4](examples.md#4-performance) |
-| v0.0.5 | Agents | Let a coding agent run, query and verify. | [Using praytel with agents](guides/agents.md) | [5](examples.md#5-agents) |
+| Version | Release | What you can do | Guide |
+|---|---|---|---|
+| v0.0.1 | Traces and logs | Run an app, watch its traces as a live tree, and see each log line under the span that emitted it. | [View traces from a running app](guides/traces.md), [View logs correlated to traces](guides/logs.md) |
+| v0.0.2 | Overview | See which components a run hits and how they connect. | [Get an overview of a system](guides/overview.md) |
+| v0.0.3 | Tests | Run a test suite, see where a test fails, and cut a large run down. | [View traces of tests](guides/tests.md) |
+| v0.0.4 | Performance | Ask typed questions, starting with "what is slow?". | [Focus on performance](guides/performance.md) |
+| v0.0.5 | Agents | Let a coding agent run, query and verify. | [Using praytel with agents](guides/agents.md) |
 
-Every release has a runnable example against the same small app; see
-[Examples](examples.md).
+Each guide includes commands to run yourself, so every release can be tried
+without instrumenting anything first.
 
 ## What each release contains
 
@@ -70,6 +70,7 @@ Reference: [praytel-mcp(1)](reference/praytel-mcp.1.md),
 
 ## Documentation per release
 
-Each tag carries the documentation for exactly what it ships: its own guide,
-example and reference, and those of the releases before it. A guide uses only
-features from its own release or an earlier one.
+Each tag carries the documentation for exactly what it ships: its own guide
+and reference, and those of the releases before it. A guide, including the
+commands it asks you to run, uses only features from its own release or an
+earlier one.
