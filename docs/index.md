@@ -28,6 +28,8 @@ anything of your own.
    apps you use, and have good traces ready for when something breaks.
 2. [View logs correlated to traces](guides/logs.md) (v0.1.0): each log line
    under the span that emitted it.
+3. [Get an overview of a system](guides/overview.md) (v0.2.0): which components
+   are hit and how they are really wired together.
 
 Going deeper:
 

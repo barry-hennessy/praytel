@@ -12,6 +12,7 @@ the one before, so you can stop at any of them and have a working tool.
 | Version | Release | What you can do | Guide |
 |---|---|---|---|
 | v0.1.0 | Traces and logs on the command line | Run a command and watch its traces as a live tree, with each log line under the span that wrote it. | [View traces from a running app](guides/traces.md), [View logs correlated to traces](guides/logs.md) |
+| v0.2.0 | An overview of your system | See which components a run hits and how they call each other. | [Get an overview of a system](guides/overview.md) |
 
 ## v0.1.0: Traces and logs on the command line
 
@@ -28,4 +29,9 @@ the one before, so you can stop at any of them and have a working tool.
   `--max-log-lines`.
 
 Reference: [praytel(1)](reference/praytel.1.md).
+
+## v0.2.0: An overview of your system
+
+- The graph view (Ctrl-G): one box per span name, an arrow per observed call,
+  narrowed by the same search as the tree.
 

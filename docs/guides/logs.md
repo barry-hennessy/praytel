@@ -154,3 +154,7 @@ back.
 
 `--max-log-lines` caps retained lines (one million by default), with the same
 evict-then-shed behaviour as spans.
+
+## Next
+
+[Get an overview of a system](overview.md).

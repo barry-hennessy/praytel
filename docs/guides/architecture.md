@@ -24,6 +24,7 @@ internal/ingest      wires one correlator to its listening receiver
 internal/filter      span admission consulted by every renderer
 internal/render/stream
 internal/render/tui  live span tree
+internal/render/tui/internal/graph   call graph and its grid layout
 ```
 
 `main` constructs one renderer and `Run`s it. Flags are primary; env vars only where OTel already uses them (`OTEL_EXPORTER_OTLP_*`). Default ports 4317/4318 with `--grpc-port` / `--http-port`.
@@ -53,6 +54,10 @@ Shared interface: `Run(ctx context.Context) error`. Constructor takes event sour
 Every renderer consults `internal/filter` before showing a span: the stream and TUI **live admit** (late admission OK; the stream never un-prints), and buffered renderers check **`InFocus` at paint**. It is not a single drop-pipe in front of every renderer.
 
 Visual design (colours, TUI chrome, how orphans look) is not specified here.
+
+## Graph view
+
+The TUI's second view. `internal/render/tui/internal/graph` folds the spans the tree would show into one node per span name within a service, with an edge per observed parent-to-child call and its count, and places them on a cell grid. It reads the same admitted spans as the tree, so search and filters narrow both alike.
 
 ## Pressure and errors
 

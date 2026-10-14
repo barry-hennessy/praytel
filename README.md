@@ -32,8 +32,8 @@ app that ships with this repository and against tools you may already have.
 
 ## What praytel does
 
-This first release covers the core: traces and logs, joined. Each part has a
-guide with commands to run yourself.
+Praytel is released in stages. Each one is useful on its own and builds on the
+one before; each has a guide with commands to run yourself.
 
 ### Traces and logs on the command line
 
@@ -43,6 +43,13 @@ log bodies. Lines that name no span are still shown, as orphans, never guessed.
 
 [View traces from a running app](docs/guides/traces.md) ·
 [View logs correlated to traces](docs/guides/logs.md)
+
+### An overview of your system
+
+Press Ctrl-G in the TUI for a graph of the spans that ran and which called
+which, drawn from what actually happened rather than from a diagram.
+
+[Get an overview of a system](docs/guides/overview.md)
 
 ## Documentation
 
