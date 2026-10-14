@@ -1,74 +1,90 @@
-# Pray-tel
-We wire up services with open tracing, telemetry. We emit logs. Both to get visibility
-into how our systems are running. What's going right, what's going wrong. How are things wired.
+# Praytel
 
-But we silo the data. We have to look in two places to get a clear overview of both.
+We instrument services with OpenTelemetry and we write logs, both to see how
+our systems run: what goes right, what goes wrong, how things are wired. But
+the two end up in different places, and both usually need a collector, a
+backend and a browser tab before you see anything.
 
-Praytel unifies logs and tracing on the command line so your development workflow
-can leverage both.
-
- - run commands and focus log output on specific components
- - let agents wire code, and verify that they haven't just stubbed the hard bits!
- - let agents leverage logs and tracing to focus them
- - leverage logs and tracing yourself; focus you!
- - get value out of your logs in your development workflow without spinning up a docker container
-
-Full documentation lives in [`docs/`](docs/index.md): six guides that build on
-each other, from [viewing traces](docs/guides/traces.md) to
-[working with agents](docs/guides/agents.md), a
-[reference page per command](docs/index.md#reference), and the
-[release plan](docs/releases.md).
-
-Run `praytel -- command` for the append-only stream, or `praytel --tui -- command`
-for a live trace/span tree. In the TUI, type to fuzzy-search traces (matches span
-names and attributes, including trace attributes), press Tab to search log bodies
-instead, use ↑/↓ to scroll, Esc to clear, and Ctrl-C to quit.
-
-Trace search is loose by design: it's a subsequence match (letters found in order,
-not a literal substring), and matching a single span anywhere in a trace surfaces
-that trace's whole tree, not just the span that matched. Expect broader results
-than a `grep`-style search would give you. The matched span's label and attributes
-are highlighted so you can see which one actually caused the trace to show up.
-
-## Typed queries
-
-Use `--query` for precise, typed matching across joined spans and logs:
+Praytel puts them together on the command line. Wrap one command, and its
+traces and logs are joined and shown in the terminal you ran it from: each log
+line under the span that wrote it. There is no daemon, no collector and no
+leftover files, so it fits into the way you already develop.
 
 ```sh
-praytel --query 'span{ resource.service.name = "checkout" && span:status = error }' -- go test ./...
-praytel --query 'log{ log:body *= "connection refused" && log:severity_number >= 17 }' --format ndjson -- ./server
-praytel --query 'span{ resource.service.name = "frontend" } >> span{ span:duration > 100ms }' -- ./server
-praytel --tui --query 'span{ span:status = error } | path' -- ./server
+praytel -- ./server           # append-only stream of joined logs
+praytel --tui -- ./server     # live trace tree, with logs under their spans
 ```
 
-`>` means direct child and `>>` means any descendant. Predicates inside one
-selector apply to the same record; `&&` between selectors means the same trace
-contains both. Queries default to the matching path. Append `| matches` for only
-the evidence records or `| trace` for the complete trace.
+## Install
 
-Validate and canonicalize checked-in queries without running a child:
+With Go installed:
 
 ```sh
-praytel query check 'span{ span:status = error }'
-praytel query fmt 'span{span:status=error}'
-praytel query explain 'span{ span:name = api } >> log{ log:body *= "failed" }'
+go install github.com/barry-hennessy/praytel/cmd/praytel@latest
 ```
 
-For a long-running process, `--emit settled --format ndjson` emits a closed trace
-after it has been quiet for `--settle-after`. “Settled” is provisional: late OTLP
-can produce a newer revision. Only a drained `final` result is terminal.
+The command you wrap must export OpenTelemetry over OTLP. Praytel points it at
+an in-process receiver through the standard `OTEL_EXPORTER_OTLP_*` variables,
+so an SDK that configures itself from the environment needs no change. To try
+praytel before instrumenting anything, the
+[first guide](docs/guides/traces.md#try-it-yourself) runs it against a small
+app that ships with this repository and against tools you may already have.
 
-## Agent integration
+## What praytel does
 
-`praytel mcp` runs a stdio MCP server rooted at its working directory. It exposes
-`start_run`, `wait_for_matches`, `get_trace_topology`, `get_span_details`,
-`get_logs`, and `stop_run`. Tools use progressive disclosure so an agent searches
-compact evidence before loading span or log detail. Configure an MCP client to run:
+Praytel is released in stages. Each one is useful on its own and builds on the
+one before; each has a guide with commands to run yourself.
+
+### Traces and logs on the command line
+
+Run a command under praytel to see its traces as a live tree, with each log
+line under the span that wrote it. Type to search traces, press Tab to search
+log bodies. Lines that name no span are still shown, as orphans, never guessed.
+
+[View traces from a running app](docs/guides/traces.md) ·
+[View logs correlated to traces](docs/guides/logs.md)
+
+### An overview of your system
+
+Press Ctrl-G in the TUI for a graph of the spans that ran and which called
+which, drawn from what actually happened rather than from a diagram.
+
+[Get an overview of a system](docs/guides/overview.md)
+
+### Traces of your tests
+
+Wrap a test run to see where a test failed, not only that it did, and narrow a
+large suite with `--focus` and `--exclude`.
+
+[View traces of tests](docs/guides/tests.md)
+
+### Focus on performance
+
+Ask typed questions of a run, starting with "what is slow?", and get
+machine-readable results:
+
+```sh
+praytel --tui --query 'span{ span:duration > 100ms }' -- ./server
+praytel --query 'span{ span:status = error } | matches' --format ndjson -- go test ./...
+```
+
+[Focus on performance](docs/guides/performance.md) ·
+[Typed queries](docs/guides/queries.md)
+
+### Praytel for agents
+
+Give a coding agent praytel over MCP, so it can run a command, query its
+telemetry and check that it built the real thing rather than a stub.
 
 ```json
 {"command":"praytel","args":["mcp"]}
 ```
 
-Run `praytel agent instructions` for the concise playbook to include in an agent
-skill. A “no match” conclusion is valid only after the run is terminal and both
-`truncated` and `incomplete_reasons` show that the result is complete.
+[Using praytel with agents](docs/guides/agents.md)
+
+## Documentation
+
+Everything is in [`docs/`](docs/index.md): the guides in release order, a
+[reference page per command](docs/index.md#reference), how praytel is
+[put together](docs/guides/architecture.md), and the
+[release notes](docs/releases.md).
