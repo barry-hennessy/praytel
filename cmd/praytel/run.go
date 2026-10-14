@@ -18,6 +18,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/capture"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/filter"
 	"github.com/barry-hennessy/praytel/internal/ingest"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
@@ -40,6 +41,11 @@ func run(
 	ctx, log, span := lt.Start(ctx)
 	defer span.End()
 
+	filt, err := filter.New(filter.Query{Focus: cfg.Focus, Exclude: cfg.Exclude})
+	if err != nil {
+		return 1, fmt.Errorf("filter: %w", err)
+	}
+
 	pipe, err := ingest.New(lt, correlator.Drain{
 		Idle:    cfg.DrainIdle,
 		Timeout: cfg.DrainTimeout,
@@ -57,9 +63,9 @@ func run(
 
 	var view renderer
 	if cfg.TUI {
-		view = tui.New(lt, events, stdin, stdout, nil)
+		view = tui.New(lt, events, stdin, stdout, filt)
 	} else {
-		st := stream.New(lt, events, stdout, nil)
+		st := stream.New(lt, events, stdout, filt)
 		view = st
 	}
 

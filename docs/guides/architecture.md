@@ -59,6 +59,10 @@ Visual design (colours, TUI chrome, how orphans look) is not specified here.
 
 The TUI's second view. `internal/render/tui/internal/graph` folds the spans the tree would show into one node per span name within a service, with an edge per observed parent-to-child call and its count, and places them on a cell grid. It reads the same admitted spans as the tree, so search and filters narrow both alike.
 
+## Focus and exclude
+
+`--focus GLOB` / `--exclude GLOB` feed `internal/filter`: focus admits span paths matching a glob and their surroundings, exclude then drops matching names. They narrow the stream, tree and graph the same way. [Filter and focus engine design](../../.scratch/tickets/03-filter-focus-engine.md).
+
 ## Pressure and errors
 
 In-memory only. `--max-spans` / `--max-log-lines`. Evict oldest **closed** traces, then shed newest. Never silent (stderr + events). No spill files.

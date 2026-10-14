@@ -500,6 +500,32 @@ func TestDrainDoesNotChangeChildExit(t *testing.T) {
 	})
 }
 
+func TestFocusHidesUntaggedLines(t *testing.T) {
+	sweet.Run(t, "--focus that misses orphan hides captured lines", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "--focus", "orders", "--", childBin, "-stdout", "noise-line")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+		}
+		if strings.Contains(res.stdout, "noise-line") {
+			t.Fatalf("unfocused orphan leaked: %q", res.stdout)
+		}
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
+func TestFocusOrphanStillStreams(t *testing.T) {
+	sweet.Run(t, "--focus orphan still prints untagged lines", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "--focus", "orphan", "--", childBin, "-stdout", "kept-line")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+		}
+		if strings.Count(res.stdout, "kept-line") != 1 {
+			t.Fatalf("stdout=%q", res.stdout)
+		}
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
 func TestShedWarnsAndPreservesChildExit(t *testing.T) {
 	sweet.Run(t, "shed warns on stderr and keeps the child exit code", wrapFactory, func(t *testing.T, d wrapDeps) {
 		res := runPraytel(t, d.dir,

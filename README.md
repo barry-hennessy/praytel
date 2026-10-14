@@ -51,6 +51,13 @@ which, drawn from what actually happened rather than from a diagram.
 
 [Get an overview of a system](docs/guides/overview.md)
 
+### Traces of your tests
+
+Wrap a test run to see where a test failed, not only that it did, and narrow a
+large suite with `--focus` and `--exclude`.
+
+[View traces of tests](docs/guides/tests.md)
+
 ## Documentation
 
 Everything is in [`docs/`](docs/index.md): the guides in release order, a

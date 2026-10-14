@@ -30,6 +30,8 @@ anything of your own.
    under the span that emitted it.
 3. [Get an overview of a system](guides/overview.md) (v0.2.0): which components
    are hit and how they are really wired together.
+4. [View traces of tests](guides/tests.md) (v0.3.0): see exactly where a test
+   fails.
 
 Going deeper:
 
