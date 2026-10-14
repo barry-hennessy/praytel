@@ -11,6 +11,8 @@ weight: 10
 ```
 praytel [flags] -- command [args ...]
 praytel query <check|fmt|explain> QUERY
+praytel mcp
+praytel agent instructions
 ```
 
 ## Description
@@ -23,8 +25,9 @@ By default the output is an append-only stream. `--tui` renders a live
 trace/span tree instead, and `--query` selects records with a
 [typed query](praytel-query-language.7.md).
 
-The `query` subcommand is documented in
-[praytel-query(1)](praytel-query.1.md).
+The subcommands are documented separately:
+[praytel-query(1)](praytel-query.1.md), [praytel-mcp(1)](praytel-mcp.1.md) and
+[praytel-agent(1)](praytel-agent.1.md).
 
 ## Flags
 

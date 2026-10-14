@@ -71,6 +71,17 @@ praytel --query 'span{ span:status = error } | matches' --format ndjson -- go te
 [Focus on performance](docs/guides/performance.md) ·
 [Typed queries](docs/guides/queries.md)
 
+### Praytel for agents
+
+Give a coding agent praytel over MCP, so it can run a command, query its
+telemetry and check that it built the real thing rather than a stub.
+
+```json
+{"command":"praytel","args":["mcp"]}
+```
+
+[Using praytel with agents](docs/guides/agents.md)
+
 ## Documentation
 
 Everything is in [`docs/`](docs/index.md): the guides in release order, a

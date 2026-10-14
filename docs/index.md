@@ -34,6 +34,8 @@ anything of your own.
    fails.
 5. [Focus on performance](guides/performance.md) (v0.4.0): query for the slow
    segments.
+6. [Using praytel with agents](guides/agents.md) (v0.5.0): keep an agent focused
+   on the area of change and verify what it built.
 
 Going deeper:
 
@@ -50,6 +52,9 @@ Going deeper:
   query without running a child.
 - [praytel-query-language(7)](reference/praytel-query-language.7.md): selectors,
   fields, operators and views.
+- [praytel-mcp(1)](reference/praytel-mcp.1.md): the stdio MCP server and its
+  tools.
+- [praytel-agent(1)](reference/praytel-agent.1.md): print the agent playbook.
 
 ## Writing these docs
 

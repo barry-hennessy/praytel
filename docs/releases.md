@@ -15,6 +15,7 @@ the one before, so you can stop at any of them and have a working tool.
 | v0.2.0 | An overview of your system | See which components a run hits and how they call each other. | [Get an overview of a system](guides/overview.md) |
 | v0.3.0 | Traces of your tests | Run a test suite, see where a test fails, and cut a large run down. | [View traces of tests](guides/tests.md) |
 | v0.4.0 | Focus on performance | Ask typed questions, starting with "what is slow?", and get machine-readable results. | [Focus on performance](guides/performance.md) |
+| v0.5.0 | Praytel for agents | Let a coding agent run a command, query its telemetry and verify its work. | [Using praytel with agents](guides/agents.md) |
 
 ## v0.1.0: Traces and logs on the command line
 
@@ -54,3 +55,12 @@ Reference: [praytel-query(1)](reference/praytel-query.1.md),
 [praytel-query-language(7)](reference/praytel-query-language.7.md). Guide:
 [Typed queries](guides/queries.md).
 
+## v0.5.0: Praytel for agents
+
+- `praytel mcp`: a stdio MCP server with six tools for running a command and
+  investigating its telemetry progressively.
+- `praytel agent instructions`: the playbook for an agent skill or system
+  prompt.
+
+Reference: [praytel-mcp(1)](reference/praytel-mcp.1.md),
+[praytel-agent(1)](reference/praytel-agent.1.md).

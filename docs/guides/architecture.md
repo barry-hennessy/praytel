@@ -28,6 +28,8 @@ internal/render/tui/internal/graph   call graph and its grid layout
 internal/query       typed parser, checker, formatter, pure evaluator
 internal/projection  event-derived query read model + trace settlement
 internal/render/query
+internal/session     bounded in-process runs for agent integrations
+internal/agentapi    transport-neutral progressive investigation tools
 ```
 
 `main` constructs one renderer and `Run`s it. Flags are primary; env vars only where OTel already uses them (`OTEL_EXPORTER_OTLP_*`). Default ports 4317/4318 with `--grpc-port` / `--http-port`.
@@ -75,6 +77,14 @@ view is **path** (match ∪ ancestors ∪ descendants), while `matches` and `tra
 provide compact evidence and whole-trace views. CLI machine output
 (`internal/render/query`) and the TUI use the same evaluator. `--focus` /
 `--exclude` remain the shorthand when no typed query is supplied.
+
+## Agent sessions
+
+`praytel mcp` is a separate composition mode: its process owns several bounded,
+in-memory sessions (`internal/session`) for one MCP client. Each session still
+wraps one child, leaves no files, and is cancelled when the MCP server exits.
+`internal/agentapi` exposes them as transport-neutral tools that disclose
+evidence progressively, using the same query evaluator.
 
 ## Pressure and errors
 

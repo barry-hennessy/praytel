@@ -134,8 +134,8 @@ A span duration is one measurement from one run, on your machine, at the
 granularity you instrumented. It tells you where to look. It is not a
 benchmark: for a number you would defend, repeat the run and compare.
 
-## Going further
+## Next
 
-The full language is in
+[Using praytel with agents](agents.md). The full language is in
 [Typed queries](queries.md) and
 [praytel-query-language(7)](../reference/praytel-query-language.7.md).
