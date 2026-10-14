@@ -32,16 +32,24 @@ anything of your own.
    are hit and how they are really wired together.
 4. [View traces of tests](guides/tests.md) (v0.3.0): see exactly where a test
    fails.
+5. [Focus on performance](guides/performance.md) (v0.4.0): query for the slow
+   segments.
 
 Going deeper:
 
 - [Architecture](guides/architecture.md): how ingest, join and rendering fit
   together.
+- [Typed queries](guides/queries.md): select spans and logs precisely, and get
+  machine-readable output.
 
 ## Reference
 
 - [praytel(1)](reference/praytel.1.md): the wrapper command, its flags, TUI keys
   and exit status.
+- [praytel-query(1)](reference/praytel-query.1.md): check, format and explain a
+  query without running a child.
+- [praytel-query-language(7)](reference/praytel-query-language.7.md): selectors,
+  fields, operators and views.
 
 ## Writing these docs
 

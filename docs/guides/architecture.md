@@ -25,6 +25,9 @@ internal/filter      span admission consulted by every renderer
 internal/render/stream
 internal/render/tui  live span tree
 internal/render/tui/internal/graph   call graph and its grid layout
+internal/query       typed parser, checker, formatter, pure evaluator
+internal/projection  event-derived query read model + trace settlement
+internal/render/query
 ```
 
 `main` constructs one renderer and `Run`s it. Flags are primary; env vars only where OTel already uses them (`OTEL_EXPORTER_OTLP_*`). Default ports 4317/4318 with `--grpc-port` / `--http-port`.
@@ -62,6 +65,16 @@ The TUI's second view. `internal/render/tui/internal/graph` folds the spans the 
 ## Focus and exclude
 
 `--focus GLOB` / `--exclude GLOB` feed `internal/filter`: focus admits span paths matching a glob and their surroundings, exclude then drops matching names. They narrow the stream, tree and graph the same way. [Filter and focus engine design](../../.scratch/tickets/03-filter-focus-engine.md).
+
+## Selection
+
+Typed queries are checked before the child starts and evaluated per trace by
+`internal/query` over an `internal/projection` read model. Selectors distinguish
+spans from logs; structural operators use final log-to-span assignment. The default
+view is **path** (match ∪ ancestors ∪ descendants), while `matches` and `trace`
+provide compact evidence and whole-trace views. CLI machine output
+(`internal/render/query`) and the TUI use the same evaluator. `--focus` /
+`--exclude` remain the shorthand when no typed query is supplied.
 
 ## Pressure and errors
 

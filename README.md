@@ -58,6 +58,19 @@ large suite with `--focus` and `--exclude`.
 
 [View traces of tests](docs/guides/tests.md)
 
+### Focus on performance
+
+Ask typed questions of a run, starting with "what is slow?", and get
+machine-readable results:
+
+```sh
+praytel --tui --query 'span{ span:duration > 100ms }' -- ./server
+praytel --query 'span{ span:status = error } | matches' --format ndjson -- go test ./...
+```
+
+[Focus on performance](docs/guides/performance.md) ·
+[Typed queries](docs/guides/queries.md)
+
 ## Documentation
 
 Everything is in [`docs/`](docs/index.md): the guides in release order, a

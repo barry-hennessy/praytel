@@ -81,3 +81,11 @@ drops matching names afterwards. Both repeat.
 ```sh
 praytel --tui --focus 'checkout*' --exclude '*healthcheck*' -- go test ./...
 ```
+
+For an exact question, such as "show only traces containing an error span",
+use a typed query. See [Focus on performance](performance.md) for an
+introduction and [Typed queries](queries.md) for the detail.
+
+## Next
+
+[Focus on performance](performance.md).

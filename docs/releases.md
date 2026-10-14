@@ -14,6 +14,7 @@ the one before, so you can stop at any of them and have a working tool.
 | v0.1.0 | Traces and logs on the command line | Run a command and watch its traces as a live tree, with each log line under the span that wrote it. | [View traces from a running app](guides/traces.md), [View logs correlated to traces](guides/logs.md) |
 | v0.2.0 | An overview of your system | See which components a run hits and how they call each other. | [Get an overview of a system](guides/overview.md) |
 | v0.3.0 | Traces of your tests | Run a test suite, see where a test fails, and cut a large run down. | [View traces of tests](guides/tests.md) |
+| v0.4.0 | Focus on performance | Ask typed questions, starting with "what is slow?", and get machine-readable results. | [Focus on performance](guides/performance.md) |
 
 ## v0.1.0: Traces and logs on the command line
 
@@ -41,4 +42,15 @@ Reference: [praytel(1)](reference/praytel.1.md).
 - `--focus` and `--exclude` to cut a large suite down. They narrow the stream,
   the tree and the graph alike.
 - A guide to reading a test run; everything else it uses shipped earlier.
+
+## v0.4.0: Focus on performance
+
+- The typed query language: `--query`, `--query-file`, and the `path`,
+  `matches` and `trace` views, in the stream and the TUI.
+- Machine output: `--format`, `--limit`, `--emit settled`, `--settle-after`.
+- `praytel query check`, `fmt` and `explain`.
+
+Reference: [praytel-query(1)](reference/praytel-query.1.md),
+[praytel-query-language(7)](reference/praytel-query-language.7.md). Guide:
+[Typed queries](guides/queries.md).
 
