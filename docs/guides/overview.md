@@ -51,6 +51,21 @@ So the graph is only as good as your naming. Set `service.name` per service and
 name spans `Section.function`, and the graph reads like your design. Name every
 span `handler` and you get one box.
 
+## Try it on Dagger
+
+Run this in a directory containing a Dagger module, then press Ctrl-G:
+
+```sh
+praytel --tui -- dagger functions
+```
+
+The graph has two components. `dagger-cli` starts and connects to the engine,
+and an arrow from `dagger-cli.loading type definitions` into
+`unknown_service:dagger-engine.POST /query` marks where the CLI hands the work
+over. Pan right to see the engine load the module. The engine sets no
+`service.name`, so its component is named `unknown_service:dagger-engine`; the
+graph shows the gap in its naming as plainly as its structure.
+
 ## Scope the graph
 
 The graph always shows the same spans the tree would. Anything that narrows the

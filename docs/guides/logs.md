@@ -39,6 +39,23 @@ So the one change to make in your app is to put the active trace and span IDs
 on every log line. Most logging libraries have an OpenTelemetry hook that does
 this. Colour codes from pretty console writers are stripped before parsing.
 
+## See both kinds of line
+
+Two of the tools from
+[View traces from a running app](traces.md#try-it-on-a-tool-you-already-have)
+show the difference:
+
+```sh
+praytel --tui -- dagger functions
+praytel --tui -- docker buildx build --call=check .
+```
+
+Dagger exports its own output as OTLP logs that carry trace context, so a line
+such as `INF connected` sits under the `connect` span that produced it. Buildx
+writes its progress (`#3 [internal] load .dockerignore`) to stderr with no IDs,
+so those lines land in the orphan group described below, even though buildx
+exports spans.
+
 ## Lines that cannot be joined
 
 Unstructured lines are not an error; they are still shown. Praytel never

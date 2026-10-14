@@ -41,6 +41,36 @@ praytel --tui --grpc-port 14317 --http-port 14318 -- ./server
 An app with no instrumentation still runs normally; you will see its output but
 no spans.
 
+## Try it on a tool you already have
+
+Some tools you probably have installed already export traces. Wrapping one is
+the quickest way to see a real trace before you instrument anything of your
+own. Each command below only reads: it lints, resolves or lists, and changes
+nothing.
+
+```sh
+praytel --tui -- docker buildx build --call=check .   # lint the Dockerfile in .
+praytel --tui -- docker compose config                # resolve compose.yaml
+praytel --tui -- docker compose ps                    # list the project's containers
+praytel --tui -- dagger functions                     # in a Dagger module
+OTEL_TRACES_EXPORTER=otlp praytel --tui -- terraform validate
+```
+
+| Tool | What the trace shows |
+|---|---|
+| `docker buildx` | A `build` span over the gRPC calls buildx makes to BuildKit, such as `moby.buildkit.v1.Control/Solve`. |
+| `docker compose` | One `cli/<command>` span, with any Docker API calls beneath it: `ps` lists containers, `config` makes no calls. |
+| `dagger` | The CLI starting and connecting to its engine, then the engine loading the module. |
+| `terraform` | One span named after the command, and Terraform's update check (`HashiCorp Checkpoint`). |
+
+Terraform exports traces only when `OTEL_TRACES_EXPORTER=otlp` is set. Dagger
+starts its engine container if it is not already running. Not every command is
+instrumented, even within one tool: `docker ps` and `docker version` run
+normally under praytel but send no spans, and neither does `docker buildx ls`.
+
+These were checked with Docker 29.6 (buildx 0.35, Compose 5.3), Dagger 0.21 and
+Terraform 1.15.
+
 ## Reading the tree
 
 Each trace is a tree of spans. Every span shows its state and how long it took.

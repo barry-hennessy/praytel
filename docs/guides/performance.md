@@ -34,6 +34,23 @@ Change the view to change how much comes back:
 | `\| matches` | Only the slow spans. |
 | `\| trace` | The whole of every trace that contains a slow span. |
 
+The same query works on the tools from
+[View traces from a running app](traces.md#try-it-on-a-tool-you-already-have).
+Where does a Dockerfile lint spend its time?
+
+```sh
+praytel --tui --query 'span{ span:duration > 100ms }' -- docker buildx build --call=check .
+```
+
+What is left is the build, the BuildKit solve (`moby.buildkit.v1.Control/Solve`
+and the frontend's `LLBBridge/Solve`) and the status stream that runs alongside
+it. Every other call buildx makes finishes well under 100ms. With Dagger, scope the question to the CLI to see how long
+it takes to reach its engine before any work starts:
+
+```sh
+praytel --tui --query 'span{ resource.service.name = "dagger-cli" && span:duration > 100ms }' -- dagger functions
+```
+
 ## Ask a narrower question
 
 Slow spans in one service:

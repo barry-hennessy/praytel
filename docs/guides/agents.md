@@ -72,6 +72,14 @@ span{ span:name = "Orders.Repo.Save" } > span{ span:kind = client }
 This matches only if saving an order made an outbound call. No match, on a
 complete run, means the call never happened.
 
+You can try the shape of this check on Docker buildx before your own code is
+instrumented. This matches only if the build really reached BuildKit:
+
+```sh
+praytel --query 'span{ span:name = "build" } >> span{ span:name = "moby.buildkit.v1.Control/Solve" } | matches' \
+  --format ndjson -- docker buildx build --call=check .
+```
+
 The same idea checks structure. `get_trace_topology` returns the skeleton of a
 trace without attributes or log bodies, which is enough for an agent, or you,
 to see how the system was actually put together. For the human view of the

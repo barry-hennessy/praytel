@@ -42,6 +42,19 @@ but it cannot receive spans that were never sent.
 With Go, add `-count=1` when you want traces from tests whose results are
 cached. A cached test does not run, so it exports nothing.
 
+## See an error mark first
+
+To see what a failure looks like before instrumenting your tests, wrap a
+command that fails and records it on a span. Docker Compose does, and pointing
+it at a file that does not exist is harmless:
+
+```sh
+praytel --tui -- docker compose -f missing.yaml config
+```
+
+The `cli/config` span is drawn with `×`, and praytel exits with Compose's
+non-zero exit code.
+
 ## Find where it failed
 
 1. Type part of the test's name to bring up its trace.
