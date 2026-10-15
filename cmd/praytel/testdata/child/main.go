@@ -188,16 +188,10 @@ func exportHTTPSpan(name, traceID, spanID string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	host, err := otlpHTTPHost()
-	if err != nil {
-		return err
-	}
-
-	exp, err := otlptracehttp.New(ctx,
-		otlptracehttp.WithEndpoint(host),
-		otlptracehttp.WithURLPath("/v1/traces"),
-		otlptracehttp.WithInsecure(),
-	)
+	// Configured from the environment alone, like a child that hard-codes the
+	// HTTP exporter: it ignores OTEL_EXPORTER_OTLP_PROTOCOL and posts to
+	// OTEL_EXPORTER_OTLP_ENDPOINT, which names praytel's gRPC port.
+	exp, err := otlptracehttp.New(ctx)
 	if err != nil {
 		return fmt.Errorf("otlp http exporter: %w", err)
 	}

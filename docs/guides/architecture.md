@@ -35,7 +35,7 @@ internal/render/tui  live tree with typed-query selection
 
 ## Ingest
 
-Minimal custom receiver from OTLP protobufs: gRPC and HTTP/protobuf, **separate** trace and log services (`/v1/traces`, `/v1/logs`). No metrics. Cast to `domain` at the adaptor edge.
+Minimal custom receiver from OTLP protobufs: gRPC and HTTP/protobuf, **separate** trace and log services (`/v1/traces`, `/v1/logs`). Each port accepts both protocols: a connection that opens with the HTTP/2 preface goes to the gRPC server, anything else to the HTTP server, because exporters often ignore `OTEL_EXPORTER_OTLP_PROTOCOL`. No metrics. Cast to `domain` at the adaptor edge.
 
 Capture parses structured stdout/stderr for `trace_id` / `span_id` from JSON or logfmt. Unstructured lines are not an error. OTLP logs become the same `LogLine` with `source` = `stdout` | `stderr` | `otlp`. Duplicate stdout+OTLP lines are both kept.
 

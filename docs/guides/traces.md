@@ -32,7 +32,8 @@ against a small shop app that ships with praytel.
 The app must export OpenTelemetry traces over OTLP. Praytel starts a receiver
 and points the child at it through the standard `OTEL_EXPORTER_OTLP_*`
 environment variables, so an OpenTelemetry SDK that configures its exporter
-from the environment needs no code change.
+from the environment needs no code change. Both ports accept gRPC and HTTP, so
+an exporter that is hard-wired to one transport works too.
 
 There is no collector to run. If one is already listening on the default ports
 (4317 for gRPC, 4318 for HTTP), move praytel:
