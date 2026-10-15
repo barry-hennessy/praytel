@@ -29,8 +29,36 @@ praytel --tui -- ./server
 
 Press Ctrl-G to switch from the tree to the graph. Press it again to go back.
 
-[Example 2](../examples.md#2-overview) draws the graph of a four-service app
-you can compare against its source.
+## Try it yourself
+
+With the example `shop` app [installed](traces.md#the-shop-app):
+
+```sh
+praytel --tui -- shop
+```
+
+Press Ctrl-G. There is one box per span name, labelled with its service:
+`web.Orders.Create` calls `checkout.Orders.Place`, which fans out to
+`inventory.Stock.Reserve`, `payments.Gateway.Charge` and
+`checkout.Orders.Repo.Save`. Compare it with the calls in
+[`main.go`](../../demo/workloads/shop/main.go). The arrow into
+`checkout.Orders.Repo.Save` reads `×3`, not `×4`: one order never saved. Type
+`gift` and the graph shrinks to what that order touched, with
+`inventory.Stock.Release` in place of the save.
+
+To see how a tool you use is put together, run this in a directory containing
+a Dagger module and press Ctrl-G:
+
+```sh
+praytel --tui -- dagger functions
+```
+
+The graph has two components. The `dagger-cli` boxes are the CLI starting and
+connecting to its engine. Pan right for the engine's own boxes, such as
+`load SDK: go` and `Query.moduleSource`, where it loads the module. The engine
+sets no `service.name`, so its boxes are labelled
+`unknown_service:dagger-engine`; the graph shows the gap in its naming as
+plainly as its structure.
 
 ## Reading the graph
 
@@ -63,7 +91,7 @@ one box; put an order ID in the span name and you get a box per order.
 
 ## Scope the graph
 
-The graph always shows the same spans the tree would. Type to search, and the
-graph shrinks to the matching traces.
+The graph always shows the same spans the tree would, so a search narrows both:
+type to search, and the graph shrinks to the matching traces.
 
 Scroll with the arrow keys, including left and right for wide graphs.

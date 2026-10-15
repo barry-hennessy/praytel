@@ -7,17 +7,13 @@ But we silo the data. We have to look in two places to get a clear overview of b
 Praytel unifies logs and tracing on the command line so your development workflow
 can leverage both.
 
- - run commands and focus log output on specific components
- - let agents wire code, and verify that they haven't just stubbed the hard bits!
- - let agents leverage logs and tracing to focus them
- - leverage logs and tracing yourself; focus you!
- - get value out of your logs in your development workflow without spinning up a docker container
+ - leverage logs and tracing yourself; your tools _helping_ you focus!
+ - get value out of your observability in your development workflow - without spinning up a docker container
 
 Full documentation lives in [`docs/`](docs/index.md): three guides that build on
 each other, from [viewing traces](docs/guides/traces.md) to
-[seeing how a system fits together](docs/guides/overview.md), a
-[reference page per command](docs/index.md#reference), and
-[runnable examples](docs/examples.md) for each guide.
+[seeing how a system fits together](docs/guides/overview.md), and a
+[reference page per command](docs/index.md#reference).
 
 Run `praytel -- command` for the append-only stream, or `praytel --tui -- command`
 for a live trace/span tree. In the TUI, type to fuzzy-search traces (matches span
