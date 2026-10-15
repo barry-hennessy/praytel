@@ -31,7 +31,7 @@ internal/render/tui  live tree with typed-query selection
 
 Minimal custom receiver from OTLP protobufs: gRPC and HTTP/protobuf, **separate** trace and log services (`/v1/traces`, `/v1/logs`). No metrics. Cast to `domain` at the adaptor edge.
 
-Capture parses structured stdout/stderr for `trace_id` / `span_id` from JSON or logfmt. Unstructured lines are not an error. OTLP logs become the same `LogLine` with `source` = `stdout` | `stderr` | `otlp`. Duplicate stdout+OTLP lines are both kept.
+Capture parses structured stdout/stderr for the trace and span IDs (`trace_id`, `traceId`, `traceID` or `trace.id`, and the same for spans) from a whole-line JSON object, text ending in a JSON object of fields (zap's console encoder), or logfmt. Each format is an independent parser that knows nothing of the others; every parser reads every line and the result that read the most of it wins, so parser order never matters. A tie between disagreeing parsers leaves the line unjoined. Parsers run serially: running them concurrently measured slower, because all but one reject a given line in nanoseconds. The body is always the whole line. Unstructured lines are not an error. OTLP logs become the same `LogLine` with `source` = `stdout` | `stderr` | `otlp`. Duplicate stdout+OTLP lines are both kept.
 
 The child sees OTLP endpoints via env. Drain after child exit: idle timeout with a hard cap (both flags).
 

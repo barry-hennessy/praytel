@@ -372,6 +372,38 @@ func TestGRPCExportingChildJoinsLogfmtLog(t *testing.T) {
 	})
 }
 
+func TestGRPCExportingChildJoinsZapConsoleLog(t *testing.T) {
+	sweet.Run(t, "a zap console line joins the span named in its trailing fields", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "--", childBin, "-export-grpc-span-zap", "-span-name", "child-work")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q stdout=%q", res.exit, res.stderr, res.stdout)
+		}
+
+		joined := false
+		for _, line := range strings.Split(res.stdout, "\n") {
+			bodyStart := strings.Index(line, "\tINFO\t")
+			if bodyStart < 0 || !strings.Contains(line, "\tgrpc-span\t") {
+				continue
+			}
+
+			traceID, spanID := jsonTraceSpan(t, line[strings.LastIndex(line, "\t"):])
+			prefix := line[:bodyStart]
+			if !strings.Contains(prefix, "child-work") {
+				continue
+			}
+			if !strings.Contains(prefix, traceID) || !strings.Contains(prefix, spanID) {
+				t.Fatalf("stream prefix missing joined ids: %q", line)
+			}
+			joined = true
+		}
+		if !joined {
+			t.Fatalf("expected the zap line under child-work, stdout=%q stderr=%q", res.stdout, res.stderr)
+		}
+
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
 func TestHTTPExportingChildJoinsJSONLog(t *testing.T) {
 	sweet.Run(t, "HTTP span hydrate appears on the stream with the JSON log", wrapFactory, func(t *testing.T, d wrapDeps) {
 		res := runPraytel(t, d.dir, "--", childBin, "-export-http-span", "-span-name", "http-work")

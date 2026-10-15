@@ -25,6 +25,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -35,6 +36,7 @@ func main() {
 	printOtel := flag.Bool("print-otel-env", false, "print OTEL_EXPORTER_OTLP_* assignments")
 	exportGRPC := flag.Bool("export-grpc-span", false, "export one OTLP/gRPC span and print JSON with those IDs")
 	exportGRPCLogfmt := flag.Bool("export-grpc-span-logfmt", false, "export one OTLP/gRPC span and print logfmt with those IDs")
+	exportGRPCZap := flag.Bool("export-grpc-span-zap", false, "export one OTLP/gRPC span and log those IDs through zap's development (console) logger")
 	exportHTTP := flag.Bool("export-http-span", false, "export one OTLP HTTP/protobuf span and print JSON with those IDs")
 	exportOTLPLog := flag.String("export-otlp-log", "", "emit this body as an OTLP log")
 	serviceName := flag.String("service-name", "", "resource service.name for OTLP logs")
@@ -74,7 +76,7 @@ func main() {
 	if *loopExport {
 		fails := 0
 		for {
-			if err := exportGRPCSpan(*spanName, *traceID, *spanID, false); err != nil {
+			if err := exportGRPCSpan(*spanName, *traceID, *spanID, formatJSON); err != nil {
 				fails++
 				if fails > 15 {
 					os.Exit(0)
@@ -120,8 +122,15 @@ func main() {
 		time.Sleep(*delay)
 	}
 
-	if *exportGRPC || *exportGRPCLogfmt {
-		if err := exportGRPCSpan(*spanName, *traceID, *spanID, *exportGRPCLogfmt); err != nil {
+	if *exportGRPC || *exportGRPCLogfmt || *exportGRPCZap {
+		format := formatJSON
+		switch {
+		case *exportGRPCLogfmt:
+			format = formatLogfmt
+		case *exportGRPCZap:
+			format = formatZap
+		}
+		if err := exportGRPCSpan(*spanName, *traceID, *spanID, format); err != nil {
 			fmt.Fprint(os.Stderr, err.Error())
 			os.Exit(1)
 		}
@@ -172,7 +181,23 @@ func main() {
 	os.Exit(*exit)
 }
 
-func exportGRPCSpan(name, traceID, spanID string, logfmtOut bool) error {
+// logZap writes one line through zap's development logger, whose console
+// encoder puts the fields in a JSON object after tab-separated text.
+func logZap(msg, traceID, spanID string) error {
+	cfg := zap.NewDevelopmentConfig()
+	cfg.OutputPaths = []string{"stdout"}
+	logger, err := cfg.Build()
+	if err != nil {
+		return fmt.Errorf("zap logger: %w", err)
+	}
+	logger.Info(msg, zap.String("trace_id", traceID), zap.String("span_id", spanID))
+	// Sync fails on a pipe or terminal; there is nothing buffered to lose.
+	_ = logger.Sync()
+
+	return nil
+}
+
+func exportGRPCSpan(name, traceID, spanID string, format logFormat) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -181,7 +206,7 @@ func exportGRPCSpan(name, traceID, spanID string, logfmtOut bool) error {
 		return fmt.Errorf("otlp grpc exporter: %w", err)
 	}
 
-	return exportSpan(ctx, name, "grpc-span", traceID, spanID, exp, logfmtOut)
+	return exportSpan(ctx, name, "grpc-span", traceID, spanID, exp, format)
 }
 
 func exportHTTPSpan(name, traceID, spanID string) error {
@@ -202,10 +227,19 @@ func exportHTTPSpan(name, traceID, spanID string) error {
 		return fmt.Errorf("otlp http exporter: %w", err)
 	}
 
-	return exportSpan(ctx, name, "http-span", traceID, spanID, exp, false)
+	return exportSpan(ctx, name, "http-span", traceID, spanID, exp, formatJSON)
 }
 
-func exportSpan(ctx context.Context, name, msg, traceID, spanID string, exp sdktrace.SpanExporter, logfmtOut bool) error {
+// logFormat is how exportSpan prints the line naming the exported span.
+type logFormat int
+
+const (
+	formatJSON logFormat = iota
+	formatLogfmt
+	formatZap
+)
+
+func exportSpan(ctx context.Context, name, msg, traceID, spanID string, exp sdktrace.SpanExporter, format logFormat) error {
 	opts := []sdktrace.TracerProviderOption{sdktrace.WithSyncer(exp)}
 	gen, err := idGenerator(traceID, spanID)
 	if err != nil {
@@ -220,9 +254,14 @@ func exportSpan(ctx context.Context, name, msg, traceID, spanID string, exp sdkt
 
 	_, span := tp.Tracer("praytel-helper").Start(ctx, name)
 	sc := span.SpanContext()
-	if logfmtOut {
+	switch format {
+	case formatLogfmt:
 		fmt.Fprintf(os.Stdout, "level=INFO msg=%q trace_id=%s span_id=%s\n", msg, sc.TraceID().String(), sc.SpanID().String())
-	} else {
+	case formatZap:
+		if err := logZap(msg, sc.TraceID().String(), sc.SpanID().String()); err != nil {
+			return err
+		}
+	default:
 		fmt.Fprintf(os.Stdout, `{"msg":%q,"trace_id":%q,"span_id":%q}`+"\n", msg, sc.TraceID().String(), sc.SpanID().String())
 	}
 	span.End()
