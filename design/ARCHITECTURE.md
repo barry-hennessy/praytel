@@ -8,7 +8,7 @@ weight: 80
 
 Praytel is a **transparent CLI wrapper**: `praytel [flags] -- cmd …`. It forwards signals, runs one command to completion, captures that process’s logs and OpenTelemetry data, joins them, and prints a unified view. No daemon, no leftover files. The TUI may stay open after the child exits; everything else drains and exits.
 
-This document is the decided architecture. Decision detail lives in [`.scratch/MAP.md`](../../.scratch/MAP.md) and its tickets.
+This document is the decided architecture. Decision detail lives in [`.scratch/MAP.md`](../.scratch/MAP.md) and its tickets.
 
 Go. [Bones](https://github.com/barry-hennessy/bones) for process lifecycle (`RootCtx`, `errgroup`) and `LoggingTracer`. [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the TUI renderer.
 
@@ -21,14 +21,15 @@ internal/receiver    OTLP gRPC+HTTP (traces and logs) — not the Collector
 internal/capture     child stdout/stderr → LogLine
 internal/correlator  one goroutine, private forest, outbound events
 internal/ingest      wires one correlator to its listening receiver
+internal/filter      span admission consulted by every renderer
+internal/render/stream
+internal/render/tui  live span tree
+internal/render/tui/internal/graph   call graph and its grid layout
 internal/query       typed parser, checker, formatter, pure evaluator
 internal/projection  event-derived query read model + trace settlement
-internal/filter      legacy --focus/--exclude live admission
+internal/render/query
 internal/session     bounded in-process runs for agent integrations
 internal/agentapi    transport-neutral progressive investigation tools
-internal/render/stream
-internal/render/query
-internal/render/tui  live tree with typed-query selection
 ```
 
 `main` constructs one renderer and `Run`s it. Flags are primary; env vars only where OTel already uses them (`OTEL_EXPORTER_OTLP_*`). Default ports 4317/4318 with `--grpc-port` / `--http-port`.
@@ -47,22 +48,7 @@ One correlator goroutine. Typed inbound channels (spans, OTLP logs, stdout lines
 
 Outbound **value-copy events** in `domain`: `SpanUpserted`, `SpanParentLinked`, `SpanClosed`, `LogReceived`, `LogAssigned`, `DrainComplete`, plus `ForestEvicted` / `ForestShed`. Child spans insert immediately; parent link may be late. Logs that **name** an unseen span wait until that span or drain; then assignment is sticky.
 
-Untagged logs never attach to a guessed real span. Global synthetic orphan (no IDs); per-trace synthetic orphan (`trace_id` only). See [Untagged log handling](../../.scratch/tickets/01-untagged-log-handling.md).
-
-## Selection
-
-Typed queries are checked before the child starts and evaluated per trace by
-`internal/query` over an `internal/projection` read model. Selectors distinguish
-spans from logs; structural operators use final log-to-span assignment. The default
-view is **path** (match ∪ ancestors ∪ descendants), while `matches` and `trace`
-provide compact evidence and whole-trace views. CLI machine output and the TUI use
-the same evaluator. `--focus GLOB` / `--exclude GLOB` remain legacy shorthand for
-component or span-name filtering when no typed query is supplied.
-
-- Stream and TUI: **live admit** (late admission OK; stream never un-prints).
-- Buffered renderers: **`InFocus` at paint**.
-
-Not a single drop-pipe in front of every renderer. [Filter and focus engine design](../../.scratch/tickets/03-filter-focus-engine.md).
+Untagged logs never attach to a guessed real span. Global synthetic orphan (no IDs); per-trace synthetic orphan (`trace_id` only). See [Untagged log handling](../.scratch/tickets/01-untagged-log-handling.md).
 
 ## Render
 
@@ -70,7 +56,35 @@ Shared interface: `Run(ctx context.Context) error`. Constructor takes event sour
 
 `DrainComplete` / event-channel close means **data done**. Stream returns after that. TUI stays until quit or process `ctx`. Stream is **append-only**, prefers unbuffered (`LogReceived`). Tree/summary may hold until paint. Pipeline channels **block**; they do not drop.
 
+Every renderer consults `internal/filter` before showing a span: the stream and TUI **live admit** (late admission OK; the stream never un-prints), and buffered renderers check **`InFocus` at paint**. It is not a single drop-pipe in front of every renderer.
+
 Visual design (colours, TUI chrome, how orphans look) is not specified here.
+
+## Graph view
+
+The TUI's second view. `internal/render/tui/internal/graph` folds the spans the tree would show into one node per span name within a service, with an edge per observed parent-to-child call and its count, and places them on a cell grid. It reads the same admitted spans as the tree, so search and filters narrow both alike.
+
+## Focus and exclude
+
+`--focus GLOB` / `--exclude GLOB` feed `internal/filter`: focus admits span paths matching a glob and their surroundings, exclude then drops matching names. They narrow the stream, tree and graph the same way. [Filter and focus engine design](../.scratch/tickets/03-filter-focus-engine.md).
+
+## Selection
+
+Typed queries are checked before the child starts and evaluated per trace by
+`internal/query` over an `internal/projection` read model. Selectors distinguish
+spans from logs; structural operators use final log-to-span assignment. The default
+view is **path** (match ∪ ancestors ∪ descendants), while `matches` and `trace`
+provide compact evidence and whole-trace views. CLI machine output
+(`internal/render/query`) and the TUI use the same evaluator. `--focus` /
+`--exclude` remain the shorthand when no typed query is supplied.
+
+## Agent sessions
+
+`praytel mcp` is a separate composition mode: its process owns several bounded,
+in-memory sessions (`internal/session`) for one MCP client. Each session still
+wraps one child, leaves no files, and is cancelled when the MCP server exits.
+`internal/agentapi` exposes them as transport-neutral tools that disclose
+evidence progressively, using the same query evaluator.
 
 ## Pressure and errors
 
@@ -83,21 +97,3 @@ Praytel’s own logs: `LoggingTracer` on **stderr**, **noop tracer**, never expo
 ## Out of scope (this architecture)
 
 Multi-process orchestration; non-TUI browse-after-exit; OTLP metrics.
-
-The optional `praytel mcp` command is a separate composition mode: its process
-owns several bounded, in-memory sessions for one MCP client. Each session still
-wraps one child, leaves no files, and is cancelled when the MCP server exits.
-
-## Tickets
-
-| Ticket | Decision |
-|---|---|
-| [Untagged log handling](../../.scratch/tickets/01-untagged-log-handling.md) | Honest orphans; pending named spans |
-| [Internal storage representation](../../.scratch/tickets/02-internal-storage-representation.md) | Private forest; event stream |
-| [Filter and focus engine design](../../.scratch/tickets/03-filter-focus-engine.md) | Live admit vs InFocus; path globs |
-| [Renderer interface shape](../../.scratch/tickets/04-renderer-interface.md) | `Run(ctx)` |
-| [Buffered vs unbuffered output strategy](../../.scratch/tickets/05-buffering-strategy.md) | Renderer chooses; append-only stream |
-| [Memory and disk pressure management](../../.scratch/tickets/06-memory-pressure.md) | Caps; evict then shed |
-| [Error surface](../../.scratch/tickets/07-error-surface.md) | Child exit code; stderr warnings |
-| [OTLP log vs trace routing](../../.scratch/tickets/08-otlp-log-routing.md) | Two OTLP services; one `LogLine` |
-| [Praytel’s own observability](../../.scratch/tickets/09-internal-observability.md) | Stderr `LoggingTracer`; noop tracer |

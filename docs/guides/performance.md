@@ -34,8 +34,50 @@ Change the view to change how much comes back:
 | `\| matches` | Only the slow spans. |
 | `\| trace` | The whole of every trace that contains a slow span. |
 
-[Example 4](../examples.md#4-performance) runs these queries against an app
-with one slow call to find.
+## Try it yourself
+
+With the example `shop` app [installed](traces.md#the-shop-app):
+
+```sh
+praytel --tui --query 'span{ span:duration > 300ms }' -- shop
+```
+
+Only the `amex` order is left. Without `--tui` the same query prints one line
+of evidence per matching trace, which is the form a script can use:
+
+```sh
+praytel --query 'span{ span:duration > 300ms } | matches' -- shop -pace 50ms
+```
+
+```
+05b66746... revision=25 state=final spans=[4adbc203... 8cfe1c03... ad8c1747... b7315de3...] logs=[] incomplete=[]
+```
+
+Four spans match because the slow bank call makes each of its ancestors slow
+too. To get the cause rather than everything above it, ask for the slow span
+that logged a retry:
+
+```sh
+praytel --query 'span{ span:duration > 100ms } > log{ log:body *= "retry" }' -- shop -pace 50ms
+```
+
+The same questions work on
+[Docker buildx and Dagger](traces.md#a-tool-you-already-have).
+Where does a Dockerfile lint spend its time?
+
+```sh
+praytel --tui --query 'span{ span:duration > 100ms }' -- docker buildx build --call=check .
+```
+
+What is left is the build, the BuildKit solve (`moby.buildkit.v1.Control/Solve`
+and the frontend's `LLBBridge/Solve`) and the status stream that runs alongside
+it. Every other call buildx makes finishes well under 100ms. With Dagger, scope
+the question to the CLI to see how long it takes to reach its engine before
+any work starts:
+
+```sh
+praytel --tui --query 'span{ resource.service.name = "dagger-cli" && span:duration > 100ms }' -- dagger functions
+```
 
 ## Ask a narrower question
 

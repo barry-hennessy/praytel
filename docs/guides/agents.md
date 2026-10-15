@@ -30,9 +30,6 @@ wraps one child, leaves no files, and is cancelled when the server exits. The
 child's inherited environment and raw output are never exposed to the agent;
 it sees joined telemetry.
 
-[Example 5](../examples.md#5-agents) has the queries from this guide in a form
-you can run yourself before handing them to an agent.
-
 ## The investigation loop
 
 The tools use progressive disclosure, so an agent searches compact evidence
@@ -102,6 +99,52 @@ slow span and its path to investigate. See
 Treat this as a guard rail rather than a benchmark. It is one run on one
 machine, so set the budget well clear of normal variation and expect an
 occasional false alarm.
+
+## Try it yourself
+
+These are the command-line forms of what an agent does through `start_run`, so
+you can run each check yourself before handing it to an agent. They use the
+example [`shop` app](traces.md#the-shop-app).
+Build its test binary once so the queries run without recompiling:
+
+```sh
+cd demo/workloads/shop
+go test -c -o shop.test .
+```
+
+Focus on the area of change: did anything in `payments` fail?
+
+```sh
+praytel -q 'span{ resource.service.name = "payments" && span:status = error } | matches' -- ./shop.test
+```
+
+One trace comes back, with two span IDs: `Gateway.Charge` and
+`Gateway.Bank.Authorize`. Praytel exits 1 because the suite did; the exit code
+is the child's, not a verdict on the query.
+
+Check the work is real: did placing an order actually reach the repository?
+
+```sh
+praytel -q 'span{ span:name = "Orders.Place" } > span{ span:name = "Orders.Repo.Save" && span:kind = client } | matches' -- ./shop.test
+```
+
+Two traces match, not three. The gift-card order never saved, which is correct:
+its payment was refused first.
+
+The same check works on a tool you did not write. This matches only if a
+Dockerfile lint really reached BuildKit:
+
+```sh
+praytel -q 'span{ span:name = "build" } >> span{ span:name = "moby.buildkit.v1.Control/Solve" } | matches' \
+  -- docker buildx build --call=check .
+```
+
+A performance budget is the same shape. This prints nothing, so the budget
+held:
+
+```sh
+praytel -q 'span{ span:name = "Orders.Create" && span:duration > 2s }' -- shop -pace 50ms
+```
 
 ## Put the playbook in a skill
 

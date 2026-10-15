@@ -128,5 +128,4 @@ praytel --grpc-port 14317 --http-port 14318 -- ./server
 
 ## See also
 
-[Typed queries](../guides/queries.md),
-[Architecture](../guides/architecture.md)
+[Typed queries](../guides/queries.md)
