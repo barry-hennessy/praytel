@@ -38,6 +38,8 @@ type Ports struct {
 }
 
 // Receiver is an in-process OTLP listener (gRPC + HTTP traces and logs).
+// Both ports accept both protocols; the port names only say which one
+// [Receiver.ChildEnv] advertises there.
 // Wire payloads are cast to [domain.Span] / [domain.LogLine] at this edge.
 // There is no metrics surface.
 type Receiver struct {
@@ -45,6 +47,7 @@ type Receiver struct {
 
 	grpcLis net.Listener
 	httpLis net.Listener
+	demux   *demux
 	grpc    *grpc.Server
 	http    *http.Server
 
@@ -120,6 +123,7 @@ func Listen(lt observability.LoggingTracer, ports Ports, spans chan<- domain.Spa
 		lt:       lt,
 		grpcLis:  grpcLis,
 		httpLis:  httpLis,
+		demux:    newDemux(lt, grpcLis, httpLis),
 		grpc:     gs,
 		http:     hs,
 		grpcPort: grpcPort,
@@ -177,8 +181,13 @@ func (r *Receiver) Serve(ctx context.Context) error {
 
 	gg, ctx := errgroup.WithContext(ctx)
 
+	for _, lis := range []net.Listener{r.grpcLis, r.httpLis} {
+		gg.Go(func() error { return r.demux.accept(ctx, lis) })
+	}
+	gg.Go(bones.CloseWhenDone(ctx, r.demux.Close))
+
 	gg.Go(func() error {
-		err := r.grpc.Serve(r.grpcLis)
+		err := r.grpc.Serve(r.demux.grpc)
 		if err == nil || errors.Is(err, grpc.ErrServerStopped) {
 			return nil
 		}
@@ -191,7 +200,7 @@ func (r *Receiver) Serve(ctx context.Context) error {
 	}))
 
 	gg.Go(func() error {
-		err := r.http.Serve(r.httpLis)
+		err := r.http.Serve(r.demux.http)
 		if err == nil || errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}

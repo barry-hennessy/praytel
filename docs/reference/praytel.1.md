@@ -54,8 +54,8 @@ The subcommands are documented separately:
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--grpc-port PORT` | `4317` | OTLP gRPC listen port. |
-| `--http-port PORT` | `4318` | OTLP HTTP listen port. |
+| `--grpc-port PORT` | `4317` | OTLP listen port advertised for gRPC. Accepts HTTP too. |
+| `--http-port PORT` | `4318` | OTLP listen port advertised for HTTP. Accepts gRPC too. |
 | `--drain-idle DURATION` | `250ms` | Idle time with no OTLP after child exit before drain completes. |
 | `--drain-timeout DURATION` | `2s` | Hard cap on drain after child exit. |
 
@@ -83,11 +83,15 @@ Praytel sets these variables for the child so its OpenTelemetry SDK exports to
 the in-process receiver. Any `OTEL_EXPORTER_OTLP_*` variables inherited from
 the caller's environment are replaced.
 
+Both ports accept OTLP over gRPC and over HTTP/protobuf, so an exporter that
+ignores the protocol variables and reads only an endpoint still reaches
+praytel, whichever transport it speaks.
+
 | Variable | Value |
 |---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | The gRPC receiver. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The gRPC port. |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | `grpc` |
-| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | The HTTP receiver's `/v1/logs` path. |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | The HTTP port's `/v1/logs` path. |
 | `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` | `http/protobuf` |
 
 ## TUI keys

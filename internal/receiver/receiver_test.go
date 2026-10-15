@@ -584,3 +584,127 @@ func recvLog(t *testing.T, ctx context.Context, logs <-chan domain.LogLine) doma
 		return domain.LogLine{}
 	}
 }
+
+func TestEitherPortAcceptsEitherProtocol(t *testing.T) {
+	sweet.Run(t, "gRPC and HTTP traces and logs land on both ports", func(t *testing.T) recvDeps {
+		t.Helper()
+
+		return startRecv(t, make(chan domain.Span, 4), make(chan domain.LogLine, 4))
+	}, func(t *testing.T, d recvDeps) {
+		traces := &colltrace.ExportTraceServiceRequest{
+			ResourceSpans: []*tracev1.ResourceSpans{{
+				ScopeSpans: []*tracev1.ScopeSpans{{
+					Spans: []*tracev1.Span{{
+						TraceId: bytes.Repeat([]byte{0x66}, 16),
+						SpanId:  bytes.Repeat([]byte{0x77}, 8),
+						Name:    "either-port",
+					}},
+				}},
+			}},
+		}
+		logs := &colllog.ExportLogsServiceRequest{
+			ResourceLogs: []*logsv1.ResourceLogs{{
+				ScopeLogs: []*logsv1.ScopeLogs{{
+					LogRecords: []*logsv1.LogRecord{{
+						Body: &commonv1.AnyValue{
+							Value: &commonv1.AnyValue_StringValue{StringValue: "either-port"},
+						},
+					}},
+				}},
+			}},
+		}
+
+		for _, port := range []int{d.r.GRPCPort(), d.r.HTTPPort()} {
+			addr := "127.0.0.1:" + strconv.Itoa(port)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+
+			conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			if err != nil {
+				t.Fatalf("dial %s: %v", addr, err)
+			}
+			defer conn.Close()
+
+			if _, err := colltrace.NewTraceServiceClient(conn).Export(ctx, traces); err != nil {
+				t.Fatalf("grpc traces to %s: %v", addr, err)
+			}
+			recvSpan(t, ctx, d.spans)
+
+			if _, err := colllog.NewLogsServiceClient(conn).Export(ctx, logs); err != nil {
+				t.Fatalf("grpc logs to %s: %v", addr, err)
+			}
+			recvLog(t, ctx, d.logs)
+
+			postProtobuf(t, "http://"+addr+"/v1/traces", traces)
+			recvSpan(t, ctx, d.spans)
+
+			postProtobuf(t, "http://"+addr+"/v1/logs", logs)
+			recvLog(t, ctx, d.logs)
+		}
+	})
+}
+
+func TestSilentConnectionDoesNotBlockOthers(t *testing.T) {
+	sweet.Run(t, "a client that sends nothing does not stall routing", func(t *testing.T) recvDeps {
+		t.Helper()
+
+		return startRecv(t, make(chan domain.Span, 1), nil)
+	}, func(t *testing.T, d recvDeps) {
+		addr := "127.0.0.1:" + strconv.Itoa(d.r.GRPCPort())
+
+		idle, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial idle: %v", err)
+		}
+		defer idle.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		postProtobuf(t, "http://"+addr+"/v1/traces", &colltrace.ExportTraceServiceRequest{
+			ResourceSpans: []*tracev1.ResourceSpans{{
+				ScopeSpans: []*tracev1.ScopeSpans{{
+					Spans: []*tracev1.Span{{
+						TraceId: bytes.Repeat([]byte{0x88}, 16),
+						SpanId:  bytes.Repeat([]byte{0x99}, 8),
+						Name:    "past-idle",
+					}},
+				}},
+			}},
+		})
+		recvSpan(t, ctx, d.spans)
+	})
+}
+
+func postProtobuf(t *testing.T, url string, msg proto.Message) {
+	t.Helper()
+
+	body, err := proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	res, err := http.Post(url, "application/x-protobuf", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post %s: %v", url, err)
+	}
+	defer res.Body.Close()
+	_, _ = io.Copy(io.Discard, res.Body)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("post %s: status=%d", url, res.StatusCode)
+	}
+}
+
+func recvSpan(t *testing.T, ctx context.Context, spans <-chan domain.Span) domain.Span {
+	t.Helper()
+
+	select {
+	case sp := <-spans:
+		return sp
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for span")
+		return domain.Span{}
+	}
+}

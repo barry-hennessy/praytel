@@ -67,8 +67,8 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		fmt.Fprintln(errOut, ErrUsage.Error())
 	}
 
-	grpcPort := fs.Int("grpc-port", receiver.DefaultGRPCPort, "OTLP gRPC listen port")
-	httpPort := fs.Int("http-port", receiver.DefaultHTTPPort, "OTLP HTTP listen port")
+	grpcPort := fs.Int("grpc-port", receiver.DefaultGRPCPort, "OTLP listen port advertised for gRPC (accepts HTTP too)")
+	httpPort := fs.Int("http-port", receiver.DefaultHTTPPort, "OTLP listen port advertised for HTTP (accepts gRPC too)")
 	drainIdle := fs.Duration("drain-idle", 250*time.Millisecond, "idle time with no OTLP after child exit before drain completes")
 	drainTimeout := fs.Duration("drain-timeout", 2*time.Second, "hard cap on drain after child exit")
 	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
