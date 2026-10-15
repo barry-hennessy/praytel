@@ -19,8 +19,88 @@ praytel -- ./server           # append-only stream
 praytel --tui -- ./server     # logs nested in the span tree
 ```
 
-[Example 1](../examples.md#logs) shows the same app's logs raw and then
-joined.
+## Try it yourself
+
+With the example `shop` app [installed](traces.md#the-shop-app), first see what it
+prints on its own, then the same lines joined:
+
+```sh
+shop -pace 50ms | head -4
+praytel -- shop -pace 50ms
+```
+
+In the joined stream each line gains the name of the span that emitted it:
+
+```
+stdout Gateway.Bank.Authorize 4a2aac9c... 18e4b9ff... {"level":"ERROR","msg":"authorization refused", ...}
+```
+
+`shop: taking orders` carries no IDs, so it is reported as an orphan. Under
+`praytel --tui -- shop`, press Tab and type `refused` to search log bodies.
+
+To see the same join with a logger you might use yourself, take
+OpenTelemetry's [getting-started dice app for Node.js](https://opentelemetry.io/docs/languages/js/getting-started/nodejs/)
+and log with [pino](https://getpino.io). In an empty directory:
+
+```sh
+npm init -y
+npm install express pino @opentelemetry/api @opentelemetry/auto-instrumentations-node
+```
+
+Save this as `app.js`:
+
+```js
+const express = require('express');
+const logger = require('pino')();
+
+const app = express();
+
+app.get('/rolldice', (req, res) => {
+  const result = Math.floor(Math.random() * 6) + 1;
+  logger.info({ player: req.query.player, result }, 'rolling the dice');
+  res.send(String(result));
+});
+
+app.listen(8080, () => logger.info('listening on http://localhost:8080'));
+```
+
+Nothing in the app mentions tracing. Run it under OpenTelemetry's zero-code
+instrumentation:
+
+```sh
+OTEL_SERVICE_NAME=dice OTEL_LOGS_EXPORTER=none \
+  praytel --tui -- node --require @opentelemetry/auto-instrumentations-node/register app.js
+```
+
+Then roll a few times from another terminal:
+
+```sh
+curl 'localhost:8080/rolldice?player=alice'
+```
+
+Each request is a trace, and its `rolling the dice` line sits under the
+`request handler - /rolldice` span. The pino instrumentation adds `trace_id`
+and `span_id` to every line pino writes to stdout, which is all praytel needs.
+`OTEL_LOGS_EXPORTER=none` stops the same instrumentation also sending each
+line over OTLP; without it every line would arrive twice. The
+`MetadataLookupWarning` on stderr is the SDK looking for a cloud host and is
+harmless. Ctrl-C stops the app; spans from the last few seconds before it may
+not have been sent yet.
+
+Dagger and Docker buildx, from
+[View traces from a running app](traces.md#a-tool-you-already-have), show both
+kinds of line:
+
+```sh
+praytel --tui -- dagger functions
+praytel --tui -- docker buildx build --call=check .
+```
+
+Dagger exports its own output as OTLP logs that carry trace context, so a line
+such as `INF connected` sits under the `connect` span that produced it. Buildx
+writes its progress (`#3 [internal] load .dockerignore`) to stderr with no IDs,
+so those lines land in the orphan group described below, even though buildx
+exports spans.
 
 ## How a line gets joined
 

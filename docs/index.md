@@ -18,31 +18,16 @@ praytel --tui -- ./server         # live trace/span tree
 
 ## Guides
 
-Read these in order. Each builds on the one before. The first two shipped
-together; each later release adds one.
+Both guides have commands you can run against a small example app, or against
+tools you may already have, so you can see whether praytel is useful to you
+before instrumenting any code of your own.
 
 1. [View traces from a running app](guides/traces.md): understand the apps you
    use, and have good traces ready for when something breaks.
 2. [View logs correlated to traces](guides/logs.md): each log line under the
    span that emitted it.
 
-Each guide has a matching entry in [Examples](examples.md): one small
-instrumented app and a command to run against it, so you can try a guide
-before instrumenting anything of your own.
-
 ## Reference
 
 - [praytel(1)](reference/praytel.1.md): the wrapper command, its flags, TUI keys
   and exit status.
-
-## Writing these docs
-
-Everything under `docs/` is plain CommonMark with relative `.md` links, so it
-reads in a forge, an editor or `less`. Each file starts with three frontmatter
-fields: `title`, `summary` (one sentence) and `weight` (sort order within its
-directory). Prose goes in `guides/`; `reference/` holds one file per command or
-configuration surface, named after its manual page.
-
-The recordings in the guides live in `docs/assets/` and are generated from
-scripts by `make docs`; see [demo/README.md](../demo/README.md). They are refreshed when a
-release is published.
