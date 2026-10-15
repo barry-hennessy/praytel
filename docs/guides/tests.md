@@ -24,8 +24,26 @@ variables are inherited by the test binaries the runner starts.
 Praytel exits with the runner's exit code, so it is safe in scripts and CI: a
 failing suite still fails.
 
-[Example 3](../examples.md#3-tests) is a three-test suite with one deliberate
-failure to trace.
+## Try it yourself
+
+The example [`shop` app](traces.md#the-shop-app) has three tests;
+`TestGiftCardOrderIsConfirmed` fails on purpose.
+
+```sh
+cd demo/workloads/shop
+praytel --tui -- go test -count=1 .
+```
+
+Each test is its own trace, named after the test. Type `TestGift`, then follow
+the `×` marks: the test, `Orders.Create`, `Orders.Place`, `Gateway.Charge`,
+and last `Gateway.Bank.Authorize`, with `authorization refused` logged beneath
+it. That span is where the test failed. Praytel exits 1, as `go test` did.
+
+To cut the run down to the payment path:
+
+```sh
+praytel --tui --focus 'Gateway*' -- go test -count=1 .
+```
 
 ## What the tests need
 
