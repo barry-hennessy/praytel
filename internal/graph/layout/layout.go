@@ -19,7 +19,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
+	"github.com/barry-hennessy/praytel/internal/graph"
 )
 
 // Options are the cell dimensions placement has to respect.

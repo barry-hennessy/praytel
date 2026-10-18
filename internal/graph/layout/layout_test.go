@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
-	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph/layout"
+	"github.com/barry-hennessy/praytel/internal/graph"
+	"github.com/barry-hennessy/praytel/internal/graph/layout"
 )
 
 var opts = layout.Options{NodeHeight: 4, RowGap: 1}

@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
+	"github.com/barry-hennessy/praytel/internal/graph"
 )
 
 func TestHierarchyPathNestsNamesUnderSharedAndObservedPrefixes(t *testing.T) {

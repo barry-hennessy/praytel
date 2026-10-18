@@ -311,7 +311,9 @@ func TestIdleDrainJoinsLateSpan(t *testing.T) {
 			t.Fatalf("assigned %#v", as)
 		}
 
-		mustDrainComplete(t, d.out)
+		if dc := mustDrainComplete(t, d.out); dc.TimedOut {
+			t.Fatal("an idle drain reported timing out")
+		}
 	})
 }
 
@@ -349,14 +351,21 @@ func TestHardCapReturnsWhileSpansArrive(t *testing.T) {
 		deadline := time.NewTimer(500 * time.Millisecond)
 		defer deadline.Stop()
 
+		timedOut := false
 		for {
 			select {
-			case _, ok := <-d.out:
+			case ev, ok := <-d.out:
 				if !ok {
 					if time.Since(start) > 400*time.Millisecond {
 						t.Fatalf("drain took %s", time.Since(start))
 					}
+					if !timedOut {
+						t.Fatal("a drain ended by its hard cap did not report timing out")
+					}
 					return
+				}
+				if dc, ok := ev.(domain.DrainComplete); ok {
+					timedOut = dc.TimedOut
 				}
 			case <-deadline.C:
 				t.Fatal("hard cap did not close events")
@@ -470,16 +479,18 @@ func mustUpserted(t *testing.T, out <-chan domain.Event) domain.SpanUpserted {
 	return up
 }
 
-func mustDrainComplete(t *testing.T, out <-chan domain.Event) {
+func mustDrainComplete(t *testing.T, out <-chan domain.Event) domain.DrainComplete {
 	t.Helper()
 
 	ev, ok := recvEvent(t, out)
 	if !ok {
 		t.Fatal("channel closed")
 	}
-	if _, ok := ev.(domain.DrainComplete); !ok {
+	dc, ok := ev.(domain.DrainComplete)
+	if !ok {
 		t.Fatalf("got %T", ev)
 	}
+	return dc
 }
 
 func correlatorWithLimits(t *testing.T, limits correlator.Limits) corrDeps {

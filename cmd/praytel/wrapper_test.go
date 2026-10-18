@@ -334,6 +334,38 @@ func TestGRPCExportingChildJoinsJSONLog(t *testing.T) {
 	})
 }
 
+func TestMapWritesOneFilePerEntryPoint(t *testing.T) {
+	sweet.Run(t, "--map writes the run's map, and nothing for a failing run", wrapFactory, func(t *testing.T, d wrapDeps) {
+		failed := filepath.Join(t.TempDir(), "arch")
+		res := runPraytel(t, d.dir, "--map", failed, "--", childBin, "-exit", "3", "-export-grpc-span", "-span-name", "child-work")
+		if res.exit != 3 || !strings.Contains(res.stderr, "map not written") {
+			t.Fatalf("failing child: exit=%d stderr=%q", res.exit, res.stderr)
+		}
+		if _, err := os.Stat(failed); !os.IsNotExist(err) {
+			t.Fatalf("a failing run wrote a map: %v", err)
+		}
+
+		arch := filepath.Join(t.TempDir(), "arch")
+		res = runPraytel(t, d.dir, "--map", arch, "--", childBin, "-export-grpc-span", "-span-name", "child-work")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+		}
+		files, _ := filepath.Glob(filepath.Join(arch, "*", "child-work.map"))
+		if len(files) != 1 {
+			t.Fatalf("map files %v, stderr=%q", files, res.stderr)
+		}
+		body, err := os.ReadFile(files[0])
+		if err != nil || !strings.HasPrefix(string(body), "praytel-map v1\nentry ") || !strings.Contains(string(body), " child-work\n") {
+			t.Fatalf("map file %q: %v", body, err)
+		}
+		if !strings.Contains(res.stderr, "created") {
+			t.Fatalf("stderr does not report the new file: %q", res.stderr)
+		}
+
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
 func TestGRPCExportingChildJoinsLogfmtLog(t *testing.T) {
 	sweet.Run(t, "gRPC span hydrate appears on the stream with the logfmt log", wrapFactory, func(t *testing.T, d wrapDeps) {
 		res := runPraytel(t, d.dir, "--", childBin, "-export-grpc-span-logfmt", "-span-name", "child-work")

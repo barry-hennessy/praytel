@@ -1,9 +1,11 @@
-// Package graph builds and lays out the TUI's component interconnection
-// graph: one node per distinct nested component that spans execute as, one
-// aggregated edge per pair of components connected by an observed
-// parent/child span call. It knows nothing about Model, live filtering, or
-// rendering styles -- callers hand it already-visible span facts and get
-// back a graph plus layering/layout primitives.
+// Package graph builds and lays out the component interconnection graph
+// shared by the TUI's graph view and architecture maps: one node per
+// distinct nested component that spans execute as, one aggregated edge per
+// pair of components connected by an observed parent/child span call. It
+// knows nothing about Model, live filtering, or rendering styles -- callers
+// hand it already-visible span facts (or build nodes and edges directly)
+// and get back a graph plus layering/layout primitives. Subpackage layout
+// places it on a grid and draw turns that into a picture.
 package graph
 
 import (

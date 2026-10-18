@@ -35,6 +35,7 @@ type Config struct {
 	Emit         string
 	SettleAfter  time.Duration
 	ResultLimit  int
+	MapDir       string
 }
 
 type stringList []string
@@ -85,6 +86,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	var exclude stringList
 	fs.Var(&focus, "focus", "admit the span path matching this glob (repeatable, union)")
 	fs.Var(&exclude, "exclude", "drop matching names after focus expansion (repeatable)")
+	mapDir := fs.String("map", "", "after the run, write one architecture map file per entry point under this directory")
 
 	if err := fs.Parse(flags); err != nil {
 		return Config{}, err
@@ -114,6 +116,9 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	if (*queryText != "" || *queryFile != "") && (len(focus) > 0 || len(exclude) > 0) {
 		return Config{}, errors.New("--query cannot be combined with --focus or --exclude")
 	}
+	if *mapDir != "" && (*queryText != "" || *queryFile != "" || len(focus) > 0 || len(exclude) > 0) {
+		return Config{}, errors.New("--map cannot be combined with --query, --query-file, --focus or --exclude")
+	}
 	if *resultLimit <= 0 {
 		return Config{}, errors.New("--limit must be positive")
 	}
@@ -138,6 +143,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		Emit:         *emit,
 		SettleAfter:  max(time.Duration(0), *settleAfter),
 		ResultLimit:  *resultLimit,
+		MapDir:       *mapDir,
 	}, nil
 }
 

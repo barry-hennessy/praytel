@@ -46,6 +46,7 @@ type Correlator struct {
 	drain      Drain
 	limits     Limits
 	dropIngest func()
+	timedOut   bool // the drain was cut short; see domain.DrainComplete
 
 	forest   forest
 	logSeq   uint64
@@ -137,6 +138,7 @@ func (c *Correlator) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			c.timedOut = true
 			c.finishDrain(ctx, logs, spans)
 
 			return nil
@@ -206,9 +208,11 @@ func (c *Correlator) waitIdleOrCap(ctx context.Context, logs <-chan domain.LogLi
 	for {
 		select {
 		case <-ctx.Done():
+			c.timedOut = true
 			c.finishDrain(ctx, logs, spans)
 			return
 		case <-hardTimer.C:
+			c.timedOut = true
 			c.finishDrain(ctx, logs, spans)
 			return
 		case <-idleTimer.C:
@@ -249,7 +253,7 @@ func (c *Correlator) finishDrain(ctx context.Context, logs <-chan domain.LogLine
 	}
 	c.drainInbound(ctx, logs, spans)
 	c.resolvePending(ctx)
-	c.emit(ctx, domain.DrainComplete{})
+	c.emit(ctx, domain.DrainComplete{TimedOut: c.timedOut})
 }
 
 func (c *Correlator) drainInbound(ctx context.Context, logs <-chan domain.LogLine, spans <-chan domain.Span) {

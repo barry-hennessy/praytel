@@ -73,6 +73,9 @@ func runProcess(ctx context.Context, lt observability.LoggingTracer, mapErr bone
 		}
 		return 0
 	}
+	if len(argv) > 0 && argv[0] == "map" {
+		return runMapCommand(argv[1:], stdout, stderr)
+	}
 	if len(argv) > 0 && argv[0] == "query" {
 		if err := runQueryCommand(argv[1:], stdout); err != nil {
 			return mapErr(err)

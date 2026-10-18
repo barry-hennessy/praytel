@@ -7,8 +7,9 @@ import (
 
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	"github.com/barry-hennessy/praytel/internal/graph"
+	"github.com/barry-hennessy/praytel/internal/graph/draw"
 	"github.com/barry-hennessy/praytel/internal/query"
-	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -188,9 +189,9 @@ func TestGraphDrawsAnArrowheadForEveryCall(t *testing.T) {
 	// Calls leaving one component share a trunk, but each must still reach
 	// an arrowhead of its own.
 	arrows := 0
-	for _, row := range cv.cells {
+	for _, row := range cv.Cells() {
 		for _, cell := range row {
-			switch cell.r {
+			switch cell.Rune {
 			case '▶', '◀':
 				arrows++
 			}
@@ -211,13 +212,13 @@ func TestGraphDrawsAComponentsBorderAndOutgoingCallsInItsColor(t *testing.T) {
 	wantArrows := map[cellStyle]int{first: 3, second: 1}
 	wantBoxes := map[cellStyle]int{first: 1, second: 1, styleNeutral: 2}
 	gotArrows, gotBoxes := map[cellStyle]int{}, map[cellStyle]int{}
-	for _, row := range cv.cells {
+	for _, row := range cv.Cells() {
 		for _, cell := range row {
 			switch {
-			case cell.r == '▶':
-				gotArrows[cell.style]++
-			case cell.r == '╭' && cell.lineDirs == 0: // a box's corner, not an edge's bend
-				gotBoxes[cell.style]++
+			case cell.Rune == '▶':
+				gotArrows[cell.Style]++
+			case cell.Rune == '╭' && !cell.Line: // a box's corner, not an edge's bend
+				gotBoxes[cell.Style]++
 			}
 		}
 	}
@@ -234,14 +235,6 @@ func TestGraphDrawsAComponentsBorderAndOutgoingCallsInItsColor(t *testing.T) {
 	}
 }
 
-func plainLines(cv *canvas) string {
-	var b strings.Builder
-	for _, row := range cv.cells {
-		for _, cell := range row {
-			r, _ := cell.glyph()
-			b.WriteRune(r)
-		}
-		b.WriteByte('\n')
-	}
-	return b.String()
+func plainLines(cv *draw.Canvas) string {
+	return strings.Join(cv.Lines(nil), "\n")
 }

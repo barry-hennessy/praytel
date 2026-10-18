@@ -57,3 +57,23 @@ func TestParseQueryShorthand(t *testing.T) {
 		t.Fatalf("config=%+v err=%v", cfg, err)
 	}
 }
+
+func TestParseMap(t *testing.T) {
+	cfg, err := args.Parse([]string{"--map", "arch", "--tui", "--", "true"}, io.Discard)
+	if err != nil || cfg.MapDir != "arch" || !cfg.TUI {
+		t.Fatalf("config=%+v err=%v", cfg, err)
+	}
+}
+
+func TestParseMapRefusesSelection(t *testing.T) {
+	for _, sel := range [][]string{
+		{"--query", `span{ span:status = error }`},
+		{"--focus", "api*"},
+		{"--exclude", "health*"},
+	} {
+		argv := append([]string{"--map", "arch"}, sel...)
+		if _, err := args.Parse(append(argv, "--", "true"), io.Discard); err == nil {
+			t.Fatalf("%v: a map of a filtered run was accepted", sel)
+		}
+	}
+}

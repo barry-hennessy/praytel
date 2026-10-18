@@ -72,7 +72,12 @@ type (
 		Synthetic bool
 	}
 	// DrainComplete announces that ingest is closed and no more events follow.
-	DrainComplete struct{}
+	// TimedOut means the drain was cut short (by its hard cap, or by
+	// cancellation) rather than ending after an idle period or with every
+	// inbound source closed, so late telemetry may have been lost.
+	DrainComplete struct {
+		TimedOut bool
+	}
 	// ForestEvicted announces that a trace was removed under memory pressure.
 	ForestEvicted struct {
 		TraceID string

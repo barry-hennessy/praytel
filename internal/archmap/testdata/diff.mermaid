@@ -1,0 +1,22 @@
+flowchart LR
+  %% ~ entry tests TestVisa
+  %% - node checkout Orders.Repo.Save
+  %% + node payments Fraud.Score
+  %% - call checkout Orders.Place -> checkout Orders.Repo.Save
+  %% + call checkout Orders.Place -> payments Fraud.Score
+  n0["~ checkout.Orders.Place<br/><i>calls changed</i>"]:::changed
+  n1["- checkout.Orders.Repo.Save<br/><i>removed</i>"]:::removed
+  n2["+ payments.Fraud.Score<br/><i>added</i>"]:::added
+  n3["payments.Gateway.Charge"]:::context
+  n4["web.Orders.Create"]:::context
+  n0 -.-> n1
+  n0 ==> n2
+  n0 --> n3
+  n4 --> n0
+  linkStyle 0 stroke:#cf222e
+  linkStyle 1 stroke:#2da44e,stroke-width:3px
+  classDef added fill:#dafbe1,stroke:#2da44e,stroke-width:3px
+  classDef removed fill:#ffebe9,stroke:#cf222e,stroke-dasharray:4 3
+  classDef changed fill:#fff8c5,stroke:#bf8700
+  classDef context fill:#f6f8fa,stroke:#8c959f,color:#57606a
+  %% 1 unchanged component not shown

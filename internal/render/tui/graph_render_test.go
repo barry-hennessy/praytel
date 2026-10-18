@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
+	"github.com/barry-hennessy/praytel/internal/graph"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -102,34 +102,6 @@ func TestGraphSnapshots(t *testing.T) {
 	}
 }
 
-func TestGraphCellGlyphTellsACrossingFromAJunction(t *testing.T) {
-	all := dirNorth | dirSouth | dirEast | dirWest
-
-	// Two lines passing straight through each other: dimmed, so neither
-	// reads as turning into the other.
-	if r, style := (gridCell{lineDirs: all, style: stylePalette}).glyph(); r != '┼' || style != styleCrossing {
-		t.Fatalf("crossing drew %q in style %d, want a dim cross", r, style)
-	}
-	// The same four directions where some line turns: a real junction, in
-	// the edge's own style.
-	if r, style := (gridCell{lineDirs: all, style: stylePalette, bend: true}).glyph(); r != '┼' || style != stylePalette {
-		t.Fatalf("junction drew %q in style %d, want a cross in the edge's style", r, style)
-	}
-}
-
-func TestGraphLineStaysDashedOnlyWhereEveryLineThroughItClosesACycle(t *testing.T) {
-	c := newCanvas(8, 3)
-	c.trace([]cellPos{{1, 0}, {1, 7}}, stylePalette, true)
-	c.trace([]cellPos{{1, 4}, {1, 7}}, stylePalette+1, false)
-
-	if r, _ := c.cells[1][2].glyph(); r != '╌' {
-		t.Fatalf("a cycle-closing line on its own drew %q, want it dashed", r)
-	}
-	if r, _ := c.cells[1][5].glyph(); r != '─' {
-		t.Fatalf("a stretch shared with a forward call drew %q, want it solid", r)
-	}
-}
-
 func TestGraphEdgesIntoOneNodeEachEndInTheirOwnArrowhead(t *testing.T) {
 	got := renderPlain(graphOf("web>db*2", "worker>db*3", "cron>db*4"))
 
@@ -140,25 +112,6 @@ func TestGraphEdgesIntoOneNodeEachEndInTheirOwnArrowhead(t *testing.T) {
 		if !strings.Contains(got, count) {
 			t.Fatalf("no arrowhead carrying %q:\n%s", count, got)
 		}
-	}
-}
-
-func TestGraphCountGoesBesideAVerticalWhenTheLineHasNoLevelStretchOfItsOwn(t *testing.T) {
-	c := newCanvas(12, 7)
-	line := []cellPos{{1, 0}, {1, 3}, {5, 3}, {5, 9}}
-	c.trace(line, stylePalette, false)
-	// A second line along both of the first one's level stretches, so
-	// neither is the first line's alone.
-	c.trace([]cellPos{{1, 0}, {1, 9}}, stylePalette, false)
-	c.trace([]cellPos{{5, 0}, {5, 9}}, stylePalette, false)
-
-	if c.labelLine(line, "×3", true) {
-		t.Fatalf("label was placed on a stretch another line shares")
-	}
-	c.labelBeside(line, "×3")
-
-	if got := string([]rune{c.cells[3][4].r, c.cells[3][5].r}); got != "×3" {
-		t.Fatalf("cells right of the vertical's middle hold %q, want the count", got)
 	}
 }
 

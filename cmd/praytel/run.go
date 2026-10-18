@@ -15,6 +15,7 @@ import (
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/cmd/praytel/internal/args"
+	"github.com/barry-hennessy/praytel/internal/archmap"
 	"github.com/barry-hennessy/praytel/internal/capture"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -74,6 +75,24 @@ func run(
 		return 1, fmt.Errorf("bind otlp: %w", err)
 	}
 	events, corr, rec := pipe.Events, pipe.Corr, pipe.Rec
+
+	// --map is not a renderer: it sees the same events as whichever one runs.
+	var mapRec *archmap.Recorder
+	mapDone := make(chan struct{})
+	if cfg.MapDir != "" {
+		mapRec = archmap.NewRecorder()
+		toView, toMap := make(chan domain.Event, 64), make(chan domain.Event, 64)
+		go tee(events, toView, toMap)
+		go func() {
+			defer close(mapDone)
+			for ev := range toMap {
+				mapRec.Observe(ev)
+			}
+		}()
+		events = toView
+	} else {
+		close(mapDone)
+	}
 
 	var view renderer
 	var queryView *queryrender.Renderer
@@ -213,7 +232,57 @@ func run(
 		log.Error("wait child", "err", err)
 	}
 
+	if mapRec != nil {
+		<-mapDone
+		return writeMap(cfg.MapDir, mapRec, code, stderr)
+	}
+
 	return code, nil
+}
+
+// tee copies every event from in to both outs, closing them when in closes.
+// Both readers drain to the end, so blocking on either is only back-pressure.
+func tee(in <-chan domain.Event, a, b chan<- domain.Event) {
+	defer close(a)
+	defer close(b)
+	for ev := range in {
+		a <- ev
+		b <- ev
+	}
+}
+
+// writeMap writes the run's architecture maps, unless the run can't be
+// trusted to have shown the whole architecture, and reports what changed
+// on stderr. The exit code stays the child's unless the child succeeded
+// and the map could not be written.
+func writeMap(dir string, rec *archmap.Recorder, code int, stderr io.Writer) (int, error) {
+	if code != 0 {
+		fmt.Fprintf(stderr, "praytel: map not written: the command exited with status %d, and a failing run takes paths that are not the architecture\n", code)
+		return code, nil
+	}
+	frags, err := rec.Fragments()
+	if err != nil {
+		fmt.Fprintf(stderr, "praytel: %v\n", err)
+		return 1, nil
+	}
+	written, err := archmap.Write(dir, frags)
+	for _, w := range written {
+		if w.Created {
+			fmt.Fprintf(stderr, "map: %s created: %d components, %d calls\n", w.Path, len(w.Map.Nodes), len(w.Map.Calls))
+			continue
+		}
+		fmt.Fprintf(stderr, "map: %s changed\n", w.Path)
+		for _, line := range w.Diff.Lines() {
+			fmt.Fprintln(stderr, line)
+		}
+	}
+	if err != nil {
+		return 1, fmt.Errorf("write map: %w", err)
+	}
+	if len(written) == 0 {
+		fmt.Fprintf(stderr, "map: %d entry points, no changes\n", len(frags))
+	}
+	return 0, nil
 }
 
 func startChild(

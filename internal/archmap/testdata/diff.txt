@@ -1,0 +1,22 @@
+~ entry tests TestVisa
+- node checkout Orders.Repo.Save
++ node payments Fraud.Score
+- call checkout Orders.Place -> checkout Orders.Repo.Save
++ call checkout Orders.Place -> payments Fraud.Score
+
+                                                            ┌┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┐
+                                                            ┊ - checkout.Orders.Repo.Save ┊
+                                                        ╭┈┈▶┊ removed                     ┊
+                                                        ┊   └┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┘
+                                                        ┊
+ ╭───────────────────╮     ╭─────────────────────────╮  ┊   ╔═════════════════════════════╗
+ │ web.Orders.Create │     │ ~ checkout.Orders.Place │  ┊   ║ + payments.Fraud.Score      ║
+ │                   │────▶│ calls changed           │──┼══▶║ added                       ║
+ ╰───────────────────╯     ╰─────────────────────────╯  │   ╚═════════════════════════════╝
+                                                        │
+                                                        │   ╭─────────────────────────────╮
+                                                        │   │ payments.Gateway.Charge     │
+                                                        ╰──▶│                             │
+                                                            ╰─────────────────────────────╯
+
+1 unchanged component not shown.
