@@ -58,6 +58,19 @@ For a long-running process, `--emit settled --format ndjson` emits a closed trac
 after it has been quiet for `--settle-after`. “Settled” is provisional: late OTLP
 can produce a newer revision. Only a drained `final` result is terminal.
 
+## Architecture maps
+
+Stamp the component graph of your tests into reviewable files, and see in
+every pull request how the architecture changed:
+
+```sh
+praytel --map arch -- go test -count=1 ./...   # one file per entry point
+praytel map arch                               # draw it
+praytel map old/arch arch                      # draw what changed
+```
+
+See [Keep an architecture map](docs/guides/maps.md).
+
 ## Agent integration
 
 `praytel mcp` runs a stdio MCP server rooted at its working directory. It exposes

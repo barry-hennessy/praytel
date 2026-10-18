@@ -26,6 +26,8 @@ internal/projection  event-derived query read model + trace settlement
 internal/filter      legacy --focus/--exclude live admission
 internal/session     bounded in-process runs for agent integrations
 internal/agentapi    transport-neutral progressive investigation tools
+internal/archmap     architecture maps: record, canonical file format, diff
+internal/graph       component graph, layered layout and box drawing
 internal/render/stream
 internal/render/query
 internal/render/tui  live tree with typed-query selection
@@ -71,6 +73,11 @@ Shared interface: `Run(ctx context.Context) error`. Constructor takes event sour
 `DrainComplete` / event-channel close means **data done**. Stream returns after that. TUI stays until quit or process `ctx`. Stream is **append-only**, prefers unbuffered (`LogReceived`). Tree/summary may hold until paint. Pipeline channels **block**; they do not drop.
 
 Visual design (colours, TUI chrome, how orphans look) is not specified here.
+
+`--map` is not a renderer: it tees the same event stream into a recorder
+that writes [architecture maps](maps.md) after drain, alongside whichever
+renderer is running. The component graph and its drawing are shared by the
+TUI's graph view and `praytel map`.
 
 ## Pressure and errors
 

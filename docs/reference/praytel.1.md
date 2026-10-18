@@ -11,6 +11,7 @@ weight: 10
 ```
 praytel [flags] -- command [args ...]
 praytel query <check|fmt|explain> QUERY
+praytel map [--format FORMAT] [OLD] NEW
 praytel mcp
 praytel agent instructions
 ```
@@ -26,7 +27,8 @@ trace/span tree instead, and `--query` selects records with a
 [typed query](praytel-query-language.7.md).
 
 The subcommands are documented separately:
-[praytel-query(1)](praytel-query.1.md), [praytel-mcp(1)](praytel-mcp.1.md) and
+[praytel-query(1)](praytel-query.1.md), [praytel-map(1)](praytel-map.1.md),
+[praytel-mcp(1)](praytel-mcp.1.md) and
 [praytel-agent(1)](praytel-agent.1.md).
 
 ## Flags
@@ -49,6 +51,12 @@ The subcommands are documented separately:
 | `--limit N` | `100` | Maximum query results per output envelope. Must be positive. |
 | `--focus GLOB` | | Admit the span path matching this glob. Repeatable; the globs are unioned. |
 | `--exclude GLOB` | | Drop matching names after focus expansion. Repeatable. |
+
+### Architecture map
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--map DIR` | | After the run, write one architecture map file per entry point under `DIR`. See [praytel-map(1)](praytel-map.1.md). |
 
 ### Ingest and drain
 
@@ -76,6 +84,8 @@ newest data. It reports both on stderr.
 - `--emit settled` requires `--format ndjson`.
 - `--format` and `--emit` are not used with `--tui`.
 - `--query` cannot be combined with `--focus` or `--exclude`.
+- `--map` cannot be combined with `--query`, `--query-file`, `--focus` or
+  `--exclude`.
 
 ## Environment
 
@@ -115,6 +125,8 @@ The TUI stays open after the child exits, until you quit.
 If the child started, praytel exits with the child's exit code. If the child
 never started (it could not be executed, a port could not be bound, or the TUI
 could not start) or the invocation is malformed, praytel exits with `1`.
+With `--map`, if the child succeeded but the map could not be written,
+praytel exits with `1`.
 Warnings and praytel's own logs go to stderr.
 
 ## Examples
@@ -124,6 +136,7 @@ praytel -- go test ./...
 praytel --tui -- ./server
 praytel --query 'span{ span:status = error }' --format ndjson -- ./server
 praytel --grpc-port 14317 --http-port 14318 -- ./server
+praytel --map arch -- go test -count=1 ./...
 ```
 
 ## See also

@@ -31,6 +31,8 @@ together; each later release adds one.
 5. [Focus on performance](guides/performance.md): query for the slow segments.
 6. [Using praytel with agents](guides/agents.md): keep an agent focused on the
    area of change and verify what it built.
+7. [Keep an architecture map](guides/maps.md): commit the component graph of
+   your tests, and see in every pull request how the architecture changed.
 
 Each guide has a matching entry in [Examples](examples.md): one small
 instrumented app and a command to run against it, so you can try a guide
@@ -49,6 +51,8 @@ Going deeper:
   and exit status.
 - [praytel-query(1)](reference/praytel-query.1.md): check, format and explain a
   query without running a child.
+- [praytel-map(1)](reference/praytel-map.1.md): draw an architecture map, or
+  the difference between two.
 - [praytel-mcp(1)](reference/praytel-mcp.1.md): the stdio MCP server and its
   tools.
 - [praytel-agent(1)](reference/praytel-agent.1.md): print the agent playbook.

@@ -179,3 +179,45 @@ praytel agent instructions
 ```
 
 Guide: [Using praytel with agents](guides/agents.md).
+
+## 6. Maps
+
+Stamp the map of the two passing tests. The gift-card test fails on purpose,
+and praytel won't stamp a failing run, so skip it:
+
+```sh
+cd demo/workloads/shop
+praytel --map arch -- go test -count=1 -skip TestGiftCard .
+praytel map arch
+```
+
+Two files appear, `arch/tests/TestVisaOrderIsConfirmed.map` and
+`arch/tests/TestAmexOrderIsConfirmed.map`. `praytel map` draws both tests
+leading into `web.Orders.Create`, and the order path they share from there.
+
+Now run the failing test with `--map`:
+
+```sh
+praytel --map arch -- go test -count=1 -run TestGiftCard .
+```
+
+The test fails, praytel says the map was not written, and `arch/` is
+unchanged.
+
+To see a change, keep a copy of the map, then change the architecture: in
+`main.go`, make `place` skip `s.reserve`, as if someone had decided stock no
+longer needs reserving.
+
+```sh
+cp -r arch old
+# edit main.go: remove the call to s.reserve in place
+praytel --map arch -- go test -count=1 -skip TestGiftCard .
+praytel map old arch
+```
+
+Praytel reports both files as changed while it writes them, with the lines
+that went. `praytel map` lists the same changes, then draws
+`inventory.Stock.Reserve` and `inventory.Stock.Repo.Lock` dotted and marked
+`-`, called from `~ checkout.Orders.Place`, and exits 1.
+
+Guide: [Keep an architecture map](guides/maps.md).
