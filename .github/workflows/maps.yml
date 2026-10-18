@@ -1,0 +1,103 @@
+# Keeps the demo shop's architecture map honest, using the praytel built
+# from the same commit. See docs/guides/maps.md. Locally:
+#
+#   make map        re-stamp demo/workloads/shop/arch, then commit it
+#   make map-diff   draw how it differs from main's
+#
+# Two jobs, one question each:
+#
+#   current  Does the committed map match what the shop's tests do? This
+#            runs the tests, so it also catches praytel itself mis-joining
+#            or dropping spans: the map would change.
+#   diff     What does this pull request change in the architecture? This
+#            runs no tests, only compares the base branch's committed map
+#            with this one's, and draws the result in the job summary.
+name: maps
+
+on:
+  pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "demo/workloads/shop/**"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - ".github/workflows/maps.yml"
+  push:
+    branches: [main]
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "demo/workloads/shop/**"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - ".github/workflows/maps.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  current:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            demo/workloads/shop/go.sum
+
+      - name: Stamp the map
+        run: make map
+
+      - name: Check it matches the committed map
+        run: |
+          git add --intent-to-add demo/workloads/shop/arch
+          if ! git diff --exit-code -- demo/workloads/shop/arch; then
+            echo "::error::The demo shop's architecture map is out of date. Run 'make map' and commit demo/workloads/shop/arch."
+            exit 1
+          fi
+
+  diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Draw the change
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: |
+          make -s map-diff BASE="$BASE" | tee map-diff.txt
+          {
+            echo "## Architecture map: demo shop"
+            echo
+            if [ "$(head -n 1 map-diff.txt)" = "no changes" ]; then
+              echo "No architecture changes against \`$BASE\`."
+            else
+              echo "Changes against \`$BASE\`, from \`demo/workloads/shop/arch\`:"
+              echo
+              echo '```mermaid'
+              make -s map-diff BASE="$BASE" MAP_FORMAT=mermaid
+              echo '```'
+              echo
+              echo '<details><summary>As text</summary>'
+              echo
+              echo '```'
+              cat map-diff.txt
+              echo '```'
+              echo
+              echo '</details>'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

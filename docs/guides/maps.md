@@ -224,7 +224,9 @@ is quicker to spot there than anywhere else. See
 
 ## In CI
 
-Two jobs, each with one question.
+Two jobs, each with one question. Praytel's own repository runs both for its
+demo shop: see [`maps.yml`](../../.github/workflows/maps.yml) and the `map`
+targets in the [Makefile](../../Makefile).
 
 **Is the committed map current?** Stamp the full suite from scratch, then ask
 git whether anything changed. Removing the directory first means a map file

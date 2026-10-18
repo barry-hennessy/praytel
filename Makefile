@@ -20,7 +20,7 @@ RECORDINGS := $(foreach s,$(SCENARIOS),$(ASSETS)/$(s).gif $(ASSETS)/$(s).mp4)
 # setup, the workloads and the pipeline.
 COMMON := go.mod go.sum dagger.json dagger/main.go \
 	demo/common.tape demo/tmux.conf demo/bin/demo-caption \
-	$(shell find cmd internal demo/workloads -type f -not -name '*.md')
+	$(shell find cmd internal demo/workloads -type f -not -name '*.md' -not -name '*.map')
 
 fresh_flag := $(if $(FRESH),--fresh,)
 
@@ -47,3 +47,35 @@ docs-list:
 docs-shell:
 	@test -n "$(SCENARIO)" || { echo "usage: make docs-shell SCENARIO=<name>"; exit 2; }
 	$(DAGGER) call recorder --scenario $(SCENARIO) terminal
+
+# Architecture map targets. The demo shop's tests are mapped by the praytel
+# built from this checkout, and the map is committed in SHOP_ARCH; CI fails
+# when it is out of date. See docs/guides/maps.md.
+#
+#   make map                       stamp the shop's map from scratch
+#   make map-diff                  draw how it differs from main's
+#   make map-diff BASE=v0.5.0 MAP_FORMAT=mermaid
+
+SHOP       := demo/workloads/shop
+SHOP_ARCH  := $(SHOP)/arch
+BUILD      := $(CURDIR)/.build
+PRAYTEL    := $(BUILD)/praytel
+BASE       ?= origin/main
+MAP_FORMAT ?= text
+
+.PHONY: map map-diff $(PRAYTEL)
+
+$(PRAYTEL):
+	go build -o $@ ./cmd/praytel
+
+# The gift-card test fails on purpose (it is what the demos find), and
+# praytel won't map a failing run, so it is left out.
+map: $(PRAYTEL)
+	rm -rf $(SHOP_ARCH)
+	cd $(SHOP) && $(PRAYTEL) --map arch -- go test -count=1 -skip TestGiftCard .
+
+# Exits 0 whether or not the maps differ: this target is for looking.
+map-diff: $(PRAYTEL)
+	@rm -rf $(BUILD)/base && mkdir -p $(BUILD)/base/$(SHOP_ARCH)
+	@git archive $(BASE) $(SHOP_ARCH) 2>/dev/null | tar -x -C $(BUILD)/base 2>/dev/null || true
+	@$(PRAYTEL) map --format $(MAP_FORMAT) $(BUILD)/base/$(SHOP_ARCH) $(SHOP_ARCH); test $$? -le 1

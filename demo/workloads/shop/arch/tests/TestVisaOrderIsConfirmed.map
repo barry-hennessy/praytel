@@ -1,0 +1,19 @@
+praytel-map v1
+entry tests TestVisaOrderIsConfirmed
+
+node checkout Orders.Place
+node checkout Orders.Repo.Save
+node inventory Stock.Repo.Lock
+node inventory Stock.Reserve
+node payments Gateway.Bank.Authorize
+node payments Gateway.Charge
+node tests TestVisaOrderIsConfirmed
+node web Orders.Create
+
+call checkout Orders.Place -> checkout Orders.Repo.Save
+call checkout Orders.Place -> inventory Stock.Reserve
+call checkout Orders.Place -> payments Gateway.Charge
+call inventory Stock.Reserve -> inventory Stock.Repo.Lock
+call payments Gateway.Charge -> payments Gateway.Bank.Authorize
+call tests TestVisaOrderIsConfirmed -> web Orders.Create
+call web Orders.Create -> checkout Orders.Place
