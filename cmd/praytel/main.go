@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/barry-hennessy/bones"
 	"github.com/barry-hennessy/bones/observability"
@@ -85,6 +86,21 @@ func runProcess(ctx context.Context, lt observability.LoggingTracer, mapErr bone
 	cfg, err := args.Parse(argv, stderr)
 	if err != nil {
 		return mapErr(err)
+	}
+
+	if cfg.SelfTrace {
+		tracer, shutdown, err := newSelfTracer(ctx, os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
+		if err != nil {
+			return mapErr(err)
+		}
+		// Flush before exiting, or the outer praytel drains before the
+		// spans arrive.
+		defer func() {
+			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			_ = shutdown(flushCtx)
+		}()
+		lt.Tracer = tracer
 	}
 
 	code, err := run(ctx, lt, cfg, stdin, stdout, stderr)

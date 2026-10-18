@@ -36,6 +36,7 @@ type Config struct {
 	SettleAfter  time.Duration
 	ResultLimit  int
 	MapDir       string
+	SelfTrace    bool
 }
 
 type stringList []string
@@ -87,6 +88,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	fs.Var(&focus, "focus", "admit the span path matching this glob (repeatable, union)")
 	fs.Var(&exclude, "exclude", "drop matching names after focus expansion (repeatable)")
 	mapDir := fs.String("map", "", "after the run, write one architecture map file per entry point under this directory")
+	selfTrace := fs.Bool("self-trace", false, "for developing praytel: export praytel's own spans to the OTLP endpoint it was started with")
 
 	if err := fs.Parse(flags); err != nil {
 		return Config{}, err
@@ -123,6 +125,19 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		return Config{}, errors.New("--limit must be positive")
 	}
 
+	// A self-traced praytel runs inside another, which already holds the
+	// default ports, so unless told otherwise it listens on any free ones.
+	if *selfTrace {
+		set := map[string]bool{}
+		fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+		if !set["grpc-port"] {
+			*grpcPort = 0
+		}
+		if !set["http-port"] {
+			*httpPort = 0
+		}
+	}
+
 	idle := max(0, *drainIdle)
 	hard := max(0, *drainTimeout)
 
@@ -144,6 +159,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		SettleAfter:  max(time.Duration(0), *settleAfter),
 		ResultLimit:  *resultLimit,
 		MapDir:       *mapDir,
+		SelfTrace:    *selfTrace,
 	}, nil
 }
 

@@ -48,19 +48,24 @@ docs-shell:
 	@test -n "$(SCENARIO)" || { echo "usage: make docs-shell SCENARIO=<name>"; exit 2; }
 	$(DAGGER) call recorder --scenario $(SCENARIO) terminal
 
-# Architecture map targets. The demo shop's tests are mapped by the praytel
-# built from this checkout, and the map is committed in SHOP_ARCH; CI fails
-# when it is out of date. See docs/guides/maps.md.
+# Architecture map targets, using the praytel built from this checkout; see
+# docs/guides/maps.md. Two maps are committed, and CI fails when either is
+# out of date:
 #
-#   make map                       stamp the shop's map from scratch
-#   make map-diff                  draw how it differs from main's
-#   make map-diff BASE=v0.5.0 MAP_FORMAT=mermaid
+#   arch                  praytel's own architecture, from its --self-trace spans
+#   demo/workloads/shop/arch  the demo shop's, from its tests
+#
+#   make map                       stamp both maps from scratch
+#   make map-diff                  draw how they differ from main's
+#   make map-diff BASE=v0.5.0 MAP_DIRS=arch MAP_FORMAT=mermaid
 
 SHOP       := demo/workloads/shop
 SHOP_ARCH  := $(SHOP)/arch
+SELF_ARCH  := arch
 BUILD      := $(CURDIR)/.build
 PRAYTEL    := $(BUILD)/praytel
 BASE       ?= origin/main
+MAP_DIRS   ?= $(SELF_ARCH) $(SHOP_ARCH)
 MAP_FORMAT ?= text
 
 .PHONY: map map-diff $(PRAYTEL)
@@ -68,14 +73,22 @@ MAP_FORMAT ?= text
 $(PRAYTEL):
 	go build -o $@ ./cmd/praytel
 
-# The gift-card test fails on purpose (it is what the demos find), and
-# praytel won't map a failing run, so it is left out.
+# One nested run makes both maps: the inner praytel maps the shop's tests,
+# and the outer one maps the inner praytel itself. The gift-card test fails
+# on purpose (it is what the demos find), and praytel won't map a failing
+# run, so it is left out.
 map: $(PRAYTEL)
-	rm -rf $(SHOP_ARCH)
-	cd $(SHOP) && $(PRAYTEL) --map arch -- go test -count=1 -skip TestGiftCard .
+	rm -rf $(SELF_ARCH) $(SHOP_ARCH)
+	cd $(SHOP) && $(PRAYTEL) --map $(CURDIR)/$(SELF_ARCH) -- \
+		$(PRAYTEL) --self-trace --map arch -- go test -count=1 -skip TestGiftCard .
 
 # Exits 0 whether or not the maps differ: this target is for looking.
 map-diff: $(PRAYTEL)
-	@rm -rf $(BUILD)/base && mkdir -p $(BUILD)/base/$(SHOP_ARCH)
-	@git archive $(BASE) $(SHOP_ARCH) 2>/dev/null | tar -x -C $(BUILD)/base 2>/dev/null || true
-	@$(PRAYTEL) map --format $(MAP_FORMAT) $(BUILD)/base/$(SHOP_ARCH) $(SHOP_ARCH); test $$? -le 1
+	@rm -rf $(BUILD)/base
+	@for d in $(MAP_DIRS); do \
+		mkdir -p $(BUILD)/base/$$d; \
+		git archive $(BASE) $$d 2>/dev/null | tar -x -C $(BUILD)/base 2>/dev/null; \
+		$(if $(word 2,$(MAP_DIRS)),echo "== $$d ==";) \
+		$(PRAYTEL) map --format $(MAP_FORMAT) $(BUILD)/base/$$d $$d; \
+		test $$? -le 1 || exit 2; \
+	done

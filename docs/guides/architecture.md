@@ -85,7 +85,7 @@ In-memory only. `--max-spans` / `--max-log-lines`. Evict oldest **closed** trace
 
 If the child started, **its exit code** is praytel’s. If it never started (exec, bind, `--tui` cannot start), praytel fails. Warnings on stderr. `ErrMapper` only in `main`.
 
-Praytel’s own logs: `LoggingTracer` on **stderr**, **noop tracer**, never export OTLP into the in-process receiver.
+Praytel’s own logs: `LoggingTracer` on **stderr**. Its own spans are **off** (noop tracer) unless praytel is started with `--self-trace`, a development flag: then they are exported to the OTLP endpoint praytel inherited from an outer praytel, never to its own receiver, and flushed before exit. Only `cmd/praytel/selftrace.go` imports the OTel SDK. Spans can't yet record an error status ([bones#2](https://github.com/barry-hennessy/bones/issues/2)). See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ## Out of scope (this architecture)
 
@@ -107,4 +107,4 @@ wraps one child, leaves no files, and is cancelled when the MCP server exits.
 | [Memory and disk pressure management](../../.scratch/tickets/06-memory-pressure.md) | Caps; evict then shed |
 | [Error surface](../../.scratch/tickets/07-error-surface.md) | Child exit code; stderr warnings |
 | [OTLP log vs trace routing](../../.scratch/tickets/08-otlp-log-routing.md) | Two OTLP services; one `LogLine` |
-| [Praytel’s own observability](../../.scratch/tickets/09-internal-observability.md) | Stderr `LoggingTracer`; noop tracer |
+| [Praytel’s own observability](../../.scratch/tickets/09-internal-observability.md) | Stderr `LoggingTracer`; spans only with `--self-trace` |

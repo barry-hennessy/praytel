@@ -23,7 +23,7 @@ type ingestLogs struct {
 }
 
 func (s ingestLogs) Export(ctx context.Context, req *colllog.ExportLogsServiceRequest) (*colllog.ExportLogsServiceResponse, error) {
-	ctx, log, span := s.lt.Start(ctx)
+	ctx, log, span := s.lt.Name("receiver.grpc.logs").Start(ctx)
 	defer span.End()
 
 	if s.dropping() {
@@ -39,7 +39,7 @@ func (s ingestLogs) Export(ctx context.Context, req *colllog.ExportLogsServiceRe
 }
 
 func (s ingestLogs) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	ctx, log, span := s.lt.Start(req.Context())
+	ctx, log, span := s.lt.Name("receiver.http.logs").Start(req.Context())
 	defer span.End()
 
 	if !requirePOST(w, req) {

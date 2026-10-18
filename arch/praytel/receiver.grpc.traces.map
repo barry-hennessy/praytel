@@ -1,0 +1,4 @@
+praytel-map v1
+entry praytel receiver.grpc.traces
+
+node praytel receiver.grpc.traces

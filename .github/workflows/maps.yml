@@ -1,22 +1,29 @@
-# Keeps the demo shop's architecture map honest, using the praytel built
-# from the same commit. See docs/guides/maps.md. Locally:
+# Keeps two architecture maps honest, using the praytel built from the same
+# commit (see docs/guides/maps.md and CONTRIBUTING.md):
 #
-#   make map        re-stamp demo/workloads/shop/arch, then commit it
-#   make map-diff   draw how it differs from main's
+#   arch                      praytel's own, from its --self-trace spans
+#   demo/workloads/shop/arch  the demo shop's, from its tests
+#
+# Locally:
+#
+#   make map        re-stamp both, then commit them
+#   make map-diff   draw how they differ from main's
 #
 # Two jobs, one question each:
 #
-#   current  Does the committed map match what the shop's tests do? This
-#            runs the tests, so it also catches praytel itself mis-joining
-#            or dropping spans: the map would change.
-#   diff     What does this pull request change in the architecture? This
-#            runs no tests, only compares the base branch's committed map
-#            with this one's, and draws the result in the job summary.
+#   current  Do the committed maps match what the code does? This runs the
+#            shop's tests under praytel under praytel, so it catches an
+#            unreviewed change to praytel's own wiring, and praytel
+#            mis-joining or dropping the shop's spans.
+#   diff     What does this pull request change in either architecture?
+#            This runs no tests, only compares the base branch's committed
+#            maps with this one's, and draws the result in the job summary.
 name: maps
 
 on:
   pull_request:
     paths:
+      - "arch/**"
       - "cmd/**"
       - "internal/**"
       - "demo/workloads/shop/**"
@@ -27,6 +34,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "arch/**"
       - "cmd/**"
       - "internal/**"
       - "demo/workloads/shop/**"
@@ -52,14 +60,14 @@ jobs:
             go.sum
             demo/workloads/shop/go.sum
 
-      - name: Stamp the map
+      - name: Stamp the maps
         run: make map
 
-      - name: Check it matches the committed map
+      - name: Check they match the committed maps
         run: |
-          git add --intent-to-add demo/workloads/shop/arch
-          if ! git diff --exit-code -- demo/workloads/shop/arch; then
-            echo "::error::The demo shop's architecture map is out of date. Run 'make map' and commit demo/workloads/shop/arch."
+          git add --intent-to-add arch demo/workloads/shop/arch
+          if ! git diff --exit-code -- arch demo/workloads/shop/arch; then
+            echo "::error::An architecture map is out of date. Run 'make map' and commit arch and demo/workloads/shop/arch."
             exit 1
           fi
 
@@ -75,29 +83,32 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Draw the change
+      - name: Draw the changes
         env:
           BASE: origin/${{ github.base_ref }}
         run: |
-          make -s map-diff BASE="$BASE" | tee map-diff.txt
-          {
-            echo "## Architecture map: demo shop"
-            echo
-            if [ "$(head -n 1 map-diff.txt)" = "no changes" ]; then
-              echo "No architecture changes against \`$BASE\`."
-            else
-              echo "Changes against \`$BASE\`, from \`demo/workloads/shop/arch\`:"
+          for dir in arch demo/workloads/shop/arch; do
+            make -s map-diff BASE="$BASE" MAP_DIRS="$dir" | tee map-diff.txt
+            {
+              echo "## Architecture map: \`$dir\`"
               echo
-              echo '```mermaid'
-              make -s map-diff BASE="$BASE" MAP_FORMAT=mermaid
-              echo '```'
+              if [ "$(head -n 1 map-diff.txt)" = "no changes" ]; then
+                echo "No changes against \`$BASE\`."
+              else
+                echo "Changes against \`$BASE\`:"
+                echo
+                echo '```mermaid'
+                make -s map-diff BASE="$BASE" MAP_DIRS="$dir" MAP_FORMAT=mermaid
+                echo '```'
+                echo
+                echo '<details><summary>As text</summary>'
+                echo
+                echo '```'
+                cat map-diff.txt
+                echo '```'
+                echo
+                echo '</details>'
+              fi
               echo
-              echo '<details><summary>As text</summary>'
-              echo
-              echo '```'
-              cat map-diff.txt
-              echo '```'
-              echo
-              echo '</details>'
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+            } >> "$GITHUB_STEP_SUMMARY"
+          done

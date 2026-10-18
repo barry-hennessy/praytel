@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"flag"
+	"go/parser"
+	"go/token"
 	"net"
 	"os"
 	"os/exec"
@@ -22,6 +25,12 @@ import (
 var (
 	praytelBin string
 	childBin   string
+
+	// selfTrace runs the praytels under test with --self-trace, so running
+	// these tests under an outer praytel shows what each praytel did:
+	//
+	//	praytel --tui -- go test -count=1 ./cmd/praytel -args -self-trace
+	selfTrace = flag.Bool("self-trace", false, "run praytel with --self-trace (run the tests under praytel)")
 )
 
 func TestMain(m *testing.M) {
@@ -682,17 +691,28 @@ func TestSignalToPraytelReachesChild(t *testing.T) {
 	}
 }
 
-func TestWrapperHasNoOTelSDKImport(t *testing.T) {
-	sweet.Run(t, "command package does not import the OTel SDK", wrapFactory, func(t *testing.T, _ wrapDeps) {
-		cmd := exec.Command("go", "list", "-f", "{{range .Imports}}{{println .}}{{end}}", ".")
-		out, err := cmd.Output()
+// Praytel only exports its own spans for --self-trace (see selftrace.go and
+// TestPraytelsSpansStayDarkWithoutSelfTrace); no other wrapper code may
+// reach for the OTel SDK.
+func TestOnlySelfTraceImportsTheOTelSDK(t *testing.T) {
+	sweet.Run(t, "command package imports the OTel SDK only in selftrace.go", wrapFactory, func(t *testing.T, _ wrapDeps) {
+		files, err := filepath.Glob("*.go")
 		if err != nil {
-			t.Fatalf("go list: %v", err)
+			t.Fatal(err)
 		}
-
-		for _, line := range strings.Split(string(out), "\n") {
-			if strings.Contains(line, "go.opentelemetry.io/otel") {
-				t.Fatalf("wrapper imported OTel SDK %q", line)
+		fset := token.NewFileSet()
+		for _, file := range files {
+			if strings.HasSuffix(file, "_test.go") || file == "selftrace.go" {
+				continue
+			}
+			f, err := parser.ParseFile(fset, file, nil, parser.ImportsOnly)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, imp := range f.Imports {
+				if strings.Contains(imp.Path.Value, "go.opentelemetry.io/otel") {
+					t.Fatalf("%s imports the OTel SDK %s", file, imp.Path.Value)
+				}
 			}
 		}
 	})
@@ -716,6 +736,9 @@ func runPraytelOn(t *testing.T, dir string, grpcPort, httpPort int, args ...stri
 	prefixed := []string{
 		"--grpc-port", strconv.Itoa(grpcPort),
 		"--http-port", strconv.Itoa(httpPort),
+	}
+	if *selfTrace {
+		prefixed = append(prefixed, "--self-trace")
 	}
 	if !hasDrainFlags(args) {
 		prefixed = append(prefixed, "--drain-idle", "5ms", "--drain-timeout", "200ms")
@@ -741,8 +764,19 @@ func hasDrainFlags(args []string) bool {
 func runPraytelExact(t *testing.T, dir string, args ...string) procResult {
 	t.Helper()
 
+	return runPraytelEnv(t, dir, nil, args...)
+}
+
+// runPraytelEnv runs praytel with extra environment variables on top of the
+// test's own.
+func runPraytelEnv(t *testing.T, dir string, env []string, args ...string) procResult {
+	t.Helper()
+
 	cmd := exec.Command(praytelBin, args...)
 	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

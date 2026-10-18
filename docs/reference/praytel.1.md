@@ -58,6 +58,15 @@ The subcommands are documented separately:
 |---|---|---|
 | `--map DIR` | | After the run, write one architecture map file per entry point under `DIR`. See [praytel-map(1)](praytel-map.1.md). |
 
+### Development
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--self-trace` | off | For developing praytel: export praytel's own spans to the OTLP endpoint it was started with, which must be set (by an outer praytel). Without `--grpc-port`/`--http-port`, listens on free ports. See [CONTRIBUTING.md](../../CONTRIBUTING.md). |
+
+Praytel never exports its own spans without `--self-trace`, and never to its
+own receiver.
+
 ### Ingest and drain
 
 | Flag | Default | Meaning |

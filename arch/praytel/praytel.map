@@ -1,0 +1,13 @@
+praytel-map v1
+entry praytel praytel
+
+node praytel capture
+node praytel correlator
+node praytel praytel
+node praytel receiver
+node praytel stream
+
+call praytel praytel -> praytel capture
+call praytel praytel -> praytel correlator
+call praytel praytel -> praytel receiver
+call praytel praytel -> praytel stream

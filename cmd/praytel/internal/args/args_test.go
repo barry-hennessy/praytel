@@ -65,6 +65,21 @@ func TestParseMap(t *testing.T) {
 	}
 }
 
+func TestParseSelfTracePicksFreePortsUnlessGiven(t *testing.T) {
+	cfg, err := args.Parse([]string{"--self-trace", "--", "true"}, io.Discard)
+	if err != nil || !cfg.SelfTrace || cfg.GRPCPort != 0 || cfg.HTTPPort != 0 {
+		t.Fatalf("config=%+v err=%v", cfg, err)
+	}
+	cfg, err = args.Parse([]string{"--self-trace", "--grpc-port", "14317", "--", "true"}, io.Discard)
+	if err != nil || cfg.GRPCPort != 14317 || cfg.HTTPPort != 0 {
+		t.Fatalf("config=%+v err=%v", cfg, err)
+	}
+	cfg, err = args.Parse([]string{"--", "true"}, io.Discard)
+	if err != nil || cfg.SelfTrace || cfg.GRPCPort == 0 || cfg.HTTPPort == 0 {
+		t.Fatalf("without --self-trace the default ports changed: %+v", cfg)
+	}
+}
+
 func TestParseMapRefusesSelection(t *testing.T) {
 	for _, sel := range [][]string{
 		{"--query", `span{ span:status = error }`},

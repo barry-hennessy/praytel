@@ -1,0 +1,41 @@
+# Runs praytel's tests. The traced job runs the end-to-end tests under the
+# praytel built from the same commit, with every praytel they start passing
+# --self-trace, so a failure in the log comes with what each praytel did:
+# its spans, with its own log lines joined under them. See CONTRIBUTING.md.
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: go test -count=1 ./...
+
+  traced:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build praytel
+        run: go build -o "$RUNNER_TEMP/praytel" ./cmd/praytel
+
+      - name: End-to-end tests, traced by praytel
+        run: '"$RUNNER_TEMP/praytel" -- go test -count=1 ./cmd/praytel -args -self-trace'

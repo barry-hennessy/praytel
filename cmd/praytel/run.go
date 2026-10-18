@@ -43,6 +43,7 @@ func run(
 ) (int, error) {
 	ctx, log, span := lt.Start(ctx)
 	defer span.End()
+	span.SetAttribute("praytel.command", strings.Join(cfg.Command, " "))
 
 	queryText, err := querySource(cfg)
 	if err != nil {
