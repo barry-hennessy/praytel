@@ -373,3 +373,42 @@ func TestHorizontalScrollPansLongLinesIntoView(t *testing.T) {
 		t.Fatalf("home did not restore the start of the line:\n%s", reset)
 	}
 }
+
+func TestTreeWindowMatchesTheWholeTree(t *testing.T) {
+	m := largeModel(t, 3, 12, 6, true)
+	for _, mode := range []searchMode{searchTraces, searchLogs} {
+		m.mode = mode
+		for _, query := range []string{"", "op1", "handled", "zzz"} {
+			m.query = query
+			whole := m.treeLines()
+			layout := m.layoutTree()
+			if layout.lines != len(whole) {
+				t.Fatalf("mode %d query %q: layout counts %d lines, rendering gives %d", mode, query, layout.lines, len(whole))
+			}
+			for from := range len(whole) {
+				for _, n := range []int{1, 7, 40} {
+					to := min(len(whole), from+n)
+					if got := layout.rows(m, from, from+n); !reflect.DeepEqual(got, whole[from:to]) {
+						t.Fatalf("mode %d query %q: rows(%d, %d) differ from the whole tree's", mode, query, from, from+n)
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestScrollStopsAtTheBottom(t *testing.T) {
+	m := largeModel(t, 2, 10, 4, true)
+	var model tea.Model = m
+	bottom := len(m.treeLines()) - m.contentHeight()
+	for range bottom + 50 {
+		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if got := model.(Model).scroll; got != bottom {
+		t.Fatalf("scroll = %d after holding down past the end, want %d", got, bottom)
+	}
+	model, _ = model.Update(tea.KeyMsg{Type: tea.KeyUp})
+	if got := model.(Model).scroll; got != bottom-1 {
+		t.Fatalf("one up from the bottom scrolled to %d, want %d", got, bottom-1)
+	}
+}
