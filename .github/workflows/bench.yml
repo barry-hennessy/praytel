@@ -4,10 +4,11 @@
 #
 #   make bench-diff BASE=origin/main
 #
-# The comparison and the top of each profile go in the run's summary, and
-# every result and profile is uploaded as an artifact; open a profile with
-# `go tool pprof -http=: <file>.prof`. Nothing here fails on a slowdown:
-# it is there to be read.
+# The comparison is posted to the pull request as a comment, kept up to date
+# on every push (make bench-comment, also runnable locally); it and the top
+# of each profile go in the run's summary, and every result and profile is
+# uploaded as an artifact; open a profile with `go tool pprof -http=:
+# <file>.prof`. Nothing here fails on a slowdown: it is there to be read.
 name: bench
 
 on:
@@ -25,9 +26,11 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 env:
   DAGGER_VERSION: "0.21.10"
+  BASE: origin/${{ github.base_ref || github.event.repository.default_branch }}
 
 jobs:
   diff:
@@ -42,7 +45,20 @@ jobs:
         run: curl -fsSL https://dl.dagger.io/dagger/install.sh | BIN_DIR="$HOME/.local/bin" sh
 
       - name: Benchmark
-        run: make bench-diff BASE="origin/${{ github.base_ref || github.event.repository.default_branch }}" DAGGER="$HOME/.local/bin/dagger"
+        run: make bench-diff DAGGER="$HOME/.local/bin/dagger"
+
+      - name: Comment
+        # A pull request from a fork gets a read-only token, which can't
+        # comment; its results are still in the summary and the artifact.
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          make bench-comment
+          PR="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          DETAILS="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          DAGGER="$HOME/.local/bin/dagger"
 
       - name: Summarize
         if: always()
