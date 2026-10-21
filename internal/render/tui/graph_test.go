@@ -159,6 +159,49 @@ func fanOutModel() Model {
 	return m
 }
 
+func TestSlowGraphIsLaidOutInTheBackground(t *testing.T) {
+	m := fanOutModel()
+	m.height, m.width = 30, 200
+	m.view = viewGraph
+
+	// Not laid out yet: how slow it will be isn't known, so it is laid out
+	// in the background, and nothing waits on it.
+	layout := m.relayoutGraph()
+	if layout == nil {
+		t.Fatal("graph not laid out yet, but no background layout started")
+	}
+	if view := m.View(); !strings.Contains(view, "Laying out the graph") {
+		t.Fatalf("view waited for the layout instead of saying it is under way:\n%s", view)
+	}
+	if again := m.relayoutGraph(); again != nil {
+		t.Fatal("second background layout started while one is under way")
+	}
+
+	next, _ := m.Update(layout())
+	m = next.(Model)
+	if view := m.View(); !strings.Contains(view, "svc.root") {
+		t.Fatalf("finished layout not shown:\n%s", view)
+	}
+
+	// Pretend that layout was slow: new telemetry is laid out in the
+	// background too, and until it is, the last layout stays on show.
+	m.cache.graph.cost = slowBuild
+	m.apply(domain.SpanUpserted{TraceID: "t", SpanID: "d", Component: "svc", Name: "d"})
+	m.apply(domain.SpanParentLinked{TraceID: "t", SpanID: "d", ParentSpanID: "root"})
+	layout = m.relayoutGraph()
+	if layout == nil {
+		t.Fatal("slow graph's layout out of date, but no background layout started")
+	}
+	if view := m.View(); !strings.Contains(view, "svc.root") || strings.Contains(view, "svc.d") {
+		t.Fatalf("view did not keep the last layout while the next was under way:\n%s", view)
+	}
+	next, _ = m.Update(layout())
+	m = next.(Model)
+	if view := m.View(); !strings.Contains(view, "svc.d") {
+		t.Fatalf("new layout not shown:\n%s", view)
+	}
+}
+
 func TestGraphDrawsAnArrowheadForEveryCall(t *testing.T) {
 	g := fanOutModel().buildGraph()
 	cv := layoutGraph(g, nil).c

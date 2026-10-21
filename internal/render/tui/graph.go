@@ -8,10 +8,11 @@ import (
 	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
 	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph/layout"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // buildGraph aggregates the currently filtered/visible spans (per
-// filteredForest and fuzzyVisible -- the same layers treeLines applies, so
+// filteredForest and fuzzyVisible -- the same layers layoutTree applies, so
 // the graph can never show something the tree wouldn't) into a graph.Graph:
 // one node per distinct nested component, one edge per pair of components
 // connected by an observed parent/child span call. The aggregation rule
@@ -22,16 +23,16 @@ import (
 func (m Model) buildGraph() *graph.Graph {
 	children, _, inScope := m.filteredForest()
 	traceMatches := m.matchingTraces()
-	logMatches := m.matchingLogs()
+	logBranches := m.logBranches(children, inScope, m.matchingLogs())
 
 	facts := make([]graph.SpanFact, 0, len(inScope))
 	for _, sp := range inScope {
-		if !m.fuzzyVisible(sp, children, traceMatches, logMatches) {
+		if !m.fuzzyVisible(sp, traceMatches, logBranches) {
 			continue
 		}
 		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order, Color: m.colors[spanLabel(sp)]}
 		if sp.parentID != "" {
-			if parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]; ok && m.fuzzyVisible(parent, children, traceMatches, logMatches) {
+			if parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]; ok && m.fuzzyVisible(parent, traceMatches, logBranches) {
 				fact.HasParent = true
 				fact.ParentComponent = parent.component
 				fact.ParentName = parent.name
@@ -210,6 +211,8 @@ func (g gridCell) glyph() (rune, cellStyle) {
 type canvas struct {
 	cells [][]gridCell
 	w, h  int
+
+	traced []cellPos // trace's scratch space, kept between lines
 }
 
 func newCanvas(w, h int) *canvas {
@@ -263,7 +266,8 @@ type cellPos struct {
 // segments rather than half stubs, since a line ends against a box or under
 // an arrowhead.
 func (c *canvas) trace(pts []cellPos, style cellStyle, dashed bool) {
-	cells := []cellPos{pts[0]}
+	cells := append(c.traced[:0], pts[0])
+	defer func() { c.traced = cells }()
 	for _, p := range pts[1:] {
 		for q := cells[len(cells)-1]; q != p; {
 			q.row += sign(p.row - q.row)
@@ -444,27 +448,50 @@ func (c *canvas) drawBox(top, left, width, height int, n *graph.Node, hl graphNo
 }
 
 func (c *canvas) lines() []string {
-	out := make([]string, c.h)
-	for i, row := range c.cells {
-		var b strings.Builder
-		var seg []rune
+	return c.window(0, c.h, 0, c.w)
+}
+
+// window renders rows [from, to) of the canvas, each cut to the width
+// columns starting at col. Cutting here, cell by cell, is far cheaper than
+// rendering whole rows of a wide graph and cutting the styled text after.
+//
+// Each style's escape codes are worked out once up front, rather than
+// rendering every run of cells through lipgloss: a run never holds a
+// newline or tab, the only things Render does more than wrap its text for.
+func (c *canvas) window(from, to, col, width int) []string {
+	from, to = max(0, from), min(to, c.h)
+	if from >= to {
+		return nil
+	}
+	col = max(0, min(col, c.w))
+	end := min(c.w, col+max(0, width))
+	type wrap struct{ open, close string }
+	wraps := make([]wrap, len(cellStyles))
+	for i, style := range cellStyles {
+		open, close, _ := strings.Cut(style.Render("#"), "#")
+		wraps[i] = wrap{open, close}
+	}
+	out := make([]string, 0, to-from)
+	var b strings.Builder
+	for _, row := range c.cells[from:to] {
+		b.Reset()
 		segStyle := styleDefault
-		flush := func() {
-			if len(seg) > 0 {
-				b.WriteString(cellStyles[segStyle].Render(string(seg)))
-				seg = seg[:0]
-			}
-		}
-		for _, cell := range row {
+		open := false
+		for _, cell := range row[col:end] {
 			r, style := cell.glyph()
-			if style != segStyle {
-				flush()
-				segStyle = style
+			if style != segStyle || !open {
+				if open {
+					b.WriteString(wraps[segStyle].close)
+				}
+				segStyle, open = style, true
+				b.WriteString(wraps[segStyle].open)
 			}
-			seg = append(seg, r)
+			b.WriteRune(r)
 		}
-		flush()
-		out[i] = b.String()
+		if open {
+			b.WriteString(wraps[segStyle].close)
+		}
+		out = append(out, b.String())
 	}
 	return out
 }
@@ -646,12 +673,46 @@ func countLabel(e *graph.Edge) string {
 	return fmt.Sprintf("×%d", e.Count)
 }
 
+// graphLayout is a laid-out graph, or, when c is nil, the placeholder shown
+// in place of one.
 type graphLayout struct {
-	c *canvas
+	c           *canvas
+	placeholder string
 }
 
 func (l *graphLayout) lines() []string {
+	if l.c == nil {
+		return []string{l.placeholder}
+	}
 	return l.c.lines()
+}
+
+func (l *graphLayout) lineCount() int {
+	if l.c == nil {
+		return 1
+	}
+	return l.c.h
+}
+
+// columns is how wide the graph is.
+func (l *graphLayout) columns() int {
+	if l.c == nil {
+		return ansi.StringWidth(l.placeholder)
+	}
+	return l.c.w
+}
+
+// window renders lines [from, to) of the graph, cut to the width columns
+// starting at col.
+func (l *graphLayout) window(from, to, col, width int) []string {
+	if l.c == nil {
+		lines := []string{l.placeholder}[max(0, min(from, 1)):max(0, min(to, 1))]
+		for i, line := range lines {
+			lines[i] = ansi.Cut(line, col, col+width)
+		}
+		return lines
+	}
+	return l.c.window(from, to, col, width)
 }
 
 // layoutGraph lays g out left-to-right: layers become columns, and
@@ -766,27 +827,18 @@ func layoutGraph(g *graph.Graph, highlights map[string]graphNodeHighlight) *grap
 	return &graphLayout{c: cv}
 }
 
-// graphLines renders the current component/section interconnection graph
-// as a full ASCII node-link diagram, following exactly the same
-// focus/exclude and live fuzzy search narrowing as
-// treeLines (see filteredForest and fuzzyVisible).
-func (m Model) graphLines() []string {
-	g := m.buildGraph()
-	if len(g.Nodes) == 0 {
-		if m.query == "" {
-			return []string{
-				lipgloss.NewStyle().
-					Foreground(lipgloss.Color("245")).
-					Render("  Waiting for traces and logs…"),
-			}
-		}
-		return []string{
-			lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")).
-				Render("  No matches"),
-		}
-	}
+// layoutGraphView lays out the current component/section interconnection
+// graph as a full ASCII node-link diagram, following exactly the same
+// focus/exclude and live fuzzy search narrowing as the tree (see
+// filteredForest and fuzzyVisible).
+func (m Model) layoutGraphView() *graphLayout {
+	g, highlights := m.graphToLayOut()
+	return layoutGraphOf(g, highlights, m.treePlaceholder())
+}
 
+// graphToLayOut is the graph on show and its nodes' search highlights.
+func (m Model) graphToLayOut() (*graph.Graph, map[string]graphNodeHighlight) {
+	g := m.buildGraph()
 	highlights := map[string]graphNodeHighlight{}
 	if m.query != "" && m.mode == searchTraces {
 		for key, n := range g.Nodes {
@@ -795,6 +847,14 @@ func (m Model) graphLines() []string {
 			}
 		}
 	}
+	return g, highlights
+}
 
-	return layoutGraph(g, highlights).lines()
+// layoutGraphOf lays g out, or shows placeholder if it is empty. It
+// touches nothing but its arguments, so it can run in the background.
+func layoutGraphOf(g *graph.Graph, highlights map[string]graphNodeHighlight, placeholder string) *graphLayout {
+	if len(g.Nodes) == 0 {
+		return &graphLayout{placeholder: placeholder}
+	}
+	return layoutGraph(g, highlights)
 }

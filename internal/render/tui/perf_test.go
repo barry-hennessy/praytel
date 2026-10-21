@@ -145,7 +145,7 @@ func BenchmarkTreeScrollKey(b *testing.B) {
 
 // drawWholeGraph builds, lays out and draws every line of the graph view.
 func drawWholeGraph(m Model) []string {
-	return m.graphLines()
+	return m.layoutGraphView().lines()
 }
 
 // BenchmarkGraphLayoutLarge is building, laying out and drawing the whole
