@@ -258,6 +258,8 @@ type item struct {
 
 	left, right []*item       // what it is connected to in the adjacent layers
 	arrive      map[*item]int // offset from top of the row the edge from each of left arrives on; a bend has none, and takes them all on its one row
+
+	leftPos, rightPos []int // untangle's scratch space: left's and right's positions, in order
 }
 
 // portRow is the row every edge to it.right leaves on.
@@ -368,42 +370,74 @@ func renumber(items []*item) {
 // sortByNeighbors orders a layer by the mean position of each item's
 // neighbors. An item with none has no opinion, so it holds its place.
 func sortByNeighbors(items []*item, neighbors func(*item) []*item) {
-	want := map[*item]float64{}
-	for _, it := range items {
-		want[it] = float64(it.pos)
+	type wanted struct {
+		it   *item
+		want float64
+	}
+	order := make([]wanted, len(items))
+	for i, it := range items {
+		order[i] = wanted{it, float64(it.pos)}
 		if ns := neighbors(it); len(ns) > 0 {
 			sum := 0
 			for _, n := range ns {
 				sum += n.pos
 			}
-			want[it] = float64(sum) / float64(len(ns))
+			order[i].want = float64(sum) / float64(len(ns))
 		}
 	}
-	sort.SliceStable(items, func(i, j int) bool { return want[items[i]] < want[items[j]] })
+	slices.SortStableFunc(order, func(a, b wanted) int {
+		switch {
+		case a.want < b.want:
+			return -1
+		case a.want > b.want:
+			return 1
+		}
+		return 0
+	})
+	for i, o := range order {
+		items[i] = o.it
+	}
 	renumber(items)
 }
 
 // untangle swaps adjacent items within a layer wherever that leaves their
 // own edges crossing each other less, until no swap helps.
 func untangle(layers [][]*item) {
-	// crossings counts how often an edge of upper crosses one of lower,
-	// given upper sits above lower.
-	crossings := func(upper, lower *item) int {
-		count := 0
-		for _, side := range [][2][]*item{{upper.left, lower.left}, {upper.right, lower.right}} {
-			for _, a := range side[0] {
-				for _, b := range side[1] {
-					if a.pos > b.pos {
-						count++
-					}
-				}
+	// Swaps only move items within the layer being worked on, so while it
+	// is, every neighbor's position holds still and can be sorted once.
+	positions := func(ns []*item, buf []int) []int {
+		buf = buf[:0]
+		for _, n := range ns {
+			buf = append(buf, n.pos)
+		}
+		if len(buf) > 1 {
+			slices.Sort(buf)
+		}
+		return buf
+	}
+	// above counts the pairs of a from as and b from bs, both sorted, where
+	// a > b: how often an edge to as crosses one to bs, given as's item sits
+	// above bs's.
+	above := func(as, bs []int) int {
+		count, j := 0, 0
+		for _, a := range as {
+			for j < len(bs) && bs[j] < a {
+				j++
 			}
+			count += j
 		}
 		return count
+	}
+	crossings := func(upper, lower *item) int {
+		return above(upper.leftPos, lower.leftPos) + above(upper.rightPos, lower.rightPos)
 	}
 	for improved, rounds := true, 0; improved && rounds < 20; rounds++ {
 		improved = false
 		for _, items := range layers {
+			for _, it := range items {
+				it.leftPos = positions(it.left, it.leftPos)
+				it.rightPos = positions(it.right, it.rightPos)
+			}
 			for i := 0; i+1 < len(items); i++ {
 				if crossings(items[i+1], items[i]) < crossings(items[i], items[i+1]) {
 					items[i], items[i+1] = items[i+1], items[i]
@@ -415,20 +449,42 @@ func untangle(layers [][]*item) {
 	}
 }
 
+// countCrossings counts the pairs of edges that cross, between every pair
+// of neighboring layers.
 func countCrossings(layers [][]*item) int {
 	count := 0
+	var ends [][2]int // each edge into a layer: position it leaves from, position it arrives at
+	var tree []int    // a Fenwick tree over arrival positions
 	for _, items := range layers {
-		var ends [][2]int // each edge into this layer: position it leaves from, position it arrives at
+		ends = ends[:0]
 		for _, it := range items {
 			for _, n := range it.left {
 				ends = append(ends, [2]int{n.pos, it.pos})
 			}
 		}
-		for i, a := range ends {
-			for _, b := range ends[i+1:] {
-				if (a[0]-b[0])*(a[1]-b[1]) < 0 {
-					count++
+		// Two edges cross when one leaves strictly before the other and
+		// arrives strictly after it. Going through them by where they
+		// leave, each crosses every edge already seen -- from an earlier
+		// position -- that arrives later than it does.
+		slices.SortFunc(ends, func(a, b [2]int) int { return a[0] - b[0] })
+		tree = slices.Grow(tree[:0], len(items)+1)[:len(items)+1]
+		clear(tree)
+		seen := 0
+		for i := 0; i < len(ends); {
+			j := i
+			for j < len(ends) && ends[j][0] == ends[i][0] {
+				atOrBefore := 0
+				for k := ends[j][1] + 1; k > 0; k -= k & -k {
+					atOrBefore += tree[k]
 				}
+				count += seen - atOrBefore
+				j++
+			}
+			for ; i < j; i++ {
+				for k := ends[i][1] + 1; k < len(tree); k += k & -k {
+					tree[k]++
+				}
+				seen++
 			}
 		}
 	}
@@ -605,11 +661,16 @@ func kinkCost(rows int) float64 {
 // their mean, so that some member lands exactly on its target and keeps a
 // straight edge, rather than every member missing by a little.
 func settle(items []*item, o Options, against side) {
+	// Blocks are consecutive runs of members, each run in order of target
+	// rather than of item, so a merge is a linear one rather than a sort.
+	// Which item a member was doesn't matter: a block moves as one.
 	type block struct {
-		members []member
-		value   float64
+		start int // its first member; it runs to the next block's start
+		value float64
 	}
 	var blocks []block
+	members := make([]member, 0, len(items))
+	var scratch []member
 	offsets := make([]int, len(items))
 	for i, it := range items {
 		if i > 0 {
@@ -624,15 +685,21 @@ func settle(items []*item, o Options, against side) {
 		}
 		m.target -= float64(it.port + offsets[i])
 
-		blocks = append(blocks, block{members: []member{m}, value: m.target})
+		members = append(members, m)
+		blocks = append(blocks, block{start: len(members) - 1, value: m.target})
 		for n := len(blocks); n > 1 && blocks[n-2].value > blocks[n-1].value; n-- {
-			merged := append(blocks[n-2].members, blocks[n-1].members...)
-			blocks = append(blocks[:n-2], block{members: merged, value: weightedMedian(merged)})
+			start := blocks[n-2].start
+			scratch = mergeRuns(members[start:], blocks[n-1].start-start, scratch)
+			blocks = append(blocks[:n-2], block{start: start, value: weightedMedian(members[start:])})
 		}
 	}
 
 	i, floor := 0, math.MinInt
-	for _, b := range blocks {
+	for k, b := range blocks {
+		size := len(members) - b.start
+		if k+1 < len(blocks) {
+			size = blocks[k+1].start - b.start
+		}
 		// Box pitch is usually odd, so a fork can't be centered exactly on
 		// its parent and something has to round. Rounding a lone item's
 		// half up and a pooled block's half down makes the two agree: the
@@ -640,12 +707,12 @@ func settle(items []*item, o Options, against side) {
 		// between its middle items lands back where it was. Rounding both
 		// the same way walks the pair a row further on every sweep.
 		base := int(math.Floor(b.value + 0.5))
-		if len(b.members) > 1 {
+		if size > 1 {
 			base = int(math.Ceil(b.value - 0.5))
 		}
 		base = max(base, floor) // the two roundings must not reorder blocks
 		floor = base
-		for range b.members {
+		for range size {
 			items[i].top = base + offsets[i]
 			i++
 		}
@@ -696,11 +763,29 @@ type member struct {
 	target, weight float64
 }
 
+// mergeRuns puts members, two runs split at split each in order of target,
+// in order of target as a whole. It returns scratch, the space it used,
+// for next time.
+func mergeRuns(members []member, split int, scratch []member) []member {
+	scratch = append(scratch[:0], members[:split]...)
+	a, b := scratch, members[split:]
+	out := members[:0]
+	for len(a) > 0 && len(b) > 0 {
+		// out never catches up with b: it is len(a) behind.
+		if b[0].target < a[0].target {
+			out, b = append(out, b[0]), b[1:]
+		} else {
+			out, a = append(out, a[0]), a[1:]
+		}
+	}
+	copy(members[len(out):], a) // whatever is left of b is already in place
+	return scratch
+}
+
 // weightedMedian returns the middle of the range of values that minimize
-// the members' total weighted distance to their targets.
-func weightedMedian(members []member) float64 {
-	sorted := slices.Clone(members)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].target < sorted[j].target })
+// the members' total weighted distance to their targets. sorted is in order
+// of target.
+func weightedMedian(sorted []member) float64 {
 	half := 0.0
 	for _, m := range sorted {
 		half += m.weight / 2
