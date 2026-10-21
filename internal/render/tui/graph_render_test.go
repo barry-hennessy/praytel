@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite the graph snapshots in testdata/graph")
@@ -204,5 +206,57 @@ func BenchmarkGraphLayout(b *testing.B) {
 	g := graphOf(specs...)
 	for b.Loop() {
 		layoutGraph(g, nil).lines()
+	}
+}
+
+// TestCanvasRowsMatchLipglossRendering checks the canvas's shortcut of
+// writing each style's escape codes itself against rendering every run of
+// cells through lipgloss.
+func TestCanvasRowsMatchLipglossRendering(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+
+	g := graphOf("api.request>db.query*3", "api.request>cache.get", "cache.get>db.query", "db.query>api.request")
+	for key, n := range g.Nodes {
+		n.Color = len(key)%len(componentPalette) + 1
+	}
+	c := layoutGraph(g, map[string]graphNodeHighlight{}).c
+	got := c.lines()
+	for i, row := range c.cells {
+		var b strings.Builder
+		var seg []rune
+		segStyle := styleDefault
+		flush := func() {
+			if len(seg) > 0 {
+				b.WriteString(cellStyles[segStyle].Render(string(seg)))
+				seg = seg[:0]
+			}
+		}
+		for _, cell := range row {
+			r, style := cell.glyph()
+			if style != segStyle {
+				flush()
+				segStyle = style
+			}
+			seg = append(seg, r)
+		}
+		flush()
+		if got[i] != b.String() {
+			t.Fatalf("row %d:\n got %q\nwant %q", i, got[i], b.String())
+		}
+	}
+
+	// A window onto the canvas shows what cutting its whole rows would.
+	for _, col := range []int{0, 1, 7, c.w - 5, c.w} {
+		for _, width := range []int{1, 10, c.w} {
+			window := c.window(2, c.h, col, width)
+			for i, line := range window {
+				want := ansi.Strip(ansi.Cut(got[2+i], col, col+width))
+				if have := ansi.Strip(line); have != want {
+					t.Fatalf("window at column %d, %d wide, row %d:\n got %q\nwant %q", col, width, 2+i, have, want)
+				}
+			}
+		}
 	}
 }

@@ -74,10 +74,17 @@ type logView struct {
 	spanID  string
 }
 
+// eventMsg carries every event that was waiting when the model last asked
+// for one, so a burst costs one update and one redraw rather than one per
+// event. ok is false once the stream has closed, after events.
 type eventMsg struct {
-	event domain.Event
-	ok    bool
+	events []domain.Event
+	ok     bool
 }
+
+// maxEventBatch caps one eventMsg, so a stream that never pauses still
+// gets redrawn now and then.
+const maxEventBatch = 4096
 
 type tickMsg time.Time
 
@@ -89,6 +96,11 @@ type Model struct {
 	spans     map[string]*spanView
 	logs      map[string]*logView
 	nextOrder int
+
+	// version counts changes to the telemetry above, so cache can tell
+	// whether what it holds was built from what is here now.
+	version int
+	cache   *viewCache
 
 	// callers holds the selectionKey of every span named as another's
 	// parent, whether or not it has arrived yet. colors gives each component
@@ -130,6 +142,7 @@ func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
 		logs:    make(map[string]*logView),
 		callers: make(map[string]bool),
 		colors:  make(map[string]int),
+		cache:   &viewCache{},
 		width:   80,
 		height:  24,
 		now:     time.Now(),
@@ -144,25 +157,57 @@ func (m Model) Init() tea.Cmd {
 func waitEvent(events <-chan domain.Event) tea.Cmd {
 	return func() tea.Msg {
 		ev, ok := <-events
-		return eventMsg{event: ev, ok: ok}
+		if !ok {
+			return eventMsg{}
+		}
+		batch := []domain.Event{ev}
+		for len(batch) < maxEventBatch {
+			select {
+			case ev, ok := <-events:
+				if !ok {
+					return eventMsg{events: batch}
+				}
+				batch = append(batch, ev)
+			default:
+				return eventMsg{events: batch, ok: true}
+			}
+		}
+		return eventMsg{events: batch, ok: true}
 	}
 }
 
+// tickInterval is how often running spans' spinners and durations move on.
+const tickInterval = 100 * time.Millisecond
+
 func tick() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
 
 // Update applies one Bubble Tea message.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	if layout := next.relayoutGraph(); layout != nil {
+		cmd = tea.Batch(cmd, layout)
+	}
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case graphLaidOutMsg:
+		g := &m.cache.graph
+		g.key, g.ok, g.at, g.cost, g.val = msg.key, true, m.now, msg.cost, msg.layout
+		g.pending = false
 	case eventMsg:
+		for _, ev := range msg.events {
+			m.apply(ev)
+		}
 		if !msg.ok {
 			m.done = true
 			return m, nil
 		}
-		m.apply(msg.event)
 		return m, waitEvent(m.events)
 	case tickMsg:
 		m.now = time.Time(msg)
@@ -173,6 +218,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.clampScroll()
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "ctrl+q":
@@ -210,6 +256,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "down", "ctrl+j":
 			m.scroll++
+			m.clampScroll()
 		case "pgup":
 			m.scroll -= max(1, m.contentHeight()-1)
 			if m.scroll < 0 {
@@ -217,6 +264,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "pgdown":
 			m.scroll += max(1, m.contentHeight()-1)
+			m.clampScroll()
 		case "left", "ctrl+b":
 			m.hscroll -= hscrollStep
 			if m.hscroll < 0 {
@@ -238,6 +286,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) apply(ev domain.Event) {
+	m.version++
 	m.filt.Observe(ev)
 	switch ev := ev.(type) {
 	case domain.SpanUpserted:
@@ -385,35 +434,34 @@ func (m Model) View() string {
 		return ""
 	}
 
-	var lines []string
-	if m.view == viewGraph {
-		lines = m.graphLines()
-	} else {
-		lines = m.treeLines()
-	}
+	// Only the rows on screen are rendered: building every line of a large
+	// trace just to show a screenful of it is what made each redraw cost
+	// more the more there was to scroll through.
 	height := m.contentHeight()
-	maxScroll := max(0, len(lines)-height)
-	if m.scroll > maxScroll {
-		m.scroll = maxScroll
-	}
-	end := min(len(lines), m.scroll+height)
-	visible := lines[min(m.scroll, len(lines)):end]
-
 	width := max(1, m.width)
-	maxHScroll := 0
-	for _, l := range visible {
-		if w := ansi.StringWidth(l) - width; w > maxHScroll {
-			maxHScroll = w
+	m.clampScroll()
+	var visible []string
+	if m.view == viewGraph {
+		// Every row of the graph is as wide as the graph, and it is cut to
+		// the screen as it is drawn.
+		graph := m.cachedGraph()
+		m.hscroll = max(0, min(m.hscroll, graph.columns()-width))
+		visible = graph.window(m.scroll, m.scroll+height, m.hscroll, width)
+	} else {
+		visible = m.cachedTree().rows(m, m.scroll, m.scroll+height)
+		maxHScroll := 0
+		for _, l := range visible {
+			if w := ansi.StringWidth(l) - width; w > maxHScroll {
+				maxHScroll = w
+			}
+		}
+		if m.hscroll > maxHScroll {
+			m.hscroll = maxHScroll
+		}
+		for i, l := range visible {
+			visible[i] = ansi.Cut(l, m.hscroll, m.hscroll+width)
 		}
 	}
-	if m.hscroll > maxHScroll {
-		m.hscroll = maxHScroll
-	}
-	cut := make([]string, len(visible))
-	for i, l := range visible {
-		cut[i] = ansi.Cut(l, m.hscroll, m.hscroll+width)
-	}
-	visible = cut
 	for len(visible) < height {
 		visible = append(visible, "")
 	}
@@ -425,10 +473,139 @@ func (m Model) contentHeight() int {
 	return max(1, m.height-3)
 }
 
+// clampScroll keeps the vertical scroll within what there is to show, so
+// holding ↓ at the bottom doesn't run up a count that ↑ then has to work
+// back through before anything moves.
+func (m *Model) clampScroll() {
+	var lines int
+	if m.view == viewGraph {
+		lines = m.cachedGraph().lineCount()
+	} else {
+		lines = m.cachedTree().lines
+	}
+	m.scroll = max(0, min(m.scroll, lines-m.contentHeight()))
+}
+
+// viewCache keeps the expensive part of each view -- the tree's layout,
+// the graph's whole canvas -- between redraws, which happen on every key
+// press and animation tick whether or not anything they show has changed.
+// It is shared by every copy of a Model, and each entry knows which state
+// it was built from.
+type viewCache struct {
+	tree  cached[*treeLayout]
+	graph cached[*graphLayout]
+}
+
+type cacheKey struct {
+	version int
+	query   string
+	mode    searchMode
+}
+
+type cached[T any] struct {
+	key  cacheKey
+	ok   bool
+	at   time.Time     // the model's clock when it was built
+	cost time.Duration // how long building it took
+	val  T
+
+	pending bool // a rebuild is under way in the background
+}
+
+func (m Model) cacheKey() cacheKey {
+	return cacheKey{version: m.version, query: m.query, mode: m.mode}
+}
+
+// slowBuild is how long a build has to take before the result is reused
+// for a while after the telemetry it shows has moved on.
+const slowBuild = 10 * time.Millisecond
+
+// get returns the value built from m's current state, building it if
+// needed. While telemetry is still streaming in, a build that was slow is
+// reused, out of date, until a tick or so has passed -- longer still, the
+// slower it was -- so that a large view keeps up with the keyboard instead
+// of rebuilding itself for every few events. A new search, or the end of
+// the stream, always rebuilds at once.
+func (c *cached[T]) get(m Model, build func() T) T {
+	key := m.cacheKey()
+	if c.ok && c.key != key {
+		sameSearch := c.key.query == key.query && c.key.mode == key.mode
+		if sameSearch && !m.done && c.cost >= slowBuild &&
+			m.now.Sub(c.at) < max(tickInterval, 4*c.cost) {
+			return c.val
+		}
+	}
+	if !c.ok || c.key != key {
+		started := time.Now()
+		c.val = build()
+		c.key, c.ok, c.at, c.cost = key, true, m.now, time.Since(started)
+	}
+	return c.val
+}
+
+func (m Model) cachedTree() *treeLayout {
+	if m.cache == nil {
+		return m.layoutTree()
+	}
+	return m.cache.tree.get(m, m.layoutTree)
+}
+
+// cachedGraph is the graph to draw: the latest layout, unless laying it
+// out is slow enough to be done in the background (see relayoutGraph), in
+// which case it is the last one that finished.
+func (m Model) cachedGraph() *graphLayout {
+	if m.cache == nil {
+		return m.layoutGraphView()
+	}
+	g := &m.cache.graph
+	switch {
+	case g.ok && (g.pending || g.cost >= slowBuild):
+		return g.val
+	case g.pending:
+		return &graphLayout{placeholder: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("245")).
+			Render("  Laying out the graph…")}
+	}
+	return g.get(m, m.layoutGraphView)
+}
+
+// graphLaidOutMsg is a layout relayoutGraph started, finished.
+type graphLaidOutMsg struct {
+	key    cacheKey
+	layout *graphLayout
+	cost   time.Duration
+}
+
+// relayoutGraph starts laying the graph out again in the background, if
+// it is on show, out of date, and either too slow to lay out in between
+// key presses or not laid out yet -- in which case how slow it will be
+// isn't known. A layout of a large graph takes long enough to stall the
+// whole interface; this way the graph on show is a little behind instead.
+func (m Model) relayoutGraph() tea.Cmd {
+	if m.cache == nil || m.view != viewGraph {
+		return nil
+	}
+	g := &m.cache.graph
+	key := m.cacheKey()
+	if g.pending || (g.ok && (g.key == key || g.cost < slowBuild)) {
+		return nil
+	}
+	g.pending = true
+	// The graph is put together from the model here, while nothing else is
+	// changing it; only laying it out is left to the background.
+	graph, highlights := m.graphToLayOut()
+	placeholder := m.treePlaceholder()
+	return func() tea.Msg {
+		started := time.Now()
+		layout := layoutGraphOf(graph, highlights, placeholder)
+		return graphLaidOutMsg{key: key, layout: layout, cost: time.Since(started)}
+	}
+}
+
 // filteredForest applies the glob focus/exclude filter (m.filt.InFocus) to
 // m.spans -- but NOT the live fuzzy search, which fuzzyVisible applies separately since its
 // mode-dependent semantics (whole-trace vs. per-branch) differ from simple
-// inclusion. treeLines and buildGraph both call this so they can never
+// inclusion. layoutTree and buildGraph both call this so they can never
 // disagree about what's in scope.
 func (m Model) filteredForest() (
 	children map[string][]*spanView,
@@ -464,13 +641,9 @@ func (m Model) filteredForest() (
 // fuzzyVisible reports whether sp should be considered "in view" under the
 // current live search (m.mode, m.query): whole-trace in searchTraces mode
 // (any span in the trace matched), or per-branch in searchLogs mode (sp or
-// a descendant has a matching log). Always true when there is no live
-// query.
-func (m Model) fuzzyVisible(
-	sp *spanView,
-	children map[string][]*spanView,
-	traceMatches, logMatches map[string]bool,
-) bool {
+// a descendant has a matching log; see logBranches). Always true when there
+// is no live query.
+func (m Model) fuzzyVisible(sp *spanView, traceMatches, logBranches map[string]bool) bool {
 	if m.query == "" {
 		return true
 	}
@@ -478,66 +651,123 @@ func (m Model) fuzzyVisible(
 	case searchTraces:
 		return traceMatches[sp.traceID]
 	case searchLogs:
-		return m.branchHasLog(sp, children, logMatches, make(map[string]bool))
+		return logBranches[selectionKey(sp.traceID, sp.id)]
 	}
 	return true
 }
 
-func (m Model) treeLines() []string {
-	children, roots, _ := m.filteredForest()
+// treeLayout is the tree view worked out as far as which line each span
+// starts on, but not styled. Styling is most of what drawing the tree
+// costs, and only a screenful of it is ever on show (see rows).
+type treeLayout struct {
+	spans      []treeSpan
+	lines      int
+	highlights map[string]spanHighlight
+}
 
+// treeSpan is one span's place in the tree view.
+type treeSpan struct {
+	sp        *spanView
+	ancestors []lipgloss.Color // each enclosing span's component color, outermost first
+	logs      []*logView       // those of its logs on show
+	line      int              // the line its header is on
+}
+
+// height is how many lines s takes up: its header, attributes, logs and
+// the rule under it.
+func (s treeSpan) height() int {
+	n := 2 + len(s.logs)
+	if len(s.sp.attributes) > 0 {
+		n++
+	}
+	return n
+}
+
+func (m Model) layoutTree() *treeLayout {
+	children, roots, inScope := m.filteredForest()
 	traceMatches := m.matchingTraces()
 	logMatches := m.matchingLogs()
-	highlights := m.spanHighlights()
-	var lines []string
+	logBranches := m.logBranches(children, inScope, logMatches)
+	t := &treeLayout{highlights: m.spanHighlights()}
+
 	visited := make(map[string]bool)
-	for _, root := range roots {
-		if !m.fuzzyVisible(root, children, traceMatches, logMatches) {
-			continue
+	var walk func(sp *spanView, ancestors []lipgloss.Color)
+	walk = func(sp *spanView, ancestors []lipgloss.Color) {
+		key := selectionKey(sp.traceID, sp.id)
+		if visited[key] {
+			return
 		}
-		m.renderSpan(&lines, root, nil, children, logMatches, highlights, visited)
-	}
-	if len(lines) > 0 {
-		lines = lines[:len(lines)-1] // nothing follows the last span's rule
-	}
-	if len(lines) == 0 {
-		if m.query == "" {
-			return []string{
-				lipgloss.NewStyle().
-					Foreground(lipgloss.Color("245")).
-					Render("  Waiting for traces and logs…"),
+		visited[key] = true
+		if m.mode == searchLogs && !m.fuzzyVisible(sp, nil, logBranches) {
+			return
+		}
+		s := treeSpan{sp: sp, ancestors: ancestors, line: t.lines}
+		for _, id := range sp.logs {
+			log := m.logs[id]
+			if log == nil || (m.mode == searchLogs && m.query != "" && !logMatches[id]) {
+				continue
 			}
+			s.logs = append(s.logs, log)
 		}
-		return []string{
-			lipgloss.NewStyle().
-				Foreground(lipgloss.Color("245")).
-				Render("  No matches"),
+		t.spans = append(t.spans, s)
+		t.lines += s.height()
+		trail := append(ancestors[:len(ancestors):len(ancestors)], m.componentColor(sp))
+		for _, child := range children[key] {
+			walk(child, trail)
 		}
 	}
-	return lines
+	for _, root := range roots {
+		if m.fuzzyVisible(root, traceMatches, logBranches) {
+			walk(root, nil)
+		}
+	}
+	if t.lines > 0 {
+		t.lines-- // nothing follows the last span's rule
+	} else {
+		t.lines = 1 // the placeholder
+	}
+	return t
+}
+
+// rows renders lines [from, to) of the tree, styling only the spans that
+// have a line in that range.
+func (t *treeLayout) rows(m Model, from, to int) []string {
+	to = min(to, t.lines)
+	from = max(0, min(from, to))
+	if len(t.spans) == 0 {
+		return []string{m.treePlaceholder()}[from:to]
+	}
+	i := sort.Search(len(t.spans), func(i int) bool {
+		return t.spans[i].line+t.spans[i].height() > from
+	})
+	out := make([]string, 0, to-from)
+	for ; i < len(t.spans) && t.spans[i].line < to; i++ {
+		s := t.spans[i]
+		lines := m.renderSpan(s, t.highlights[selectionKey(s.sp.traceID, s.sp.id)])
+		out = append(out, lines[max(0, from-s.line):min(len(lines), to-s.line)]...)
+	}
+	return out
+}
+
+func (m Model) treePlaceholder() string {
+	text := "  Waiting for traces and logs…"
+	if m.query != "" {
+		text = "  No matches"
+	}
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render(text)
+}
+
+// treeLines renders the whole tree.
+func (m Model) treeLines() []string {
+	t := m.layoutTree()
+	return t.rows(m, 0, t.lines)
 }
 
 func selectionKey(traceID, spanID string) string { return traceID + "\x00" + spanID }
 
-func (m Model) renderSpan(
-	lines *[]string,
-	sp *spanView,
-	ancestors []lipgloss.Color, // each enclosing span's component color, outermost first
-	children map[string][]*spanView,
-	logMatches map[string]bool,
-	highlights map[string]spanHighlight,
-	visited map[string]bool,
-) {
-	key := selectionKey(sp.traceID, sp.id)
-	if visited[key] {
-		return
-	}
-	visited[key] = true
-	if m.mode == searchLogs && !m.fuzzyVisible(sp, children, nil, logMatches) {
-		return
-	}
-
-	h := highlights[key]
+// renderSpan draws one span's lines: its header, attributes, logs and rule.
+func (m Model) renderSpan(s treeSpan, h spanHighlight) []string {
+	sp, ancestors := s.sp, s.ancestors
 	trail := append(ancestors[:len(ancestors):len(ancestors)], m.componentColor(sp))
 	prefix := bars(trail, sp.closed)
 	// The status symbol takes the span's own column on its header row: the
@@ -550,29 +780,20 @@ func (m Model) renderSpan(
 		styleSegments(spanLabel(sp), h.label, lipgloss.NewStyle(), matchHighlightStyle),
 		m.duration(sp),
 	)
-	*lines = append(*lines, header)
+	lines := make([]string, 0, s.height())
+	lines = append(lines, header)
 	if len(sp.attributes) > 0 {
-		*lines = append(
-			*lines,
-			prefix+detailIndent+attributesLine(sp.attributes, h.attrs),
-		)
+		lines = append(lines, prefix+detailIndent+attributesLine(sp.attributes, h.attrs))
 	}
-	for _, id := range sp.logs {
-		log := m.logs[id]
-		if log == nil || (m.mode == searchLogs && m.query != "" && !logMatches[id]) {
-			continue
-		}
+	for _, log := range s.logs {
 		body := clean(log.body)
 		line := prefix + detailIndent +
 			lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252")).
 				Render(body)
-		*lines = append(*lines, line)
+		lines = append(lines, line)
 	}
-	*lines = append(*lines, m.spanRule(trail, sp.closed))
-	for _, child := range children[key] {
-		m.renderSpan(lines, child, trail, children, logMatches, highlights, visited)
-	}
+	return append(lines, m.spanRule(trail, sp.closed))
 }
 
 // detailIndent sets a span's attributes and logs one stop in from its
@@ -801,28 +1022,41 @@ func (m Model) matchingLogs() map[string]bool {
 	return out
 }
 
-func (m Model) branchHasLog(
-	sp *spanView,
+// logBranches returns, for a log search, the key of every span with a
+// matching log of its own or anywhere beneath it, and nil otherwise.
+func (m Model) logBranches(
 	children map[string][]*spanView,
-	matches map[string]bool,
-	seen map[string]bool,
-) bool {
-	key := selectionKey(sp.traceID, sp.id)
-	if seen[key] {
-		return false
+	inScope map[string]*spanView,
+	logMatches map[string]bool,
+) map[string]bool {
+	if m.query == "" || m.mode != searchLogs {
+		return nil
 	}
-	seen[key] = true
-	for _, id := range sp.logs {
-		if matches[id] {
-			return true
+	out := make(map[string]bool)
+	seen := make(map[string]bool)
+	var has func(sp *spanView) bool
+	has = func(sp *spanView) bool {
+		key := selectionKey(sp.traceID, sp.id)
+		if seen[key] {
+			return out[key]
 		}
-	}
-	for _, child := range children[key] {
-		if m.branchHasLog(child, children, matches, seen) {
-			return true
+		seen[key] = true
+		for _, id := range sp.logs {
+			if logMatches[id] {
+				out[key] = true
+			}
 		}
+		for _, child := range children[key] {
+			if has(child) {
+				out[key] = true
+			}
+		}
+		return out[key]
 	}
-	return false
+	for _, sp := range inScope {
+		has(sp)
+	}
+	return out
 }
 
 // fuzzy is a per-character SUBSEQUENCE match, not a substring match: each
