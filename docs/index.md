@@ -18,7 +18,7 @@ praytel --tui -- ./server         # live trace/span tree
 
 ## Guides
 
-Both guides have commands you can run against a small example app, or against
+Each guide has commands you can run against a small example app, or against
 tools you may already have, so you can see whether praytel is useful to you
 before instrumenting any code of your own[^1].
 
@@ -26,6 +26,8 @@ before instrumenting any code of your own[^1].
    use, and have good traces ready for when something breaks.
 2. [View logs correlated to traces](guides/logs.md): each log line under the
    span that emitted it.
+3. [Get an overview of a system](guides/overview.md): which components are hit
+   and how they are really wired together.
 
 ## Reference
 

@@ -57,6 +57,34 @@ type forest struct {
 	spans        map[domain.SpanKey]*forestSpan
 	pending      map[domain.SpanKey][]domain.LogLine
 	globalOrphan *forestSpan
+
+	// logLines counts the lines in pending and in every span's logs, so
+	// checking the limit doesn't mean counting them all on every arrival.
+	logLines int
+	// unlinked holds each span not yet linked to its parent, by the parent
+	// span ID it names, so a span arriving can find the children waiting
+	// for it without going through every span.
+	unlinked map[string]map[*forestSpan]struct{}
+}
+
+func (f *forest) awaitParent(sp *forestSpan) {
+	if sp.linked || sp.parentSpanID == "" {
+		return
+	}
+	waiting := f.unlinked[sp.parentSpanID]
+	if waiting == nil {
+		waiting = make(map[*forestSpan]struct{})
+		f.unlinked[sp.parentSpanID] = waiting
+	}
+	waiting[sp] = struct{}{}
+}
+
+func (f *forest) stopAwaitingParent(sp *forestSpan) {
+	waiting := f.unlinked[sp.parentSpanID]
+	delete(waiting, sp)
+	if len(waiting) == 0 {
+		delete(f.unlinked, sp.parentSpanID)
+	}
 }
 
 type traceNode struct {
@@ -105,9 +133,10 @@ func New(lt observability.LoggingTracer, out chan<- domain.Event, drain Drain, l
 		drain:  drain,
 		limits: limits,
 		forest: forest{
-			traces:  make(map[string]*traceNode),
-			spans:   make(map[domain.SpanKey]*forestSpan),
-			pending: make(map[domain.SpanKey][]domain.LogLine),
+			traces:   make(map[string]*traceNode),
+			spans:    make(map[domain.SpanKey]*forestSpan),
+			pending:  make(map[domain.SpanKey][]domain.LogLine),
+			unlinked: make(map[string]map[*forestSpan]struct{}),
 		},
 	}
 }
@@ -310,6 +339,7 @@ func (c *Correlator) handleLog(ctx context.Context, line domain.LogLine) {
 	if !c.admit(ctx, needSpans, 1) {
 		return
 	}
+	c.forest.logLines++ // every way on from here keeps the line, on a span or pending
 
 	if line.SpanID != "" {
 		if sp := c.findSpan(line.TraceID, line.SpanID); sp != nil {
@@ -394,6 +424,7 @@ func (c *Correlator) handleSpan(ctx context.Context, in domain.Span) {
 		links:         in.Links,
 	}
 	c.forest.spans[key] = sp
+	c.forest.awaitParent(sp)
 
 	if in.TraceID != "" {
 		c.ensureTrace(in.TraceID)
@@ -424,7 +455,9 @@ func (c *Correlator) updateSpan(ctx context.Context, sp *forestSpan, in domain.S
 			}
 		}
 		if in.ParentSpanID != "" {
+			c.forest.stopAwaitingParent(sp)
 			sp.parentSpanID = in.ParentSpanID
+			c.forest.awaitParent(sp)
 		}
 		if in.Component != "" {
 			sp.component = in.Component
@@ -499,6 +532,7 @@ func (c *Correlator) flushPending(ctx context.Context, sp *forestSpan) {
 func (c *Correlator) linkParents(ctx context.Context, sp *forestSpan) {
 	if sp.parentSpanID != "" && sp.parentSpanID != sp.spanID && !sp.linked {
 		if _, ok := c.forest.spans[domain.SpanKey{TraceID: sp.traceID, SpanID: sp.parentSpanID}]; ok {
+			c.forest.stopAwaitingParent(sp)
 			sp.linked = true
 			c.emit(ctx, domain.SpanParentLinked{
 				TraceID:      sp.traceID,
@@ -508,11 +542,12 @@ func (c *Correlator) linkParents(ctx context.Context, sp *forestSpan) {
 		}
 	}
 
-	for _, child := range c.forest.spans {
+	for child := range c.forest.unlinked[sp.spanID] {
 		if child.linked || child.parentSpanID != sp.spanID || child.spanID == sp.spanID {
 			continue
 		}
 
+		c.forest.stopAwaitingParent(child)
 		child.linked = true
 		c.emit(ctx, domain.SpanParentLinked{
 			TraceID:      child.traceID,
@@ -529,6 +564,7 @@ func (c *Correlator) resolvePending(ctx context.Context) {
 		for _, line := range waiting {
 			sp := c.assignmentAtDrain(ctx, line)
 			if sp == nil {
+				c.forest.logLines--
 				continue
 			}
 
@@ -655,6 +691,8 @@ func (c *Correlator) evictTrace(ctx context.Context, traceID string) {
 			continue
 		}
 
+		c.forest.logLines -= len(c.forest.pending[key]) + len(sp.logs)
+		c.forest.stopAwaitingParent(sp)
 		delete(c.forest.pending, key)
 		delete(c.forest.spans, key)
 	}
@@ -668,15 +706,7 @@ func (c *Correlator) spanCount() int {
 }
 
 func (c *Correlator) logCount() int {
-	n := 0
-	for _, lines := range c.forest.pending {
-		n += len(lines)
-	}
-	for _, sp := range c.forest.spans {
-		n += len(sp.logs)
-	}
-
-	return n
+	return c.forest.logLines
 }
 
 func (c *Correlator) noteRealSpanAdded(sp *forestSpan) {

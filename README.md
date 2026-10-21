@@ -13,7 +13,11 @@ can leverage both.
  - build useful tracing for yourself during development and profit when a fire breaks out in production.
  - all without spinning up another docker container on your machine
 
-Full documentation and guides live in [`docs/`](docs/index.md).
+Full documentation lives in [`docs/`](docs/index.md): three guides that build on
+each other, from [viewing traces](docs/guides/traces.md) to
+[seeing how a system fits together](docs/guides/overview.md), each with commands
+you can run against a small example app, and a
+[reference page per command](docs/index.md#reference).
 
 # Tl; dr:
 

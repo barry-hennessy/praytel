@@ -3,6 +3,7 @@ package filter
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -16,16 +17,29 @@ type Query struct {
 
 // Filter projects correlator events and answers live-admit / InFocus.
 // It does not sit as a drop-pipe: callers still see every event.
+//
+// A span is in focus when it, one of its ancestors or one of its
+// descendants matches a focus glob -- or when there are no focus globs --
+// and it doesn't itself match an exclude glob. That is kept up to date as
+// each event arrives, from counts each span holds of the matches above and
+// below it, so an event costs about the depth of the tree it lands in
+// rather than the size of everything seen so far.
 type Filter struct {
 	focus   []string
 	exclude []string
 
-	spans        map[string]*spanNode
-	logs         map[string]*logRec
-	order        []string
-	pendingAdmit []string
+	spans  map[string]*spanNode
+	logs   map[string]*logRec
+	logSeq int
 
-	inFocus map[string]struct{}
+	// held is every log not yet admitted, by the span it belongs to ("" for
+	// none), so a span coming into focus can let its own go.
+	held map[string]map[*logRec]struct{}
+
+	// What the event being applied may have let in: spans whose focus may
+	// have changed, and logs whose span or component did.
+	touchedSpans []*spanNode
+	touchedLogs  []*logRec
 }
 
 type spanNode struct {
@@ -34,10 +48,16 @@ type spanNode struct {
 	name      string
 	component string
 	children  map[string]struct{}
+
+	matches  bool // its own name or component matches a focus glob
+	excluded bool // its own name or component matches an exclude glob
+	below    int  // spans that match among it and its descendants
+	above    int  // spans that match among its ancestors
 }
 
 type logRec struct {
 	id        string
+	seq       int // arrival order
 	spanID    string
 	component string
 	admitted  bool
@@ -57,7 +77,7 @@ func New(q Query) (*Filter, error) {
 		exclude: append([]string(nil), q.Exclude...),
 		spans:   make(map[string]*spanNode),
 		logs:    make(map[string]*logRec),
-		inFocus: make(map[string]struct{}),
+		held:    make(map[string]map[*logRec]struct{}),
 	}, nil
 }
 
@@ -83,9 +103,6 @@ func (f *Filter) passAll() bool {
 // that entered the live-admit set for the first time.
 func (f *Filter) Observe(ev domain.Event) []string {
 	f.apply(ev)
-	if !f.passAll() {
-		f.recomputeFocus()
-	}
 
 	return f.collectNewAdmits()
 }
@@ -100,9 +117,13 @@ func (f *Filter) InFocus(spanID string) bool {
 		return len(f.focus) == 0
 	}
 
-	_, ok := f.inFocus[spanID]
+	n := f.spans[spanID]
 
-	return ok
+	return n != nil && f.focused(n)
+}
+
+func (f *Filter) focused(n *spanNode) bool {
+	return !n.excluded && (len(f.focus) == 0 || n.below > 0 || n.above > 0)
 }
 
 func (f *Filter) apply(ev domain.Event) {
@@ -119,21 +140,13 @@ func (f *Filter) apply(ev domain.Event) {
 		if e.Component != "" && !e.Synthetic {
 			n.component = e.Component
 		}
+		f.rematch(n)
 	case domain.SpanParentLinked:
 		if e.SpanID == "" || e.ParentSpanID == "" || e.SpanID == e.ParentSpanID {
 			return
 		}
 
-		child := f.ensureSpan(e.SpanID)
-		parent := f.ensureSpan(e.ParentSpanID)
-		if child.parent != "" && child.parent != e.ParentSpanID {
-			if old, ok := f.spans[child.parent]; ok {
-				delete(old.children, child.id)
-			}
-		}
-
-		child.parent = e.ParentSpanID
-		parent.children[child.id] = struct{}{}
+		f.link(f.ensureSpan(e.SpanID), f.ensureSpan(e.ParentSpanID))
 	case domain.LogReceived:
 		f.rememberLog(e.ID, e.SpanID, e.Component)
 		if e.SpanID != "" {
@@ -144,6 +157,7 @@ func (f *Filter) apply(ev domain.Event) {
 			if e.Component != "" && !e.Synthetic {
 				n.component = e.Component
 			}
+			f.rematch(n)
 		}
 	case domain.LogAssigned:
 		f.rememberLog(e.ID, e.SpanID, "")
@@ -152,6 +166,7 @@ func (f *Filter) apply(ev domain.Event) {
 			if e.SpanName != "" {
 				n.name = e.SpanName
 			}
+			f.rematch(n)
 		}
 	}
 }
@@ -163,17 +178,41 @@ func (f *Filter) rememberLog(id, spanID, component string) {
 
 	rec, ok := f.logs[id]
 	if !ok {
-		rec = &logRec{id: id}
+		f.logSeq++
+		rec = &logRec{id: id, seq: f.logSeq}
 		f.logs[id] = rec
-		f.order = append(f.order, id)
-		f.pendingAdmit = append(f.pendingAdmit, id)
+		f.hold(rec)
 	}
 
-	if spanID != "" {
+	if spanID != "" && spanID != rec.spanID {
+		f.release(rec)
 		rec.spanID = spanID
+		f.hold(rec)
 	}
 	if component != "" {
 		rec.component = component
+	}
+	f.touchedLogs = append(f.touchedLogs, rec)
+}
+
+// hold files a log not yet admitted under its span.
+func (f *Filter) hold(rec *logRec) {
+	if rec.admitted {
+		return
+	}
+	waiting := f.held[rec.spanID]
+	if waiting == nil {
+		waiting = make(map[*logRec]struct{})
+		f.held[rec.spanID] = waiting
+	}
+	waiting[rec] = struct{}{}
+}
+
+func (f *Filter) release(rec *logRec) {
+	waiting := f.held[rec.spanID]
+	delete(waiting, rec)
+	if len(waiting) == 0 {
+		delete(f.held, rec.spanID)
 	}
 }
 
@@ -188,84 +227,107 @@ func (f *Filter) ensureSpan(id string) *spanNode {
 		children: make(map[string]struct{}),
 	}
 	f.spans[id] = n
+	// Even a span known only by ID may match: "*" matches an empty name.
+	f.rematch(n)
 
 	return n
 }
 
-func (f *Filter) recomputeFocus() {
-	next := make(map[string]struct{})
+// rematch brings n's own match and exclusion up to date with its name and
+// component, and its ancestors' and descendants' counts with its match.
+func (f *Filter) rematch(n *spanNode) {
 	if f.passAll() {
-		for id := range f.spans {
-			next[id] = struct{}{}
-		}
-
-		f.inFocus = next
-
 		return
 	}
 
-	if len(f.focus) == 0 {
-		for id, n := range f.spans {
-			if !f.excluded(n) {
-				next[id] = struct{}{}
-			}
-		}
+	if excluded := f.excluded(n); excluded != n.excluded {
+		n.excluded = excluded
+		f.touchedSpans = append(f.touchedSpans, n)
+	}
 
-		f.inFocus = next
-
+	matches := f.matchesFocus(n)
+	if matches == n.matches {
 		return
 	}
-
-	pathSet := make(map[string]struct{})
-	for id, n := range f.spans {
-		if f.matchesFocus(n) {
-			f.expandPath(id, pathSet)
-		}
+	n.matches = matches
+	delta := -1
+	if matches {
+		delta = 1
 	}
-
-	for id := range pathSet {
-		n := f.spans[id]
-		if n == nil || f.excluded(n) {
-			continue
-		}
-
-		next[id] = struct{}{}
-	}
-
-	f.inFocus = next
-}
-
-func (f *Filter) expandPath(start string, pathSet map[string]struct{}) {
-	for id := start; id != ""; {
-		if _, seen := pathSet[id]; seen {
-			break
-		}
-
-		pathSet[id] = struct{}{}
-		n := f.spans[id]
-		if n == nil {
-			break
-		}
-
-		id = n.parent
-	}
-
-	f.walkDown(start, pathSet)
-}
-
-func (f *Filter) walkDown(id string, pathSet map[string]struct{}) {
-	pathSet[id] = struct{}{}
-	n := f.spans[id]
-	if n == nil {
-		return
-	}
-
+	f.addBelow(n, delta)
 	for c := range n.children {
-		if _, seen := pathSet[c]; seen {
-			continue
-		}
+		f.addAbove(f.spans[c], delta)
+	}
+}
 
-		f.walkDown(c, pathSet)
+// link makes parent child's parent. A link that would make child its own
+// ancestor is ignored: only malformed telemetry asks for one, and the
+// counts above and below every span rely on there being no cycles.
+func (f *Filter) link(child, parent *spanNode) {
+	if child.parent == parent.id {
+		return
+	}
+	for p := parent; p != nil; p = f.parentOf(p) {
+		if p == child {
+			return
+		}
+	}
+
+	if old := f.parentOf(child); old != nil {
+		delete(old.children, child.id)
+		f.addBelow(old, -child.below)
+		f.addAbove(child, -(old.above + matchCount(old)))
+	}
+
+	child.parent = parent.id
+	parent.children[child.id] = struct{}{}
+	f.addBelow(parent, child.below)
+	f.addAbove(child, parent.above+matchCount(parent))
+}
+
+func (f *Filter) parentOf(n *spanNode) *spanNode {
+	if n.parent == "" {
+		return nil
+	}
+
+	return f.spans[n.parent]
+}
+
+func matchCount(n *spanNode) int {
+	if n.matches {
+		return 1
+	}
+
+	return 0
+}
+
+// addBelow adds delta matches to the count below n and each of its
+// ancestors.
+func (f *Filter) addBelow(n *spanNode, delta int) {
+	if delta == 0 {
+		return
+	}
+	for ; n != nil; n = f.parentOf(n) {
+		n.below += delta
+		f.touchedSpans = append(f.touchedSpans, n)
+	}
+}
+
+// addAbove adds delta matches to the count above n and each of its
+// descendants.
+func (f *Filter) addAbove(n *spanNode, delta int) {
+	if delta == 0 {
+		return
+	}
+	stack := []*spanNode{n}
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		n.above += delta
+		f.touchedSpans = append(f.touchedSpans, n)
+		for c := range n.children {
+			stack = append(stack, f.spans[c])
+		}
 	}
 }
 
@@ -306,25 +368,36 @@ func matchOne(glob, name string) bool {
 	return ok
 }
 
+// collectNewAdmits admits every held log that the event just applied let
+// in, in the order the logs arrived.
 func (f *Filter) collectNewAdmits() []string {
-	var out []string
-	held := f.pendingAdmit
-	next := make([]string, 0, len(held))
-	for _, id := range held {
-		rec := f.logs[id]
-		if rec == nil || rec.admitted {
-			continue
+	var admitted []*logRec
+	admit := func(rec *logRec) {
+		if rec.admitted || !f.shouldAdmit(rec) {
+			return
 		}
-
-		if !f.shouldAdmit(rec) {
-			next = append(next, id)
-			continue
-		}
-
 		rec.admitted = true
-		out = append(out, id)
+		f.release(rec)
+		admitted = append(admitted, rec)
 	}
-	f.pendingAdmit = next
+
+	for _, rec := range f.touchedLogs {
+		admit(rec)
+	}
+	for _, n := range f.touchedSpans {
+		if f.focused(n) {
+			for rec := range f.held[n.id] {
+				admit(rec)
+			}
+		}
+	}
+	f.touchedLogs, f.touchedSpans = f.touchedLogs[:0], f.touchedSpans[:0]
+
+	slices.SortFunc(admitted, func(a, b *logRec) int { return a.seq - b.seq })
+	out := make([]string, len(admitted))
+	for i, rec := range admitted {
+		out[i] = rec.id
+	}
 
 	return out
 }
@@ -342,9 +415,7 @@ func (f *Filter) shouldAdmit(rec *logRec) bool {
 		return len(f.focus) == 0
 	}
 
-	_, ok := f.inFocus[rec.spanID]
-
-	return ok
+	return f.InFocus(rec.spanID)
 }
 
 func (f *Filter) matchesAny(globs []string, name string) bool {

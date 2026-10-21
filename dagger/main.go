@@ -67,15 +67,21 @@ type stage struct {
 
 // Praytel builds the praytel binary from the repository source.
 func (m *Demos) Praytel() *dagger.File {
+	return goContainer(m.Source).
+		WithEnvVariable("CGO_ENABLED", "0").
+		WithExec([]string{"go", "build", "-o", "/out/praytel", "./cmd/praytel"}).
+		File("/out/praytel")
+}
+
+// goContainer is the Go toolchain, with praytel's module and build caches,
+// working in src at /src.
+func goContainer(src *dagger.Directory) *dagger.Container {
 	return dag.Container().
 		From(goImage).
 		WithMountedCache("/go/pkg/mod", dag.CacheVolume("praytel-gomod")).
 		WithMountedCache("/root/.cache/go-build", dag.CacheVolume("praytel-gobuild")).
-		WithEnvVariable("CGO_ENABLED", "0").
-		WithDirectory("/src", m.Source).
-		WithWorkdir("/src").
-		WithExec([]string{"go", "build", "-o", "/out/praytel", "./cmd/praytel"}).
-		File("/out/praytel")
+		WithDirectory("/src", src).
+		WithWorkdir("/src")
 }
 
 // Scenarios lists the available scenario names.

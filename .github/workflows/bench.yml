@@ -1,0 +1,88 @@
+# Compares a pull request's benchmarks with its base branch's, and profiles
+# them. The work is done by the Dagger module in dagger/, so this is the
+# same command you run locally:
+#
+#   make bench-diff BASE=origin/main
+#
+# The comparison is posted to the pull request as a comment, kept up to date
+# on every push (make bench-comment, also runnable locally); it and the top
+# of each profile go in the run's summary, and every result and profile is
+# uploaded as an artifact; open a profile with `go tool pprof -http=:
+# <file>.prof`. Nothing here fails on a slowdown: it is there to be read.
+name: bench
+
+on:
+  pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "go.mod"
+      - "go.sum"
+      - "dagger/**"
+      - "dagger.json"
+      - "Makefile"
+      - ".github/workflows/bench.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  DAGGER_VERSION: "0.21.10"
+  BASE: origin/${{ github.base_ref || github.event.repository.default_branch }}
+
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The base branch has to be there to check out and compare with.
+          fetch-depth: 0
+
+      - name: Install Dagger
+        run: curl -fsSL https://dl.dagger.io/dagger/install.sh | BIN_DIR="$HOME/.local/bin" sh
+
+      - name: Benchmark
+        run: make bench-diff DAGGER="$HOME/.local/bin/dagger"
+
+      - name: Comment
+        # A pull request from a fork gets a read-only token, which can't
+        # comment; its results are still in the summary and the artifact.
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          make bench-comment
+          PR="${{ github.event.pull_request.number }}"
+          REPO="${{ github.repository }}"
+          DETAILS="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          DAGGER="$HOME/.local/bin/dagger"
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "## Benchmarks against ${{ github.base_ref || github.event.repository.default_branch }}"
+            echo
+            echo "\`~\` means no significant difference. Shared runners vary by 5–10% from run to run, so read small changes in time with care; allocations don't vary."
+            echo
+            echo '```'
+            cat bench-out/diff.txt
+            echo '```'
+            for f in bench-out/profiles/*.txt; do
+              echo "<details><summary>$(basename "$f" .txt)</summary>"
+              echo
+              echo '```'
+              cat "$f"
+              echo '```'
+              echo "</details>"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench
+          path: bench-out
