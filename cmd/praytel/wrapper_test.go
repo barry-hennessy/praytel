@@ -302,6 +302,29 @@ func TestGRPCExportingChildJoinsJSONLog(t *testing.T) {
 	})
 }
 
+// Exporters may gzip over gRPC; Dagger does for the engine spans it
+// forwards. The child runs under env because praytel replaces inherited
+// OTEL_EXPORTER_OTLP_* settings.
+func TestGzipGRPCExportingChildJoinsJSONLog(t *testing.T) {
+	sweet.Run(t, "a gzip-compressed gRPC span is received and joined", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "--", "env", "OTEL_EXPORTER_OTLP_COMPRESSION=gzip", childBin, "-export-grpc-span", "-span-name", "gzip-work")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q stdout=%q", res.exit, res.stderr, res.stdout)
+		}
+
+		for _, line := range strings.Split(res.stdout, "\n") {
+			brace := strings.Index(line, "{")
+			if brace < 0 || !strings.Contains(line[brace:], `"msg":"grpc-span"`) {
+				continue
+			}
+			if strings.Contains(line[:brace], "gzip-work") {
+				return
+			}
+		}
+		t.Fatalf("expected hydrated stream line for gzip-work, stdout=%q stderr=%q", res.stdout, res.stderr)
+	})
+}
+
 func TestGRPCExportingChildJoinsLogfmtLog(t *testing.T) {
 	sweet.Run(t, "gRPC span hydrate appears on the stream with the logfmt log", wrapFactory, func(t *testing.T, d wrapDeps) {
 		res := runPraytel(t, d.dir, "--", childBin, "-export-grpc-span-logfmt", "-span-name", "child-work")

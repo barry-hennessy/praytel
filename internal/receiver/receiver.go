@@ -16,6 +16,9 @@ import (
 	colltrace "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
+	// OTLP exporters may gzip their requests, as the HTTP receiver already
+	// accepts; registering the codec lets the gRPC server decode them too.
+	_ "google.golang.org/grpc/encoding/gzip"
 )
 
 const (
