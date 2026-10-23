@@ -1,0 +1,10 @@
+# Illustrates docs/guides/graph.md.
+guide = "graph"
+workload = "ci"
+# The workload is a Dagger module: the tape's dagger CLI runs it on the
+# engine recording this scenario.
+nesting = true
+
+[[stage]]
+image = "registry.dagger.io/engine:v0.21.10"
+copy = ["/usr/local/bin/dagger:/usr/local/bin/dagger"]

@@ -78,6 +78,7 @@ guide = "traces"          # the docs/guides page it illustrates
 workload = "shop"         # optional: demo/workloads/<name>, mounted at /workload
 packages = ["jq"]         # optional: extra Debian packages
 env = { FOO = "bar" }     # optional: extra environment
+nesting = true            # optional: let the tape run dagger on this engine
 
 [[stage]]                 # repeatable
 image = "golang:1.26"     # any toolchain image
@@ -97,6 +98,15 @@ copy = ["/deno:/usr/local/bin/deno"]
 The recording container is Debian-based, so a copied binary must run there.
 A tool that needs its own services (a Docker daemon, a database) needs those
 added to the module.
+
+A workload that is itself a Dagger pipeline sets `nesting = true`, and the
+tape's `dagger` CLI runs it on the engine doing the recording; the `graph`
+scenario copies the CLI out of the engine image. A shell for such a scenario
+needs the same access:
+
+```sh
+dagger call recorder --scenario graph terminal --experimental-privileged-nesting
+```
 
 ## Write a tape
 

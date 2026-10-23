@@ -82,3 +82,7 @@ The graph always shows the same spans the tree would. Type to search, and the
 graph shrinks to the matching traces.
 
 Scroll with the arrow keys, including left and right for wide graphs.
+
+For a run that is one big trace, such as a build tool, search log bodies
+instead: [Use the graph view](graph.md#scope-a-big-graph) walks through it on
+a Dagger pipeline.

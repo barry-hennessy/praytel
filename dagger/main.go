@@ -51,6 +51,9 @@ type scenario struct {
 	Packages []string `toml:"packages"`
 	// Env is extra environment for the recording container.
 	Env map[string]string `toml:"env"`
+	// Nesting lets the tape run the dagger CLI against this engine, for a
+	// workload that is itself a Dagger pipeline.
+	Nesting bool `toml:"nesting"`
 	// Stages build or supply the tools the tape runs.
 	Stages []stage `toml:"stage"`
 }
@@ -106,6 +109,10 @@ func (m *Demos) Record(
 	// +optional
 	fresh bool,
 ) (*dagger.Directory, error) {
+	cfg, err := m.config(ctx, scenario)
+	if err != nil {
+		return nil, err
+	}
 	ctr, err := m.Recorder(ctx, scenario)
 	if err != nil {
 		return nil, err
@@ -114,7 +121,9 @@ func (m *Demos) Record(
 		ctr = ctr.WithEnvVariable("DEMO_RECORDED_AT", time.Now().Format(time.RFC3339Nano))
 	}
 	return ctr.
-		WithExec([]string{"vhs", "scenario.tape"}).
+		WithExec([]string{"vhs", "scenario.tape"}, dagger.ContainerWithExecOpts{
+			ExperimentalPrivilegedNesting: cfg.Nesting,
+		}).
 		Directory("/out"), nil
 }
 

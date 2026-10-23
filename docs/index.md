@@ -28,6 +28,8 @@ before instrumenting any code of your own[^1].
    span that emitted it.
 3. [Get an overview of a system](guides/overview.md): which components are hit
    and how they are really wired together.
+4. [Use the graph view](guides/graph.md): read, move around and narrow the
+   graph of a real tool, a Dagger pipeline.
 
 ## Reference
 

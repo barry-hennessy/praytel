@@ -81,6 +81,28 @@ and attributes; a single matching span surfaces its whole trace.
 
 The TUI stays open after the child exits, until you quit.
 
+## Graph view
+
+Ctrl-G replaces the tree with a call graph of the same spans, and switches
+back. The search and scroll keys work the same in both views.
+
+- **Boxes.** One per distinct span name in each service, labelled
+  `service.name` and span name joined by `.`, with the number of spans under
+  that name. A span with no `service.name` resource attribute is labelled with
+  whatever the exporter reports, typically `unknown_service:<process>`.
+- **Arrows.** One per pair of boxes where a span of the first was the parent of
+  a span of the second. `×N` counts the calls when there were more than one.
+  A call between two spans of the same name adds to the box's count and draws
+  no arrow.
+- **Styles.** A box that calls others is coloured, matching its arrows and its
+  bar in the tree; a box that calls nothing is grey. A dashed arrow closes a
+  cycle.
+- **Search.** The graph is built from the spans the search leaves visible.
+  Searching traces keeps whole traces and highlights matching box labels.
+  Searching logs keeps the spans with matching logs and their ancestors.
+
+See [Use the graph view](../guides/graph.md).
+
 ## Exit status
 
 If the child started, praytel exits with the child's exit code. If the child

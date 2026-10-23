@@ -1,0 +1,6 @@
+A small Dagger pipeline: lint, test and three builds at once, then a package.
+Ctrl-G draws the graph: the Dagger CLI, its engine and the module. It runs to many screens.
+The whole run is one trace. Tab searches log bodies instead of traces.
+Only paths to spans with matching logs stay: one build box that ran ×3.
+Dashed arrows close a cycle: the module calls back into the engine.
+Ctrl-G again: the tree, with the same search.
