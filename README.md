@@ -21,6 +21,9 @@ you can run against a small example app, and a
 
 # Tl; dr:
 
+Install (Go 1.26+, [more options](docs/install.md)):
+ - `go install github.com/barry-hennessy/praytel/cmd/praytel@latest`
+
 Run:
  - `praytel -- command` for the append-only stream
  - `praytel --tui -- command` for a live trace/span tree.

@@ -16,6 +16,15 @@ praytel -- go test ./...          # append-only stream
 praytel --tui -- ./server         # live trace/span tree
 ```
 
+## Install
+
+```sh
+go install github.com/barry-hennessy/praytel/cmd/praytel@latest
+```
+
+See [Install praytel](install.md) for building from source, updating and
+troubleshooting.
+
 ## Guides
 
 Each guide has commands you can run against a small example app, or against
