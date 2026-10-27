@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"net/http"
 	"sync/atomic"
-	"time"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -125,13 +124,8 @@ func domainSpans(req *colltrace.ExportTraceServiceRequest) []domain.Span {
 				if sp == nil || len(sp.GetSpanId()) == 0 {
 					continue
 				}
-				var startTime, endTime time.Time
-				if n := sp.GetStartTimeUnixNano(); n != 0 {
-					startTime = time.Unix(0, int64(n))
-				}
-				if n := sp.GetEndTimeUnixNano(); n != 0 {
-					endTime = time.Unix(0, int64(n))
-				}
+				startTime := unixNano(sp.GetStartTimeUnixNano())
+				endTime := unixNano(sp.GetEndTimeUnixNano())
 
 				out = append(out, domain.Span{
 					TraceID:       hex.EncodeToString(sp.GetTraceId()),
@@ -173,7 +167,22 @@ func spanAttributes(kvs []*commonv1.KeyValue) []domain.Attr {
 	return out
 }
 
-func spanKind(k tracev1.Span_SpanKind) domain.SpanKind { return domain.SpanKind(k) }
+func spanKind(k tracev1.Span_SpanKind) domain.SpanKind {
+	switch k {
+	case tracev1.Span_SPAN_KIND_INTERNAL:
+		return domain.SpanKindInternal
+	case tracev1.Span_SPAN_KIND_SERVER:
+		return domain.SpanKindServer
+	case tracev1.Span_SPAN_KIND_CLIENT:
+		return domain.SpanKindClient
+	case tracev1.Span_SPAN_KIND_PRODUCER:
+		return domain.SpanKindProducer
+	case tracev1.Span_SPAN_KIND_CONSUMER:
+		return domain.SpanKindConsumer
+	default:
+		return domain.SpanKindUnspecified
+	}
+}
 
 func spanEvents(in []*tracev1.Span_Event) []domain.SpanEvent {
 	out := make([]domain.SpanEvent, 0, len(in))
