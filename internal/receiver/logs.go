@@ -3,6 +3,7 @@ package receiver
 import (
 	"context"
 	"encoding/hex"
+	"math"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -191,9 +192,14 @@ func anyValue(av *commonv1.AnyValue) domain.Value {
 	}
 }
 
+// unixNano is an OTLP timestamp as a time; 0 means unset. One past what an
+// int64 holds (the year 2262) is clamped rather than wrapped before 1970.
 func unixNano(n uint64) time.Time {
 	if n == 0 {
 		return time.Time{}
+	}
+	if n > math.MaxInt64 {
+		n = math.MaxInt64
 	}
 	return time.Unix(0, int64(n))
 }

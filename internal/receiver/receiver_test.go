@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"strconv"
@@ -218,6 +219,56 @@ func TestGRPCTracesBecomeDomainSpans(t *testing.T) {
 			}
 			if sp.Status != domain.SpanStatusError {
 				t.Fatalf("status=%v", sp.Status)
+			}
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for domain span")
+		}
+	})
+}
+
+func TestGRPCTracesOutOfRangeFieldsDoNotWrap(t *testing.T) {
+	sweet.Run(t, "out-of-range times and kinds are clamped, not wrapped", func(t *testing.T) recvDeps {
+		t.Helper()
+
+		return startRecv(t, make(chan domain.Span, 4), nil)
+	}, func(t *testing.T, d recvDeps) {
+		conn, err := grpc.NewClient(
+			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+		)
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		defer conn.Close()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		_, err = colltrace.NewTraceServiceClient(conn).Export(ctx, &colltrace.ExportTraceServiceRequest{
+			ResourceSpans: []*tracev1.ResourceSpans{{
+				ScopeSpans: []*tracev1.ScopeSpans{{
+					Spans: []*tracev1.Span{{
+						TraceId:           bytes.Repeat([]byte{0xab}, 16),
+						SpanId:            bytes.Repeat([]byte{0xcd}, 8),
+						Name:              "far-future",
+						StartTimeUnixNano: math.MaxUint64,
+						EndTimeUnixNano:   math.MaxUint64,
+						Kind:              tracev1.Span_SpanKind(1000),
+					}},
+				}},
+			}},
+		})
+		if err != nil {
+			t.Fatalf("export: %v", err)
+		}
+
+		select {
+		case sp := <-d.spans:
+			if sp.StartTime.Before(time.Unix(0, 0)) || sp.EndTime.Before(time.Unix(0, 0)) {
+				t.Fatalf("times wrapped before the epoch: %s..%s", sp.StartTime, sp.EndTime)
+			}
+			if sp.Kind != domain.SpanKindUnspecified {
+				t.Fatalf("kind=%v, want unspecified", sp.Kind)
 			}
 		case <-ctx.Done():
 			t.Fatal("timed out waiting for domain span")
