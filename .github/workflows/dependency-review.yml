@@ -1,0 +1,18 @@
+# Fails a pull request that adds or upgrades to a dependency with a known
+# vulnerability, in go.mod or in the actions workflows use. It compares the
+# pull request's dependency graph with its base branch's, so it only ever
+# looks at what the pull request changes; govulncheck in check.yml looks at
+# the whole tree, and at whether praytel can reach what it finds.
+name: dependency-review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
