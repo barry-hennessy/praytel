@@ -1,0 +1,42 @@
+# Weekly pull requests that keep dependencies current: praytel's Go
+# module, the Dagger module's, and the actions the workflows use (pinned
+# to commit SHAs, which Dependabot moves along with the version comment).
+#
+# Minor and patch updates come grouped, one pull request per ecosystem;
+# majors come one at a time. A release is only proposed once it is a week
+# old, so a compromised one has time to be found and pulled first.
+# Security updates skip the wait.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      go:
+        update-types: [minor, patch]
+
+  # The Dagger SDK's own dependencies follow the engine version in
+  # dagger.json; move that with `dagger develop` rather than here.
+  - package-ecosystem: gomod
+    directory: /dagger
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      dagger:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        update-types: [minor, patch]
