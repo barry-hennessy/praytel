@@ -4,6 +4,7 @@
 #
 #   make lint
 #   make vulncheck
+#   make zizmor
 #
 # Any finding fails the job. New vulnerabilities are published without
 # the code changing, so the checks also run weekly against main.
@@ -50,3 +51,20 @@ jobs:
         env:
           DAGGER: ${{ steps.dagger.outputs.dagger }}
         run: make vulncheck
+
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - id: dagger
+        uses: $/.github/actions/setup-dagger
+
+      - name: Zizmor
+        env:
+          DAGGER: ${{ steps.dagger.outputs.dagger }}
+          # Read-only, for the audits that look actions up on GitHub.
+          GH_TOKEN: ${{ github.token }}
+        run: make zizmor

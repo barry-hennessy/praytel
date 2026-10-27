@@ -31,6 +31,9 @@
 #
 #   make lint                      golangci-lint with .golangci.yml, gosec included
 #   make vulncheck                 govulncheck: known vulnerabilities praytel can reach
+#   make zizmor                    zizmor: security audit of .github workflows and actions
+#   GH_TOKEN=$(gh auth token) make zizmor
+#                                  the same, plus the audits that look actions up on GitHub
 
 DAGGER ?= dagger
 ASSETS ?= docs/assets
@@ -163,10 +166,13 @@ bench-history:
 	$(DAGGER) call bench-history --revs "$$revs" --names "$$names" $(if $(COUNT),--count $(COUNT),) $(fresh_flag) export --path $(BENCH); \
 	cat $(BENCH)/diff.txt
 
-.PHONY: lint vulncheck
+.PHONY: lint vulncheck zizmor
 
 lint:
 	$(DAGGER) call lint
 
 vulncheck:
 	$(DAGGER) call vulncheck
+
+zizmor:
+	$(DAGGER) call zizmor $(if $(GH_TOKEN),--token env:GH_TOKEN,)
