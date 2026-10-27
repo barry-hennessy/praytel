@@ -21,3 +21,22 @@ func (m *Demos) Lint(ctx context.Context) (string, error) {
 		WithExec([]string{"golangci-lint", "run", "./..."}).
 		Stdout(ctx)
 }
+
+// govulncheckVersion pins golang.org/x/vuln/cmd/govulncheck.
+const govulncheckVersion = "v1.9.0"
+
+// Vulncheck runs govulncheck over the repository source, with the Go
+// toolchain praytel is built with, and returns what it reports. It fails
+// the call on any known vulnerability that praytel's code can reach, in a
+// dependency or in the standard library; ones in code it never calls are
+// listed but don't fail it.
+//
+// The vulnerability database changes without the source changing, so the
+// call is never cached.
+//
+// +cache="never"
+func (m *Demos) Vulncheck(ctx context.Context) (string, error) {
+	return goContainer(m.Source).
+		WithExec([]string{"go", "run", "golang.org/x/vuln/cmd/govulncheck@" + govulncheckVersion, "./..."}).
+		Stdout(ctx)
+}

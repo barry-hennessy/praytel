@@ -26,6 +26,7 @@
 # Check targets, also run in the Dagger module, by CI on every pull request.
 #
 #   make lint                      golangci-lint with .golangci.yml, gosec included
+#   make vulncheck                 govulncheck: known vulnerabilities praytel can reach
 
 DAGGER ?= dagger
 ASSETS ?= docs/assets
@@ -130,7 +131,10 @@ bench-history:
 	$(DAGGER) call bench-history --revs "$$revs" --names "$$names" $(if $(COUNT),--count $(COUNT),) $(fresh_flag) export --path $(BENCH); \
 	cat $(BENCH)/diff.txt
 
-.PHONY: lint
+.PHONY: lint vulncheck
 
 lint:
 	$(DAGGER) call lint
+
+vulncheck:
+	$(DAGGER) call vulncheck

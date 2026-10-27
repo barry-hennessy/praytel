@@ -3,14 +3,18 @@
 # run locally:
 #
 #   make lint
+#   make vulncheck
 #
-# Any finding fails the job.
+# Any finding fails the job. New vulnerabilities are published without
+# the code changing, so the checks also run weekly against main.
 name: check
 
 on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -31,3 +35,18 @@ jobs:
         env:
           DAGGER: ${{ steps.dagger.outputs.dagger }}
         run: make lint
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - id: dagger
+        uses: $/.github/actions/setup-dagger
+
+      - name: Vulncheck
+        env:
+          DAGGER: ${{ steps.dagger.outputs.dagger }}
+        run: make vulncheck
