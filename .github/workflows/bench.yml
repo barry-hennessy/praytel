@@ -27,7 +27,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   BASE: origin/${{ github.base_ref || github.event.repository.default_branch }}
@@ -35,11 +34,16 @@ env:
 jobs:
   diff:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # To comment the comparison on the pull request.
+      pull-requests: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # The base branch has to be there to check out and compare with.
           fetch-depth: 0
+          persist-credentials: false
 
       - id: dagger
         uses: $/.github/actions/setup-dagger
@@ -53,18 +57,16 @@ jobs:
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: >-
-          make bench-comment
-          PR="${{ github.event.pull_request.number }}"
-          REPO="${{ github.repository }}"
-          DETAILS="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          DAGGER="$HOME/.local/bin/dagger"
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          DETAILS: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: make bench-comment DAGGER="$HOME/.local/bin/dagger"
 
       - name: Summarize
         if: always()
         run: |
           {
-            echo "## Benchmarks against ${{ github.base_ref || github.event.repository.default_branch }}"
+            echo "## Benchmarks against ${BASE#origin/}"
             echo
             echo "\`~\` means no significant difference. Shared runners vary by 5–10% from run to run, so read small changes in time with care; allocations don't vary."
             echo
