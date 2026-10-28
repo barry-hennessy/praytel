@@ -10,4 +10,5 @@ command or configuration surface, named after its manual page.
 
 The recordings in the guides live in `docs/assets/` and are generated from
 scripts by `make docs`; see [demo/README.md](demo/README.md). They are refreshed
-when a release is published.
+by hand before a release is tagged; `make hooks` turns on a pre-push hook that
+offers to do it when a release tag's recordings are out of date.

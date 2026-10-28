@@ -1,10 +1,15 @@
-# Records the demo walkthroughs in demo/scenarios. The work is done by the
-# Dagger module in dagger/, so this is the same command you run locally:
+# Records the demo walkthroughs in demo/scenarios, and checks the committed
+# recordings are up to date when a release is tagged. The work is done by
+# the Dagger module in dagger/ and the Makefile, so these are the same
+# commands you run locally:
 #
 #   make docs
+#   make docs-check
 #
-# Recordings are uploaded as an artifact on every run and committed to
-# docs/assets only when a release is published.
+# Recordings are committed by hand, before a release is tagged; the
+# pre-push hook (`make hooks`) offers to record them again when they're out
+# of date. On a pull request they are recorded and uploaded as an artifact,
+# to look at. Nothing here writes to the repository.
 name: demos
 
 on:
@@ -18,24 +23,21 @@ on:
       - "internal/**"
       - ".github/workflows/demos.yml"
       - ".github/actions/setup-dagger/**"
+  push:
+    tags: ["v*"]
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: read
 
 jobs:
   record:
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          # A release checks out a tag; commit the recordings to the default
-          # branch instead.
-          ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || '' }}
+          persist-credentials: false
 
       - id: dagger
         uses: $/.github/actions/setup-dagger
@@ -50,12 +52,15 @@ jobs:
           name: demos
           path: docs/assets
 
-      - name: Commit recordings
-        if: github.event_name == 'release'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/assets
-          git diff --cached --quiet && exit 0
-          git commit -m "Update demo recordings for ${{ github.event.release.tag_name }}"
-          git push
+  # A release tagged without the hook, or from GitHub's release page, still
+  # gets checked: this fails if the recordings at the tag are out of date.
+  fresh:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Check the recordings are up to date
+        run: make docs-check

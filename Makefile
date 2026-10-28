@@ -8,6 +8,10 @@
 #   make docs FRESH=1              record again even if nothing changed
 #   make docs-list                 list the recordings and what they are built from
 #   make docs-shell SCENARIO=traces    open a shell in a scenario's container
+#   make docs-check                list the recordings at HEAD that are out of date
+#   make docs-check REV=v0.3.0     the same, at any commit
+#   make docs-refresh              record again every recording here that is out of date
+#   make hooks                     turn on the pre-push hook that runs docs-check on release tags
 #
 # Benchmark targets. bench-diff runs in the same Dagger module, so CI runs
 # exactly what you run locally; its results land in bench-out/.
@@ -43,24 +47,31 @@ SCENARIOS  := $(notdir $(wildcard demo/scenarios/*))
 RECORDINGS := $(foreach s,$(SCENARIOS),$(ASSETS)/$(s).gif $(ASSETS)/$(s).mp4)
 
 # Everything every recording depends on: praytel itself, the shared recording
-# setup, the workloads and the pipeline.
-COMMON := go.mod go.sum dagger.json dagger/main.go \
+# setup, the workloads and the pipeline. Each recording also depends on its
+# own scenario directory. Markdown files don't count.
+COMMON_PATHS := go.mod go.sum dagger.json dagger/main.go \
 	demo/common.tape demo/tmux.conf demo/bin/demo-caption \
-	$(shell find cmd internal demo/workloads -type f -not -name '*.md')
+	cmd internal demo/workloads
+COMMON := $(shell find $(COMMON_PATHS) -type f -not -name '*.md')
+
+# The commit docs-check checks; see demo/stamp.
+REV ?= HEAD
 
 fresh_flag := $(if $(FRESH),--fresh,)
 
-.PHONY: docs docs-list docs-shell $(FRESH:%=FORCE)
+.PHONY: docs docs-list docs-shell docs-check docs-refresh hooks $(FRESH:%=FORCE)
 FORCE:
 
 docs: $(RECORDINGS)
 
-# One scenario run writes both formats. A recording is rebuilt when its
-# scenario directory or anything in COMMON is newer than it.
+# One scenario run writes both formats, and a stamp of what they were
+# recorded from (see demo/stamp). A recording is rebuilt when its scenario
+# directory or anything in COMMON is newer than it.
 .SECONDEXPANSION:
 $(ASSETS)/%.gif $(ASSETS)/%.mp4: $$(wildcard demo/scenarios/$$*/*) $(COMMON) $(if $(FRESH),FORCE)
 	$(DAGGER) call record --scenario $* $(fresh_flag) export --path $(ASSETS)
 	@touch $(ASSETS)/$*.gif $(ASSETS)/$*.mp4
+	@demo/stamp write $* $(ASSETS) $(COMMON_PATHS) demo/scenarios/$*
 
 # docs/assets/<name> is shorthand for both of that scenario's files.
 SHORTHANDS := $(SCENARIOS:%=$(ASSETS)/%)
@@ -69,6 +80,27 @@ $(SHORTHANDS): $(ASSETS)/%: $(ASSETS)/%.gif $(ASSETS)/%.mp4
 
 docs-list:
 	@for s in $(SCENARIOS); do echo "$(ASSETS)/$$s.gif  <-  demo/scenarios/$$s"; done
+
+# Unlike make's timestamps, these compare content, so they hold in a fresh
+# clone and in CI. docs-check looks at a commit (REV), docs-refresh at the
+# working tree.
+docs-check:
+	@stale=0; \
+	for s in $(SCENARIOS); do \
+		demo/stamp check $(REV) $$s $(ASSETS) $(COMMON_PATHS) demo/scenarios/$$s || stale=1; \
+	done; \
+	exit $$stale
+
+docs-refresh:
+	@for s in $(SCENARIOS); do \
+		demo/stamp check - $$s $(ASSETS) $(COMMON_PATHS) demo/scenarios/$$s > /dev/null || \
+			$(MAKE) --no-print-directory -B $(ASSETS)/$$s.gif || exit 1; \
+	done
+
+# Turns on the hooks in .githooks: pre-push checks the recordings before a
+# release tag goes out.
+hooks:
+	git config core.hooksPath .githooks
 
 docs-shell:
 	@test -n "$(SCENARIO)" || { echo "usage: make docs-shell SCENARIO=<name>"; exit 2; }
