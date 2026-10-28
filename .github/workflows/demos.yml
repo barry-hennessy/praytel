@@ -17,15 +17,13 @@ on:
       - "cmd/**"
       - "internal/**"
       - ".github/workflows/demos.yml"
+      - ".github/actions/setup-dagger/**"
   workflow_dispatch:
   release:
     types: [published]
 
 permissions:
   contents: read
-
-env:
-  DAGGER_VERSION: "0.21.10"
 
 jobs:
   record:
@@ -39,8 +37,8 @@ jobs:
           # branch instead.
           ref: ${{ github.event_name == 'release' && github.event.repository.default_branch || '' }}
 
-      - name: Install Dagger
-        run: curl -fsSL https://dl.dagger.io/dagger/install.sh | BIN_DIR="$HOME/.local/bin" sh
+      - id: dagger
+        uses: $/.github/actions/setup-dagger
 
       - name: Record
         run: |
