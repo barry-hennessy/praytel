@@ -191,7 +191,7 @@ func startChild(
 	stdout *os.File,
 	stderr *os.File,
 ) (int, bool, error) {
-	cmd := exec.Command(command[0], command[1:]...)
+	cmd := exec.Command(command[0], command[1:]...) //nolint:gosec // running the command praytel was given is its job
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

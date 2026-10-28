@@ -22,6 +22,10 @@
 #   make bench-report              print the pull request comment for the last bench-diff
 #   GITHUB_TOKEN=$(gh auth token) make bench-comment PR=12
 #                                  post it to pull request 12, or update the one posted before
+#
+# Check targets, also run in the Dagger module, by CI on every pull request.
+#
+#   make lint                      golangci-lint with .golangci.yml, gosec included
 
 DAGGER ?= dagger
 ASSETS ?= docs/assets
@@ -125,3 +129,8 @@ bench-history:
 	rm -rf $(BENCH); \
 	$(DAGGER) call bench-history --revs "$$revs" --names "$$names" $(if $(COUNT),--count $(COUNT),) $(fresh_flag) export --path $(BENCH); \
 	cat $(BENCH)/diff.txt
+
+.PHONY: lint
+
+lint:
+	$(DAGGER) call lint

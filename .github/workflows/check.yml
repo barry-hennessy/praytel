@@ -1,0 +1,33 @@
+# Static checks on every pull request and every push to main. The work is
+# done by the Dagger module in dagger/, so each job is the same command you
+# run locally:
+#
+#   make lint
+#
+# Any finding fails the job.
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - id: dagger
+        uses: $/.github/actions/setup-dagger
+
+      - name: Lint
+        env:
+          DAGGER: ${{ steps.dagger.outputs.dagger }}
+        run: make lint

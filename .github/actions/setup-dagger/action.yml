@@ -1,0 +1,37 @@
+# Installs the Dagger CLI that dagger.json's engineVersion names, checked
+# against a SHA-256 kept here rather than one fetched alongside the
+# download, so a tampered release can't vouch for itself. The checksum is
+# the one Dagger publishes in the release's checksums.txt, and GitHub's
+# digest for the same asset agrees with it.
+#
+# To move to a new version, change both here and engineVersion in
+# dagger.json:
+#
+#   curl -fsSL https://dl.dagger.io/dagger/releases/<version>/checksums.txt | grep linux_amd64
+name: Set up Dagger
+description: Install a pinned, verified Dagger CLI into ~/.local/bin; pass its path to make as DAGGER.
+
+outputs:
+  dagger:
+    description: Path to the dagger binary.
+    value: ${{ steps.install.outputs.dagger }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        DAGGER_VERSION: "0.21.10"
+        DAGGER_SHA256: f9ee083767dd12cdac583f9db3fedbebbbb3064f69152998be1f121d1a6cc103
+      run: |
+        set -euo pipefail
+        name="dagger_v${DAGGER_VERSION}_linux_amd64.tar.gz"
+        tmp=$(mktemp -d)
+        curl -fsSL -o "$tmp/$name" "https://github.com/dagger/dagger/releases/download/v${DAGGER_VERSION}/$name"
+        echo "${DAGGER_SHA256}  $tmp/$name" | sha256sum --check --strict
+        mkdir -p "$HOME/.local/bin"
+        tar -xzf "$tmp/$name" -C "$HOME/.local/bin" dagger
+        rm -rf "$tmp"
+        echo "dagger=$HOME/.local/bin/dagger" >> "$GITHUB_OUTPUT"
+        "$HOME/.local/bin/dagger" version

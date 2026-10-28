@@ -28,7 +28,7 @@ func limitHTTPBody(w http.ResponseWriter, req *http.Request) {
 func readProtobuf(req *http.Request, msg proto.Message) error {
 	defer req.Body.Close()
 
-	var r io.Reader = io.LimitReader(req.Body, maxOTLPMessageBytes+1)
+	r := io.LimitReader(req.Body, maxOTLPMessageBytes+1)
 	if req.Header.Get("Content-Encoding") == "gzip" {
 		gz, err := gzip.NewReader(req.Body)
 		if err != nil {
