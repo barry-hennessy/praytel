@@ -36,8 +36,35 @@ dagger call record-all export --path docs/assets
 dagger call record --scenario traces --fresh export --path docs/assets
 ```
 
-Recordings are committed only when a release is published
-(`.github/workflows/demos.yml`). Other CI runs upload them as an artifact.
+## Before a release
+
+Recordings are committed by hand, once per release, before it is tagged.
+Each one has a stamp next to it, `docs/assets/<name>.inputs`, that `make
+docs` writes: git's hash of every file it was recorded from, and of the
+recording. Unlike make's timestamps, that holds in a fresh clone and in CI.
+
+```sh
+make docs-check                # recordings at HEAD that are out of date
+make docs-check REV=v0.3.0     # the same, at any commit
+make docs-refresh              # record again whatever is out of date here
+```
+
+Turn on the pre-push hook once with `make hooks`. When you push a `v*` tag
+whose recordings are out of date, it asks whether to record them again:
+
+- `y` records them, commits them on top of the tagged commit, moves the
+  tag onto that commit, and stops the push. Push again to send the moved
+  tag. This needs the tag at the tip of the branch you have checked out,
+  and no uncommitted changes.
+- `N` pushes as it is.
+
+Without a terminal to ask on, it pushes as it is; set `DEMOS_ANSWER=y` or
+`n` to answer without one.
+
+CI checks the same when a `v*` tag is pushed (`.github/workflows/demos.yml`),
+so a release tagged without the hook, or on GitHub's release page, still
+shows up as out of date. On pull requests, CI records them and uploads the
+result as an artifact to look at; it never commits them.
 
 ## How it fits together
 

@@ -1,0 +1,84 @@
+#!/bin/sh
+# Before a release tag (v*) is pushed, checks that the demo recordings
+# committed at it are up to date with what they record (make docs-check),
+# and if not, offers to record them again:
+#
+#   y  record what is out of date, commit it, move the tag onto that commit,
+#      and stop the push so the moved tag can be pushed instead
+#   N  push anyway
+#
+# Without a terminal to ask on, it pushes anyway with a warning; set
+# DEMOS_ANSWER=y or n to answer without one. Turned on by `make hooks`.
+set -u
+
+remote=$1
+zero=0000000000000000000000000000000000000000
+
+ask() {
+	if [ -n "${DEMOS_ANSWER:-}" ]; then
+		answer=$DEMOS_ANSWER
+	elif (exec < /dev/tty) 2>/dev/null; then
+		printf '%s [y/N] ' "$1" > /dev/tty
+		read -r answer < /dev/tty || answer=
+	else
+		echo "pre-push: no terminal to ask on; pushing without recording again" >&2
+		answer=n
+	fi
+	case $answer in y|Y|yes) return 0 ;; *) return 1 ;; esac
+}
+
+# rerecord <tag> <commit>: record again, commit, and move <tag> onto it.
+rerecord() {
+	tag=$1 commit=$2
+	branch=$(git symbolic-ref -q --short HEAD) || {
+		echo "pre-push: to record again, check out the branch $tag is on, with $tag at its tip" >&2
+		return 1
+	}
+	if [ "$(git rev-parse HEAD)" != "$commit" ]; then
+		echo "pre-push: $tag isn't at the tip of $branch; check out its commit on a branch to record again" >&2
+		return 1
+	fi
+	if ! git diff --quiet HEAD; then
+		echo "pre-push: there are uncommitted changes, which would be recorded; commit or stash them first" >&2
+		return 1
+	fi
+
+	make docs-refresh || return 1
+	git add -A docs/assets
+	git commit -q -m "Update demo recordings for $tag" || return 1
+
+	# Recreate the tag on the new commit as it was: annotated with the same
+	# message (and signed again) if it was, lightweight if not.
+	if [ "$(git cat-file -t "refs/tags/$tag")" = tag ]; then
+		msg=$(git for-each-ref --format='%(contents:subject)%0a%0a%(contents:body)' "refs/tags/$tag")
+		sign=
+		[ -n "$(git for-each-ref --format='%(contents:signature)' "refs/tags/$tag")" ] && sign=-s
+		git tag -f -a $sign -m "$msg" "$tag" > /dev/null || return 1
+	else
+		git tag -f "$tag" > /dev/null || return 1
+	fi
+
+	echo "pre-push: recorded again and committed as $(git rev-parse --short HEAD), and $tag moved onto it." >&2
+	echo "pre-push: push again: git push $remote $branch $tag" >&2
+}
+
+status=0
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+	case $local_ref in refs/tags/v*) ;; *) continue ;; esac
+	[ "$local_sha" = "$zero" ] && continue
+	tag=${local_ref#refs/tags/}
+	commit=$(git rev-parse "$local_sha^{commit}")
+
+	echo "pre-push: checking the demo recordings at $tag" >&2
+	make -s docs-check REV="$commit" >&2 2>/dev/null && continue
+
+	if ask "The recordings at $tag are out of date. Record them again now?"; then
+		rerecord "$tag" "$commit"
+		# Stop this push either way: it would send the tag as it was.
+		status=1
+	else
+		echo "pre-push: pushing $tag with out-of-date recordings" >&2
+	fi
+done
+
+exit $status

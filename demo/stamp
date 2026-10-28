@@ -1,0 +1,95 @@
+#!/bin/sh
+# Records what a demo recording was made from, and checks whether it still
+# matches. make docs writes a stamp next to each recording, <assets>/<name>.inputs,
+# listing git's content hash of every input file and of the recording itself.
+# The same listing, worked out again from a commit or the working tree and
+# compared with the stamp, says whether the recording is out of date. Git
+# hashes content, so unlike make's timestamps this holds in a fresh clone
+# and in CI.
+#
+#   demo/stamp write <name> <assets> <path>...
+#       stamp <assets>/<name>.{gif,mp4} as recorded from the working tree's <path>s
+#   demo/stamp check <rev> <name> <assets> <path>...
+#       exit 1, saying why, if the recording at <rev> doesn't match its stamp
+#       there; <rev> "-" checks the working tree
+#
+# Markdown files aren't inputs, as in the Makefile.
+set -eu
+
+# listing <rev> <assets> <name> <path>...: the stamp's content as it should
+# be, for <rev> or, given "-", the working tree.
+listing() {
+	rev=$1 assets=$2 name=$3
+	shift 3
+	{
+		if [ "$rev" = - ]; then
+			git ls-files --cached --others --exclude-standard -- "$@" |
+				grep -v '\.md$' | sort -u |
+				while read -r f; do [ -f "$f" ] && echo "$f"; done |
+				blobs_from_files in
+			printf '%s\n' "$assets/$name.gif" "$assets/$name.mp4" |
+				while read -r f; do [ -f "$f" ] && echo "$f"; done |
+				blobs_from_files out
+		else
+			git ls-tree -r "$rev" -- "$@" | blobs_from_tree in | grep -v '\.md$' || true
+			git ls-tree "$rev" -- "$assets/$name.gif" "$assets/$name.mp4" | blobs_from_tree out
+		fi
+	} | sort
+}
+
+# blobs_from_files <kind>: "<kind> <hash> <path>" for each path on stdin.
+blobs_from_files() {
+	paths=$(cat)
+	[ -n "$paths" ] || return 0
+	printf '%s\n' "$paths" | git hash-object --stdin-paths |
+		paste -d ' ' - /dev/fd/3 3<<EOF | sed "s/^/$1 /"
+$paths
+EOF
+}
+
+# blobs_from_tree <kind>: "<kind> <hash> <path>" for each blob git ls-tree lists.
+blobs_from_tree() {
+	awk -F '\t' -v kind="$1" '{ split($1, a, " "); if (a[2] == "blob") print kind, a[3], $2 }'
+}
+
+# stamp <rev> <assets> <name>: the stamp at <rev>, or in the working tree.
+stamp() {
+	if [ "$1" = - ]; then
+		cat "$2/$3.inputs" 2>/dev/null
+	else
+		git show "$1:$2/$3.inputs" 2>/dev/null
+	fi
+}
+
+cmd=${1:-}
+case $cmd in
+write)
+	[ $# -ge 4 ] || { echo "usage: demo/stamp write <name> <assets> <path>..." >&2; exit 2; }
+	name=$2 assets=$3
+	shift 3
+	listing - "$assets" "$name" "$@" > "$assets/$name.inputs"
+	;;
+check)
+	[ $# -ge 5 ] || { echo "usage: demo/stamp check <rev> <name> <assets> <path>..." >&2; exit 2; }
+	rev=$2 name=$3 assets=$4
+	shift 4
+	want=$(listing "$rev" "$assets" "$name" "$@")
+	if ! have=$(stamp "$rev" "$assets" "$name"); then
+		echo "$name: no stamp; record it with make docs-refresh"
+		exit 1
+	fi
+	[ "$want" = "$have" ] && exit 0
+	changed=$(printf '%s\n%s\n' "$want" "$have" | sort | uniq -u | awk '{ print $1, $3 }' | sort -u)
+	if printf '%s\n' "$changed" | grep -q '^out '; then
+		echo "$name: the recording isn't the one its stamp was written for"
+	else
+		echo "$name: out of date; changed since it was recorded:"
+		printf '%s\n' "$changed" | sed 's/^in /  /'
+	fi
+	exit 1
+	;;
+*)
+	echo "usage: demo/stamp write|check ..." >&2
+	exit 2
+	;;
+esac
