@@ -152,7 +152,7 @@ func componentStyle(n *graph.Node) cellStyle {
 	if n.Color == 0 {
 		return styleNeutral
 	}
-	return stylePalette + cellStyle((n.Color-1)%len(componentPalette))
+	return stylePalette + cellStyle((n.Color-1)%len(componentPalette)) //nolint:gosec // Color is 1..len(componentPalette); see Model.colors
 }
 
 type gridCell struct {

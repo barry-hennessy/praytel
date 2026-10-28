@@ -70,9 +70,7 @@ func TestCorrelatorEventsDriveFocusAdmit(t *testing.T) {
 					return
 				}
 
-				for _, id := range d.filt.Observe(ev) {
-					admitted = append(admitted, id)
-				}
+				admitted = append(admitted, d.filt.Observe(ev)...)
 			case <-deadline:
 				t.Fatalf("timeout, admitted=%v", admitted)
 			}

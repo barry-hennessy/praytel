@@ -1,0 +1,22 @@
+# golangci-lint v2, run by `make lint` (in the Dagger module) and in CI.
+# The defaults (errcheck, govet, ineffassign, staticcheck, unused) plus
+# gosec for security, and two linters for mistakes that leak or hide errors.
+version: "2"
+
+linters:
+  enable:
+    - gosec
+    - bodyclose
+    - errorlint
+  exclusions:
+    presets:
+      # Unchecked Close, fmt.Fprint and the like.
+      - std-error-handling
+      - common-false-positives
+    rules:
+      # Tests use math/rand, temp files and variable URLs on purpose, and
+      # close things they are about to throw away.
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
