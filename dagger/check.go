@@ -6,7 +6,7 @@ import (
 
 // golangciImage is golangci-lint, which runs the linters .golangci.yml
 // names, gosec among them.
-const golangciImage = "golangci/golangci-lint:v2.15.0"
+const golangciImage = "golangci/golangci-lint:v2.15.0@sha256:fbfcfd12a6f8d7f1b97b3362ca80fc2a244d46863148c73cb88e7793af96c481"
 
 // Lint runs golangci-lint over the repository source with its
 // .golangci.yml, and returns what it reports. Any finding fails the call.

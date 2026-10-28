@@ -3,6 +3,6 @@ guide = "logs"
 workload = "shop"
 
 [[stage]]
-image = "golang:1.26"
+image = "golang:1.26@sha256:24a707af49702fa44f02785475d02fb752f6982d3e9c0afb7696e1f0204e7ce9"
 run = ["go build -o /out/shop ."]
 copy = ["/out/shop:/usr/local/bin/shop"]

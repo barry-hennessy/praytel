@@ -19,8 +19,8 @@ import (
 )
 
 const (
-	goImage  = "golang:1.26"
-	vhsImage = "ghcr.io/charmbracelet/vhs:v0.10.0"
+	goImage  = "golang:1.26@sha256:24a707af49702fa44f02785475d02fb752f6982d3e9c0afb7696e1f0204e7ce9"
+	vhsImage = "ghcr.io/charmbracelet/vhs:v0.10.0@sha256:e88ed3faa06183a197fd44ded83e706098d9e4038b72da94bcdb9cb9b67e3527"
 
 	scenariosDir = "demo/scenarios"
 	workloadsDir = "demo/workloads"
