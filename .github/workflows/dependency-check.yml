@@ -1,0 +1,48 @@
+# Reminds the repository's owner, weekly, to check the dependencies
+# Dependabot can't update (see .github/dependency-check.md). It opens an
+# issue with that checklist, assigned to the owner, or, if last week's is
+# still open, comments on it mentioning them.
+name: dependency-check
+
+on:
+  schedule:
+    - cron: "43 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # To open the issue, or comment on it, and make its label.
+      issues: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/dependency-check.md
+          sparse-checkout-cone-mode: false
+
+      - name: Open or nudge the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          LABEL: dependency-check
+        run: |
+          gh label create "$LABEL" --color ededed \
+            --description "Weekly check of the dependencies Dependabot can't update" 2>/dev/null || true
+          open=$(gh issue list --label "$LABEL" --state open --json number --jq 'first(.[].number) // empty')
+          if [ -z "$open" ]; then
+            gh issue create \
+              --title "Check dependencies, week of $(date -u +%Y-%m-%d)" \
+              --label "$LABEL" \
+              --assignee "$OWNER" \
+              --body-file .github/dependency-check.md
+          else
+            gh issue comment "$open" \
+              --body "@$OWNER this is still open a week on: time to work through what's left."
+          fi
