@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -348,7 +349,7 @@ func exportOTLPLogBody(body, serviceName string) error {
 	defer func() { _ = lp.Shutdown(context.Background()) }()
 
 	var rec otellog.Record
-	rec.SetBody(otellog.StringValue(body))
+	rec.SetBody(attribute.StringValue(body))
 	lp.Logger("praytel-helper").Emit(ctx, rec)
 
 	if err := lp.ForceFlush(ctx); err != nil {
