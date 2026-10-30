@@ -128,6 +128,9 @@ type Model struct {
 // press.
 const hscrollStep = 8
 
+// wheelStep is how many rows one notch of the mouse wheel scrolls.
+const wheelStep = 3
+
 // NewModel constructs a model. It is exported for embedding and deterministic
 // tests.
 func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
@@ -251,27 +254,17 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 				m.scroll = 0
 			}
 		case "up", "ctrl+k":
-			if m.scroll > 0 {
-				m.scroll--
-			}
+			m.scrollBy(-1)
 		case "down", "ctrl+j":
-			m.scroll++
-			m.clampScroll()
+			m.scrollBy(1)
 		case "pgup":
-			m.scroll -= max(1, m.contentHeight()-1)
-			if m.scroll < 0 {
-				m.scroll = 0
-			}
+			m.scrollBy(-max(1, m.contentHeight()-1))
 		case "pgdown":
-			m.scroll += max(1, m.contentHeight()-1)
-			m.clampScroll()
+			m.scrollBy(max(1, m.contentHeight()-1))
 		case "left", "ctrl+b":
-			m.hscroll -= hscrollStep
-			if m.hscroll < 0 {
-				m.hscroll = 0
-			}
+			m.panBy(-hscrollStep)
 		case "right", "ctrl+f":
-			m.hscroll += hscrollStep
+			m.panBy(hscrollStep)
 		case "home":
 			m.hscroll = 0
 		default:
@@ -280,9 +273,40 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 				m.scroll = 0
 			}
 		}
+	case tea.MouseMsg:
+		if msg.Action != tea.MouseActionPress {
+			break
+		}
+		// Shift turns the vertical wheel sideways, for mice and terminals
+		// that have no horizontal wheel of their own.
+		switch {
+		case msg.Button == tea.MouseButtonWheelUp && msg.Shift,
+			msg.Button == tea.MouseButtonWheelLeft:
+			m.panBy(-hscrollStep)
+		case msg.Button == tea.MouseButtonWheelDown && msg.Shift,
+			msg.Button == tea.MouseButtonWheelRight:
+			m.panBy(hscrollStep)
+		case msg.Button == tea.MouseButtonWheelUp:
+			m.scrollBy(-wheelStep)
+		case msg.Button == tea.MouseButtonWheelDown:
+			m.scrollBy(wheelStep)
+		}
 	}
 
 	return m, nil
+}
+
+// scrollBy moves the view n rows down, or up for a negative n, stopping at
+// either end.
+func (m *Model) scrollBy(n int) {
+	m.scroll += n
+	m.clampScroll()
+}
+
+// panBy moves the view n columns right, or left for a negative n. Only the
+// left edge is enforced here; View stops it at the widest line.
+func (m *Model) panBy(n int) {
+	m.hscroll = max(0, m.hscroll+n)
 }
 
 func (m *Model) apply(ev domain.Event) {
@@ -1191,7 +1215,7 @@ func (m Model) panel() string {
 		m.query,
 	)
 	help := fmt.Sprintf(
-		" tab mode • ctrl+g graph • ↑/↓ scroll • ←/→ pan • esc clear • ctrl+q quit • %s",
+		" tab mode • ctrl+g graph • ↑/↓/wheel scroll • ←/→/shift+wheel pan • esc clear • ctrl+q quit • %s",
 		state,
 	)
 	if m.hscroll > 0 {
@@ -1245,6 +1269,7 @@ func (t TUI) Run(ctx context.Context) error {
 		tea.WithInput(t.in),
 		tea.WithOutput(t.out),
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 	)
 	if _, err := p.Run(); err != nil {
 		log.Error("run tui", "err", err)

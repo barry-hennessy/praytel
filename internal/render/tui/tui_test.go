@@ -416,3 +416,69 @@ func TestScrollStopsAtTheBottom(t *testing.T) {
 		t.Fatalf("one up from the bottom scrolled to %d, want %d", got, bottom-1)
 	}
 }
+
+func TestMouseWheelScrollsAndStopsAtEitherEnd(t *testing.T) {
+	m := largeModel(t, 2, 10, 4, true)
+	var model tea.Model = m
+	bottom := len(m.treeLines()) - m.contentHeight()
+	wheel := func(b tea.MouseButton) {
+		model, _ = model.Update(tea.MouseMsg{Button: b, Action: tea.MouseActionPress})
+	}
+
+	wheel(tea.MouseButtonWheelDown)
+	if got := model.(Model).scroll; got != wheelStep {
+		t.Fatalf("one notch down scrolled to %d, want %d", got, wheelStep)
+	}
+	for range bottom {
+		wheel(tea.MouseButtonWheelDown)
+	}
+	if got := model.(Model).scroll; got != bottom {
+		t.Fatalf("scroll = %d after wheeling past the end, want %d", got, bottom)
+	}
+	for range bottom {
+		wheel(tea.MouseButtonWheelUp)
+	}
+	if got := model.(Model).scroll; got != 0 {
+		t.Fatalf("scroll = %d after wheeling past the top, want 0", got)
+	}
+}
+
+func TestMouseWheelPansWithHorizontalWheelOrShift(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		right, left tea.MouseEvent
+	}{
+		{
+			"horizontal wheel",
+			tea.MouseEvent{Button: tea.MouseButtonWheelRight},
+			tea.MouseEvent{Button: tea.MouseButtonWheelLeft},
+		},
+		{
+			"shift+wheel",
+			tea.MouseEvent{Button: tea.MouseButtonWheelDown, Shift: true},
+			tea.MouseEvent{Button: tea.MouseButtonWheelUp, Shift: true},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var model tea.Model = largeModel(t, 2, 10, 4, true)
+			model, _ = model.Update(tea.MouseMsg(tc.right))
+			if got := model.(Model); got.hscroll != hscrollStep || got.scroll != 0 {
+				t.Fatalf("panning right gave hscroll %d scroll %d, want %d and 0", got.hscroll, got.scroll, hscrollStep)
+			}
+			model, _ = model.Update(tea.MouseMsg(tc.left))
+			model, _ = model.Update(tea.MouseMsg(tc.left))
+			if got := model.(Model).hscroll; got != 0 {
+				t.Fatalf("panning left past the edge left hscroll at %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestMouseReleasesAndClicksDoNotMoveTheView(t *testing.T) {
+	var model tea.Model = largeModel(t, 2, 10, 4, true)
+	model, _ = model.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionRelease})
+	model, _ = model.Update(tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	if got := model.(Model); got.scroll != 0 || got.hscroll != 0 {
+		t.Fatalf("non-wheel mouse input moved the view to scroll %d hscroll %d", got.scroll, got.hscroll)
+	}
+}

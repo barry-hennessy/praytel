@@ -27,4 +27,5 @@ Run:
 
 In the TUI, type to fuzzy-search traces (matches span names and attributes,
 including trace attributes), press Tab to search log bodies
-instead, use ↑/↓ to scroll, Esc to clear, and Ctrl-C to quit.
+instead, use ↑/↓ or the mouse wheel to scroll (←/→ or Shift+wheel to pan),
+Esc to clear, and Ctrl-C to quit.
