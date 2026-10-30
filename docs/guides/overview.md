@@ -81,4 +81,6 @@ one box; put an order ID in the span name and you get a box per order.
 The graph always shows the same spans the tree would. Type to search, and the
 graph shrinks to the matching traces.
 
-Scroll with the arrow keys, including left and right for wide graphs.
+Scroll with the arrow keys, including left and right for wide graphs. While
+there is a search, left and right move its cursor instead; hold Shift to
+scroll sideways.
