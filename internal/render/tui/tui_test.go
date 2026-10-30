@@ -105,7 +105,7 @@ func TestTreeRendersAttributesAsATableUnderHeader(t *testing.T) {
 	}
 }
 
-func TestTreeShowsAnErroredSpansErrorInRedUnderItsHeader(t *testing.T) {
+func TestTreeShowsASpansStatusMessageInItsStatusColorUnderItsHeader(t *testing.T) {
 	profile := lipgloss.ColorProfile()
 	lipgloss.SetColorProfile(termenv.ANSI256)
 	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
@@ -128,29 +128,40 @@ func TestTreeShowsAnErroredSpansErrorInRedUnderItsHeader(t *testing.T) {
 	})
 	m.apply(domain.SpanUpserted{
 		TraceID: "trace-3", SpanID: "ok", Name: "ping", Component: "api",
-		Status: domain.SpanStatusOK, StatusMessage: "ignored",
+		Status: domain.SpanStatusOK, StatusMessage: "pong",
+	})
+	m.apply(domain.SpanUpserted{
+		TraceID: "trace-4", SpanID: "retried", Name: "fetch", Component: "cache",
+		Status: domain.SpanStatusOK,
+		Events: []domain.SpanEvent{{Name: "exception", Attributes: []domain.Attr{
+			{Key: "exception.message", Value: domain.StringValue("timeout, retrying")},
+		}}},
 	})
 
 	lines := m.treeLines()
 	if got := len(lines); got != m.layoutTree().lines {
 		t.Fatalf("rendered %d lines, layout counted %d", got, m.layoutTree().lines)
 	}
-	red := errorStyle.Render("x")
-	red = red[:strings.Index(red, "x")]
+	colorOf := func(style lipgloss.Style) string {
+		r := style.Render("x")
+		return r[:strings.Index(r, "x")]
+	}
+	red, green := colorOf(errorStyle), colorOf(okStyle)
 	for header, want := range map[string]string{
-		"db.query":        "connection refused",
-		"payments.charge": "card declined",
+		"db.query":        red + "connection refused",
+		"payments.charge": red + "card declined",
+		"api.ping":        green + "pong",
 	} {
 		i := slices.IndexFunc(lines, func(line string) bool { return strings.Contains(line, header) })
 		if i == -1 || i+1 >= len(lines) {
 			t.Fatalf("missing %q:\n%s", header, strings.Join(lines, "\n"))
 		}
-		if !strings.Contains(lines[i+1], red+want) {
-			t.Fatalf("%q's error %q not in red directly under it:\n%q", header, want, lines[i+1])
+		if !strings.Contains(lines[i+1], want) {
+			t.Fatalf("%q's status message %q not directly under it:\n%q", header, want, lines[i+1])
 		}
 	}
-	if view := m.View(); strings.Contains(view, "ignored") {
-		t.Fatalf("status message shown for a span not in error:\n%s", view)
+	if view := m.View(); strings.Contains(view, "retrying") {
+		t.Fatalf("exception message shown for a span not in error:\n%s", view)
 	}
 }
 

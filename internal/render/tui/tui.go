@@ -56,7 +56,7 @@ type spanView struct {
 	parentID   string
 	name       string
 	component  string
-	errMessage string
+	statusMsg  string
 	declared   bool
 	start      time.Time
 	end        time.Time
@@ -299,7 +299,7 @@ func (m *Model) apply(ev domain.Event) {
 		sp.start = ev.StartTime
 		sp.end = ev.EndTime
 		sp.status = ev.Status
-		sp.errMessage = errorMessage(ev)
+		sp.statusMsg = statusMessage(ev)
 		sp.attributes = ev.Attributes
 		m.colorCallers(sp)
 	case domain.SpanParentLinked:
@@ -675,11 +675,11 @@ type treeSpan struct {
 	line      int              // the line its header is on
 }
 
-// height is how many lines s takes up: its header, error, one per
+// height is how many lines s takes up: its header, status message, one per
 // attribute, its logs and the rule under it.
 func (s treeSpan) height() int {
 	n := 2 + len(s.sp.attributes) + len(s.logs)
-	if s.sp.errMessage != "" {
+	if s.sp.statusMsg != "" {
 		n++
 	}
 	return n
@@ -767,8 +767,8 @@ func (m Model) treeLines() []string {
 
 func selectionKey(traceID, spanID string) string { return traceID + "\x00" + spanID }
 
-// renderSpan draws one span's lines: its header, error, attributes, logs
-// and rule.
+// renderSpan draws one span's lines: its header, status message,
+// attributes, logs and rule.
 func (m Model) renderSpan(s treeSpan, h spanHighlight) []string {
 	sp, ancestors := s.sp, s.ancestors
 	trail := append(ancestors[:len(ancestors):len(ancestors)], m.componentColor(sp))
@@ -785,8 +785,12 @@ func (m Model) renderSpan(s treeSpan, h spanHighlight) []string {
 	)
 	lines := make([]string, 0, s.height())
 	lines = append(lines, header)
-	if sp.errMessage != "" {
-		lines = append(lines, prefix+detailIndent+errorStyle.Render(sp.errMessage))
+	if sp.statusMsg != "" {
+		style := okStyle
+		if sp.status == domain.SpanStatusError {
+			style = errorStyle
+		}
+		lines = append(lines, prefix+detailIndent+style.Render(sp.statusMsg))
 	}
 	for _, row := range attributeRows(sp.attributes, h.attrs) {
 		lines = append(lines, prefix+detailIndent+row)
@@ -895,19 +899,24 @@ func attributeRows(attrs []domain.Attr, masks [][]bool) []string {
 	return rows
 }
 
-// errorStyle is the red of the × marking a span in error, used for the
-// error itself under its header.
-var errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+// errorStyle and okStyle are the red of the × marking a span in error and
+// the green of the ● marking one that succeeded, used for the span's status
+// message under its header.
+var (
+	errorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+)
 
-// errorMessage is what went wrong in a span in error: its status message,
-// or failing that the message of the last exception recorded on it, which
-// is where many SDKs put the error and leave the status message empty.
-func errorMessage(ev domain.SpanUpserted) string {
-	if ev.Status != domain.SpanStatusError {
-		return ""
-	}
+// statusMessage is the span's status message. For a span in error with
+// none, it falls back to the message of the last exception recorded on it,
+// which is where many SDKs put the error and leave the status message
+// empty.
+func statusMessage(ev domain.SpanUpserted) string {
 	if ev.StatusMessage != "" {
 		return clean(ev.StatusMessage)
+	}
+	if ev.Status != domain.SpanStatusError {
+		return ""
 	}
 	for i := len(ev.Events) - 1; i >= 0; i-- {
 		if ev.Events[i].Name != "exception" {
@@ -927,7 +936,7 @@ func (m Model) state(sp *spanView) (string, lipgloss.Style) {
 		if sp.status == domain.SpanStatusError {
 			return "×", errorStyle.Bold(true)
 		}
-		return "●", lipgloss.NewStyle().Foreground(lipgloss.Color("42")).Bold(true)
+		return "●", okStyle.Bold(true)
 	}
 	spinner := []string{"◐", "◓", "◑", "◒"}
 	i := int(m.now.UnixMilli()/150) % len(spinner)
