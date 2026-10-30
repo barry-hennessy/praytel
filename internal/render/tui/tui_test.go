@@ -439,6 +439,68 @@ func TestHorizontalScrollPansLongLinesIntoView(t *testing.T) {
 	}
 }
 
+func TestArrowsMoveTheSearchCursor(t *testing.T) {
+	var model tea.Model = NewModel(nil, nil)
+	press := func(msgs ...tea.KeyMsg) {
+		for _, msg := range msgs {
+			model, _ = model.Update(msg)
+		}
+	}
+	runes := func(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+	left := tea.KeyMsg{Type: tea.KeyLeft}
+	right := tea.KeyMsg{Type: tea.KeyRight}
+	backspace := tea.KeyMsg{Type: tea.KeyBackspace}
+
+	press(runes("dbunav"), left, left, left, left, runes(" "))
+	if q := model.(Model).query; q != "db unav" {
+		t.Fatalf("typing after moving left inserted at the wrong place: %q", q)
+	}
+	press(right, backspace)
+	if q := model.(Model).query; q != "db nav" {
+		t.Fatalf("backspace after moving right deleted the wrong rune: %q", q)
+	}
+	// The cursor stops at either end rather than panning.
+	press(left, left, left, left, left, left, left, left, runes(">"))
+	press(right, right, right, right, right, right, right, right, right, runes("<"))
+	m := model.(Model)
+	if m.query != ">db nav<" {
+		t.Fatalf("cursor did not stop at the ends of the search: %q", m.query)
+	}
+	if m.hscroll != 0 {
+		t.Fatalf("arrows panned during a search: hscroll %d", m.hscroll)
+	}
+	press(left, backspace)
+	if q := model.(Model).query; q != ">db na<" {
+		t.Fatalf("backspace in the middle of the search: %q", q)
+	}
+
+	// Esc returns the cursor to the end along with clearing the search.
+	press(left, left, tea.KeyMsg{Type: tea.KeyEsc}, runes("ab"))
+	if q := model.(Model).query; q != "ab" {
+		t.Fatalf("esc did not reset the cursor: %q", q)
+	}
+}
+
+func TestShiftArrowsPanDuringASearch(t *testing.T) {
+	for _, view := range []viewMode{viewTree, viewGraph} {
+		m := NewModel(nil, nil)
+		m.view = view
+		m.query = "db"
+		var model tea.Model = m
+		for range 3 {
+			model, _ = model.Update(tea.KeyMsg{Type: tea.KeyShiftRight})
+		}
+		model, _ = model.Update(tea.KeyMsg{Type: tea.KeyShiftLeft})
+		m = model.(Model)
+		if m.hscroll != 2*hscrollStep {
+			t.Fatalf("view %d: shift+arrows did not pan during a search: hscroll %d", view, m.hscroll)
+		}
+		if m.query != "db" || m.cursorBack != 0 {
+			t.Fatalf("view %d: shift+arrows moved the search cursor: %q, %d back", view, m.query, m.cursorBack)
+		}
+	}
+}
+
 func TestTreeWindowMatchesTheWholeTree(t *testing.T) {
 	m := largeModel(t, 3, 12, 6, true)
 	for _, mode := range []searchMode{searchTraces, searchLogs} {

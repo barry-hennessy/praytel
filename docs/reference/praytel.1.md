@@ -68,14 +68,15 @@ and attributes; a single matching span surfaces its whole trace.
 
 | Key | Action |
 |---|---|
-| any character | Append to the search. |
-| Backspace | Delete the last character. |
+| any character | Insert into the search at the cursor. |
+| Backspace | Delete the character before the cursor. |
 | Esc | Clear the search. |
 | Tab | Switch between searching traces and searching log bodies. |
 | Ctrl-G | Switch between the tree view and the call graph view. |
 | ↑ / ↓ (or Ctrl-K / Ctrl-J) | Scroll one line. |
 | PgUp / PgDn | Scroll one page. |
-| ← / → (or Ctrl-B / Ctrl-F) | Scroll horizontally. |
+| ← / → (or Ctrl-B / Ctrl-F) | Move the cursor in the search; with no search, scroll horizontally. |
+| Shift-← / Shift-→ | Scroll horizontally, even during a search. |
 | Home | Return to the left edge. |
 | Ctrl-C, Ctrl-Q | Quit. |
 

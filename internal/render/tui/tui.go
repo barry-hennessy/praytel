@@ -123,6 +123,10 @@ type Model struct {
 	done     bool
 	warning  string
 	quitting bool
+
+	// cursorBack is how many of the query's runes lie after the cursor,
+	// so the zero value keeps the cursor at the end of the query.
+	cursorBack int
 }
 
 // hscrollStep is how many columns left/right move the viewport per key
@@ -243,12 +247,13 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			m.hscroll = 0
 		case "esc":
 			m.query = ""
+			m.cursorBack = 0
 			m.scroll = 0
 			m.hscroll = 0
 		case "backspace", "ctrl+h":
-			if len(m.query) > 0 {
-				r := []rune(m.query)
-				m.query = string(r[:len(r)-1])
+			before, after := m.splitQuery()
+			if len(before) > 0 {
+				m.query = string(before[:len(before)-1]) + string(after)
 				m.scroll = 0
 			}
 		case "up", "ctrl+k":
@@ -267,23 +272,49 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			m.scroll += max(1, m.contentHeight()-1)
 			m.clampScroll()
 		case "left", "ctrl+b":
-			m.hscroll -= hscrollStep
-			if m.hscroll < 0 {
-				m.hscroll = 0
+			// While there is a search, the arrows move its cursor; with
+			// none they pan, and shift+arrows pan either way, so a wide
+			// graph or line can still be panned in the middle of a search.
+			if m.query != "" {
+				before, after := m.splitQuery()
+				m.cursorBack = min(len(before)+len(after), len(after)+1)
+			} else {
+				m.panLeft()
 			}
 		case "right", "ctrl+f":
+			if m.query != "" {
+				_, after := m.splitQuery()
+				m.cursorBack = max(0, len(after)-1)
+			} else {
+				m.hscroll += hscrollStep
+			}
+		case "shift+left":
+			m.panLeft()
+		case "shift+right":
 			m.hscroll += hscrollStep
 		case "home":
 			m.hscroll = 0
 		default:
 			if msg.Type == tea.KeyRunes {
-				m.query += string(msg.Runes)
+				before, after := m.splitQuery()
+				m.query = string(before) + string(msg.Runes) + string(after)
 				m.scroll = 0
 			}
 		}
 	}
 
 	return m, nil
+}
+
+func (m *Model) panLeft() {
+	m.hscroll = max(0, m.hscroll-hscrollStep)
+}
+
+// splitQuery returns the query's runes before and after the cursor.
+func (m Model) splitQuery() (before, after []rune) {
+	r := []rune(m.query)
+	at := len(r) - min(m.cursorBack, len(r))
+	return r[:at], r[at:]
 }
 
 func (m *Model) apply(ev domain.Event) {
@@ -1234,10 +1265,15 @@ func (m Model) panel() string {
 		traceStyle.Render("traces"),
 		logStyle.Render("logs"),
 		viewStyle.Render(viewLabel),
-		m.query,
+		m.queryWithCursor(),
 	)
+	arrows := "←/→ pan"
+	if m.query != "" {
+		arrows = "←/→ cursor, ⇧ pan"
+	}
 	help := fmt.Sprintf(
-		" tab mode • ctrl+g graph • ↑/↓ scroll • ←/→ pan • esc clear • ctrl+q quit • %s",
+		" tab mode • ctrl+g graph • ↑/↓ scroll • %s • esc clear • ctrl+q quit • %s",
+		arrows,
 		state,
 	)
 	if m.hscroll > 0 {
@@ -1256,6 +1292,17 @@ func (m Model) panel() string {
 		BorderForeground(lipgloss.Color("240")).
 		Width(max(1, m.width)).
 		Render(line + "\n" + help)
+}
+
+// queryWithCursor renders the query with the rune under the cursor in
+// reverse video, or a reversed space after it when the cursor is at the end.
+func (m Model) queryWithCursor() string {
+	before, after := m.splitQuery()
+	under, rest := " ", ""
+	if len(after) > 0 {
+		under, rest = string(after[0]), string(after[1:])
+	}
+	return string(before) + lipgloss.NewStyle().Reverse(true).Render(under) + rest
 }
 
 // TUI renders the event stream as an interactive live tree.
