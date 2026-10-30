@@ -673,14 +673,10 @@ type treeSpan struct {
 	line      int              // the line its header is on
 }
 
-// height is how many lines s takes up: its header, attributes, logs and
-// the rule under it.
+// height is how many lines s takes up: its header, one per attribute, its
+// logs and the rule under it.
 func (s treeSpan) height() int {
-	n := 2 + len(s.logs)
-	if len(s.sp.attributes) > 0 {
-		n++
-	}
-	return n
+	return 2 + len(s.sp.attributes) + len(s.logs)
 }
 
 func (m Model) layoutTree() *treeLayout {
@@ -782,8 +778,8 @@ func (m Model) renderSpan(s treeSpan, h spanHighlight) []string {
 	)
 	lines := make([]string, 0, s.height())
 	lines = append(lines, header)
-	if len(sp.attributes) > 0 {
-		lines = append(lines, prefix+detailIndent+attributesLine(sp.attributes, h.attrs))
+	for _, row := range attributeRows(sp.attributes, h.attrs) {
+		lines = append(lines, prefix+detailIndent+row)
 	}
 	for _, log := range s.logs {
 		body := clean(log.body)
@@ -844,24 +840,44 @@ func (m Model) spanRule(trail []lipgloss.Color, closed bool) string {
 			Render(strings.Repeat("─", width))
 }
 
-// attributesLine renders a span's attributes on one faint, italic line so
-// they read as metadata attached to the header above rather than as a log
-// entry (which is plain-styled). masks,
-// when non-nil, highlights the runes of the matching attribute(s) that made
-// the span match the current trace search (see matchSpan); it is nil
-// outside of a search or for spans not shown for their own sake.
-func attributesLine(attrs []domain.Attr, masks [][]bool) string {
-	base := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
-	parts := make([]string, 0, len(attrs))
-	for i, a := range attrs {
-		text := clean(a.Key) + "=" + clean(a.Value.String())
-		var mask []bool
-		if i < len(masks) {
-			mask = masks[i]
-		}
-		parts = append(parts, styleSegments(text, mask, base, matchHighlightStyle.Italic(true)))
+// maxAttributeKeyWidth caps the key column of a span's attribute table, so
+// one long key doesn't push every value off to the right; a key longer than
+// this runs into its own value's column alone.
+const maxAttributeKeyWidth = 32
+
+// attributeRows renders a span's attributes as a two-column table, one
+// attribute per row with the keys padded to a shared width, so many or long
+// attributes stay readable. Keys are faint and italic so the table reads as
+// metadata attached to the header above rather than as a log entry (which
+// is plain-styled). masks, when non-nil, highlights the runes of the
+// matching attribute(s) that made the span match the current trace search
+// (see matchSpan, whose masks cover "key=value"); it is nil outside of a
+// search or for spans not shown for their own sake.
+func attributeRows(attrs []domain.Attr, masks [][]bool) []string {
+	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
+	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(" │ ")
+
+	keyWidth := 0
+	for _, a := range attrs {
+		keyWidth = max(keyWidth, min(maxAttributeKeyWidth, lipgloss.Width(clean(a.Key))))
 	}
-	return strings.Join(parts, base.Render("  "))
+	rows := make([]string, 0, len(attrs))
+	for i, a := range attrs {
+		key, value := clean(a.Key), clean(a.Value.String())
+		var keyMask, valueMask []bool
+		if i < len(masks) && masks[i] != nil {
+			n := min(utf8.RuneCountInString(a.Key), len(masks[i]))
+			keyMask = masks[i][:n]
+			valueMask = masks[i][min(n+1, len(masks[i])):] // skip the "="
+		}
+		pad := strings.Repeat(" ", max(0, keyWidth-lipgloss.Width(key)))
+		rows = append(rows,
+			styleSegments(key, keyMask, keyStyle, matchHighlightStyle.Italic(true))+pad+
+				sep+
+				styleSegments(value, valueMask, valueStyle, matchHighlightStyle))
+	}
+	return rows
 }
 
 func (m Model) state(sp *spanView) (string, lipgloss.Style) {
