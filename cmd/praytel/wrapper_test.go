@@ -592,6 +592,140 @@ func TestSignalToPraytelReachesChild(t *testing.T) {
 	}
 }
 
+func TestSecondSignalKillsChildThatIgnoresSignals(t *testing.T) {
+	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			sweet.Run(t, "a repeated signal stops praytel even when the child ignores it", wrapFactory, func(t *testing.T, d wrapDeps) {
+				marker := filepath.Join(t.TempDir(), "ready")
+				cmd := praytelCmd(t, d.dir, "--", childBin, "-ignore-signals", "-marker", marker)
+				var stderr bytes.Buffer
+				cmd.Stderr = &stderr
+				mustStart(t, cmd)
+
+				waitForFile(t, marker)
+				done := make(chan error, 1)
+				go func() {
+					done <- cmd.Wait()
+				}()
+
+				if err := cmd.Process.Signal(sig); err != nil {
+					t.Fatalf("signal praytel: %v", err)
+				}
+				select {
+				case err := <-done:
+					t.Fatalf("praytel should wait for the child after one signal, exited: %v stderr=%q", err, stderr.String())
+				case <-time.After(300 * time.Millisecond):
+				}
+
+				if err := cmd.Process.Signal(sig); err != nil {
+					t.Fatalf("signal praytel again: %v", err)
+				}
+
+				var err error
+				select {
+				case err = <-done:
+				case <-time.After(5 * time.Second):
+					_ = cmd.Process.Kill()
+					t.Fatalf("praytel still running after a second %s", sig)
+				}
+				var ee *exec.ExitError
+				if !errors.As(err, &ee) {
+					t.Fatalf("wait praytel: %v", err)
+				}
+				if want := 128 + int(syscall.SIGKILL); ee.ExitCode() != want {
+					t.Fatalf("exit=%d, want %d for a killed child; stderr=%q", ee.ExitCode(), want, stderr.String())
+				}
+				assertNoStrayFiles(t, d.dir)
+			})
+		})
+	}
+}
+
+func TestOrphanHoldingStdoutDoesNotHang(t *testing.T) {
+	sweet.Run(t, "praytel returns after the drain cap when a background process keeps stdout open", wrapFactory, func(t *testing.T, d wrapDeps) {
+		marker := filepath.Join(t.TempDir(), "orphan")
+		cmd := praytelCmd(t, d.dir, "--drain-timeout", "200ms",
+			"--", childBin, "-orphan-stdout", "30s", "-exit", "7", "-marker", marker)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		mustStart(t, cmd)
+		t.Cleanup(func() { killOrphan(t, marker) })
+
+		err := waitCmd(t, cmd, 5*time.Second)
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 7 {
+			t.Fatalf("want child exit 7, got %v stderr=%q", err, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "child done") {
+			t.Fatalf("child output lost: stdout=%q", stdout.String())
+		}
+		if !strings.Contains(stderr.String(), "still open") {
+			t.Fatalf("want a warning about the held stdout, stderr=%q", stderr.String())
+		}
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
+func TestSecondSignalStopsWaitingOnOrphanStdout(t *testing.T) {
+	sweet.Run(t, "a repeated signal cuts the wait on output a background process holds open", wrapFactory, func(t *testing.T, d wrapDeps) {
+		marker := filepath.Join(t.TempDir(), "orphan")
+		cmd := praytelCmd(t, d.dir, "--drain-timeout", "1m",
+			"--", childBin, "-orphan-stdout", "30s", "-marker", marker)
+		mustStart(t, cmd)
+		t.Cleanup(func() { killOrphan(t, marker) })
+
+		waitForFile(t, marker)
+		for range 2 {
+			if err := cmd.Process.Signal(os.Interrupt); err != nil {
+				t.Fatalf("signal praytel: %v", err)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+
+		// The exit code depends on whether the first signal beat the child's
+		// own exit; returning well inside the 1m drain cap is the point.
+		_ = waitCmd(t, cmd, 5*time.Second)
+		assertNoStrayFiles(t, d.dir)
+	})
+}
+
+// praytelCmd builds a praytel invocation on free OTLP ports.
+func praytelCmd(t *testing.T, dir string, args ...string) *exec.Cmd {
+	t.Helper()
+
+	flags := []string{
+		"--grpc-port", strconv.Itoa(mustFreePort(t)),
+		"--http-port", strconv.Itoa(mustFreePort(t)),
+		"--drain-idle", "5ms",
+	}
+	cmd := exec.Command(praytelBin, append(flags, args...)...)
+	cmd.Dir = dir
+
+	return cmd
+}
+
+func mustStart(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start praytel: %v", err)
+	}
+}
+
+func killOrphan(t *testing.T, marker string) {
+	t.Helper()
+
+	raw, err := os.ReadFile(marker)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(string(raw))
+	if err != nil {
+		t.Fatalf("orphan pid %q: %v", raw, err)
+	}
+	_ = syscall.Kill(pid, syscall.SIGKILL)
+}
+
 func TestWrapperHasNoOTelSDKImport(t *testing.T) {
 	sweet.Run(t, "command package does not import the OTel SDK", wrapFactory, func(t *testing.T, _ wrapDeps) {
 		cmd := exec.Command("go", "list", "-f", "{{range .Imports}}{{println .}}{{end}}", ".")

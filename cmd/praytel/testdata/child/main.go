@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -47,7 +48,35 @@ func main() {
 	traceID := flag.String("trace-id", "", "hex trace id for exported span")
 	spanID := flag.String("span-id", "", "hex span id for exported span")
 	waitSignal := flag.Bool("wait-signal", false, "handle SIGINT/SIGTERM, print a JSON line, then exit")
+	ignoreSignals := flag.Bool("ignore-signals", false, "ignore SIGINT/SIGTERM, create -marker, then hang")
+	orphanStdout := flag.Duration("orphan-stdout", 0, "leave a process holding stdout/stderr this long, write its pid to -marker, then exit")
 	flag.Parse()
+
+	if *ignoreSignals {
+		signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
+		if err := os.WriteFile(*marker, []byte("ran\n"), 0o600); err != nil {
+			fmt.Fprint(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		time.Sleep(time.Hour)
+		os.Exit(*exit)
+	}
+
+	if *orphanStdout > 0 {
+		orphan := exec.Command("sleep", strconv.Itoa(int(orphanStdout.Seconds())))
+		orphan.Stdout = os.Stdout
+		orphan.Stderr = os.Stderr
+		if err := orphan.Start(); err != nil {
+			fmt.Fprint(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		if err := os.WriteFile(*marker, []byte(strconv.Itoa(orphan.Process.Pid)), 0o600); err != nil {
+			fmt.Fprint(os.Stderr, err.Error())
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "child done")
+		os.Exit(*exit)
+	}
 
 	if *marker != "" && !*waitSignal {
 		if err := os.WriteFile(*marker, []byte("ran\n"), 0o600); err != nil {
