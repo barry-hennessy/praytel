@@ -501,6 +501,28 @@ func TestShiftArrowsPanDuringASearch(t *testing.T) {
 	}
 }
 
+func TestCachedPanelMatchesAFreshRender(t *testing.T) {
+	var model tea.Model = NewModel(nil, nil)
+	runes := func(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+	steps := []tea.Msg{
+		runes("db"), tea.KeyMsg{Type: tea.KeyLeft}, runes("x"),
+		tea.KeyMsg{Type: tea.KeyShiftRight}, tea.KeyMsg{Type: tea.KeyTab},
+		tea.KeyMsg{Type: tea.KeyCtrlG}, tea.WindowSizeMsg{Width: 60, Height: 10},
+		tea.KeyMsg{Type: tea.KeyBackspace}, tea.KeyMsg{Type: tea.KeyEsc},
+		tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyHome},
+		eventMsg{events: []domain.Event{domain.ForestShed{}}, ok: true},
+		eventMsg{events: []domain.Event{domain.DrainComplete{}}},
+	}
+	for i, msg := range steps {
+		model, _ = model.Update(msg)
+		m := model.(Model)
+		_ = m.View()
+		if got, want := m.panel(), m.renderPanel(); got != want {
+			t.Fatalf("step %d (%#v): cached footer is stale:\n%s\nwant:\n%s", i, msg, got, want)
+		}
+	}
+}
+
 func TestTreeWindowMatchesTheWholeTree(t *testing.T) {
 	m := largeModel(t, 3, 12, 6, true)
 	for _, mode := range []searchMode{searchTraces, searchLogs} {

@@ -527,6 +527,24 @@ func (m *Model) clampScroll() {
 type viewCache struct {
 	tree  cached[*treeLayout]
 	graph cached[*graphLayout]
+
+	// panel is the footer as last rendered, which changes far less often
+	// than the frames it is drawn on.
+	panel    string
+	panelKey panelKey
+	panelOK  bool
+}
+
+// panelKey is everything the footer is rendered from.
+type panelKey struct {
+	mode       searchMode
+	view       viewMode
+	query      string
+	cursorBack int
+	width      int
+	hscroll    int
+	done       bool
+	warning    string
 }
 
 type cacheKey struct {
@@ -1242,7 +1260,21 @@ func clean(s string) string {
 	}, s)
 }
 
+// panel returns the footer, rendering it again only when what it shows has
+// changed.
 func (m Model) panel() string {
+	key := panelKey{
+		mode: m.mode, view: m.view, query: m.query, cursorBack: m.cursorBack,
+		width: m.width, hscroll: m.hscroll, done: m.done, warning: m.warning,
+	}
+	c := m.cache
+	if !c.panelOK || c.panelKey != key {
+		c.panel, c.panelKey, c.panelOK = m.renderPanel(), key, true
+	}
+	return c.panel
+}
+
+func (m Model) renderPanel() string {
 	traceStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	logStyle := traceStyle
 	active := lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
