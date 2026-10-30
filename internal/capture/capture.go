@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -74,7 +76,8 @@ func Copy(ctx context.Context, lt observability.LoggingTracer, source domain.Sou
 		}
 	}
 
-	if err := sc.Err(); err != nil {
+	// A read deadline is how the caller stops capture early; not a failure.
+	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
 		log.Warn("capture read", "err", err, "source", string(source))
 	}
 

@@ -21,6 +21,16 @@ prints a unified view. The `--` separator is required.
 By default the output is an append-only stream. `--tui` renders a live
 trace/span tree instead.
 
+### Signals
+
+The first SIGINT or SIGTERM is forwarded to the child, and praytel still
+captures its shutdown output and drains OTLP. A second one kills the child and
+stops waiting on its output and OTLP. A third exits praytel at once.
+
+Once the child exits, praytel waits at most `--drain-timeout` (at least 1s) for
+its stdout and stderr to close. A background process the child left behind can
+hold them open; praytel warns and stops capturing them.
+
 ## Flags
 
 ### Rendering
@@ -79,11 +89,13 @@ and attributes; a single matching span surfaces its whole trace.
 | Home | Return to the left edge. |
 | Ctrl-C, Ctrl-Q | Quit. |
 
-The TUI stays open after the child exits, until you quit.
+The TUI stays open after the child exits, until you quit. Quitting while the
+child still runs sends it SIGINT, as the first signal above.
 
 ## Exit status
 
-If the child started, praytel exits with the child's exit code. If the child
+If the child started, praytel exits with the child's exit code, or `128 + N` if
+signal `N` killed it. If the child
 never started (it could not be executed, a port could not be bound, or the TUI
 could not start) or the invocation is malformed, praytel exits with `1`.
 Warnings and praytel's own logs go to stderr.
