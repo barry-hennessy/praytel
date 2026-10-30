@@ -5,6 +5,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,55 @@ func TestTreeRendersAttributesAsATableUnderHeader(t *testing.T) {
 	}
 	if !strings.HasPrefix(lines[logIdx], prefix+detailIndent) {
 		t.Fatalf("log line lost its indent:\n%q", lines[logIdx])
+	}
+}
+
+func TestTreeShowsAnErroredSpansErrorInRedUnderItsHeader(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+
+	m := NewModel(nil, nil)
+	m.height = 20
+	m.now = time.Unix(20, 0)
+	m.apply(domain.SpanUpserted{
+		TraceID: "trace-1", SpanID: "status", Name: "query", Component: "db",
+		Status: domain.SpanStatusError, StatusMessage: "connection refused",
+		Attributes: []domain.Attr{{Key: "db.system", Value: domain.StringValue("postgres")}},
+	})
+	m.apply(domain.SpanUpserted{
+		TraceID: "trace-2", SpanID: "exception", Name: "charge", Component: "payments",
+		Status: domain.SpanStatusError,
+		Events: []domain.SpanEvent{{Name: "exception", Attributes: []domain.Attr{
+			{Key: "exception.type", Value: domain.StringValue("*errors.errorString")},
+			{Key: "exception.message", Value: domain.StringValue("card declined")},
+		}}},
+	})
+	m.apply(domain.SpanUpserted{
+		TraceID: "trace-3", SpanID: "ok", Name: "ping", Component: "api",
+		Status: domain.SpanStatusOK, StatusMessage: "ignored",
+	})
+
+	lines := m.treeLines()
+	if got := len(lines); got != m.layoutTree().lines {
+		t.Fatalf("rendered %d lines, layout counted %d", got, m.layoutTree().lines)
+	}
+	red := errorStyle.Render("x")
+	red = red[:strings.Index(red, "x")]
+	for header, want := range map[string]string{
+		"db.query":        "connection refused",
+		"payments.charge": "card declined",
+	} {
+		i := slices.IndexFunc(lines, func(line string) bool { return strings.Contains(line, header) })
+		if i == -1 || i+1 >= len(lines) {
+			t.Fatalf("missing %q:\n%s", header, strings.Join(lines, "\n"))
+		}
+		if !strings.Contains(lines[i+1], red+want) {
+			t.Fatalf("%q's error %q not in red directly under it:\n%q", header, want, lines[i+1])
+		}
+	}
+	if view := m.View(); strings.Contains(view, "ignored") {
+		t.Fatalf("status message shown for a span not in error:\n%s", view)
 	}
 }
 
