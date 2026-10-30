@@ -143,6 +143,39 @@ func BenchmarkTreeScrollKey(b *testing.B) {
 	}
 }
 
+// BenchmarkScrollWheel is one notch of the mouse wheel followed by the
+// redraw it causes. A trackpad sends these in bursts of dozens a second, so
+// each has to cost no more than a key press does.
+func BenchmarkScrollWheel(b *testing.B) {
+	notch := func(button tea.MouseButton, shift bool) tea.MouseMsg {
+		return tea.MouseMsg{Button: button, Action: tea.MouseActionPress, Shift: shift}
+	}
+	cases := []struct {
+		name  string
+		view  viewMode
+		notch tea.MouseMsg
+	}{
+		{"tree/down", viewTree, notch(tea.MouseButtonWheelDown, false)},
+		{"tree/right", viewTree, notch(tea.MouseButtonWheelRight, false)},
+		{"tree/shift+down", viewTree, notch(tea.MouseButtonWheelDown, true)},
+		{"graph/down", viewGraph, notch(tea.MouseButtonWheelDown, false)},
+		{"graph/right", viewGraph, notch(tea.MouseButtonWheelRight, false)},
+	}
+	m := largeModel(b, 100, 50, 40, true)
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			mm := m
+			mm.view = tc.view
+			var tm tea.Model = mm
+			_ = tm.View() // lay the view out first; a notch after that shouldn't
+			for b.Loop() {
+				tm, _ = tm.Update(tc.notch)
+				_ = tm.View()
+			}
+		})
+	}
+}
+
 // drawWholeGraph builds, lays out and draws every line of the graph view.
 func drawWholeGraph(m Model) []string {
 	return m.layoutGraphView().lines()

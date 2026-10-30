@@ -474,6 +474,26 @@ func TestMouseWheelPansWithHorizontalWheelOrShift(t *testing.T) {
 	}
 }
 
+func TestViewFillsTheScreenExactlyHoweverNarrow(t *testing.T) {
+	m := largeModel(t, 2, 10, 4, true)
+	m.height = 24
+	m.hscroll = 4
+	m.query = strings.Repeat("a long query ", 20)
+	m.warning = ""
+	for _, width := range []int{20, 40, 80, 100, 160} {
+		m.width = width
+		view := m.View()
+		if got := strings.Count(view, "\n") + 1; got != m.height {
+			t.Fatalf("width %d: view is %d rows tall on a %d-row screen:\n%s", width, got, m.height, view)
+		}
+		for i, l := range strings.Split(view, "\n") {
+			if w := ansi.StringWidth(l); w > width {
+				t.Fatalf("width %d: row %d is %d wide", width, i, w)
+			}
+		}
+	}
+}
+
 func TestMouseReleasesAndClicksDoNotMoveTheView(t *testing.T) {
 	var model tea.Model = largeModel(t, 2, 10, 4, true)
 	model, _ = model.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown, Action: tea.MouseActionRelease})

@@ -1215,7 +1215,7 @@ func (m Model) panel() string {
 		m.query,
 	)
 	help := fmt.Sprintf(
-		" tab mode • ctrl+g graph • ↑/↓/wheel scroll • ←/→/shift+wheel pan • esc clear • ctrl+q quit • %s",
+		" tab mode • ctrl+g graph • ↑/↓ scroll • ←/→ pan • esc clear • ctrl+q quit • %s",
 		state,
 	)
 	if m.hscroll > 0 {
@@ -1228,12 +1228,16 @@ func (m Model) panel() string {
 	}
 	help = lipgloss.NewStyle().Foreground(helpColor).Render(help)
 
+	// Each line is cut to the screen rather than left to wrap: View leaves
+	// the panel exactly three rows, and a fourth would push the top of the
+	// tree off the screen.
+	width := max(1, m.width)
 	return lipgloss.NewStyle().
 		BorderTop(true).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("240")).
-		Width(max(1, m.width)).
-		Render(line + "\n" + help)
+		Width(width).
+		Render(ansi.Truncate(line, width, "…") + "\n" + ansi.Truncate(help, width, "…"))
 }
 
 // TUI renders the event stream as an interactive live tree.
