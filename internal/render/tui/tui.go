@@ -848,34 +848,39 @@ const maxAttributeKeyWidth = 32
 // attributeRows renders a span's attributes as a two-column table, one
 // attribute per row with the keys padded to a shared width, so many or long
 // attributes stay readable. Keys are faint and italic so the table reads as
-// metadata attached to the header above rather than as a log entry (which
-// is plain-styled). masks, when non-nil, highlights the runes of the
-// matching attribute(s) that made the span match the current trace search
-// (see matchSpan, whose masks cover "key=value"); it is nil outside of a
-// search or for spans not shown for their own sake.
+// metadata attached to the header above rather than as a log entry; values
+// are left in the terminal's own color. masks, when non-nil, highlights the
+// runes of the matching attribute(s) that made the span match the current
+// trace search (see matchSpan, whose masks cover "key=value"); it is nil
+// outside of a search or for spans not shown for their own sake.
+//
+// Render is costly next to everything else here, and only a screenful of
+// rows is ever drawn per frame, so each row costs one: the key, its padding
+// and the column separator share a style, and the value needs none unless
+// part of it matched.
 func attributeRows(attrs []domain.Attr, masks [][]bool) []string {
 	keyStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Italic(true)
-	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("250"))
-	sep := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(" │ ")
 
+	keys := make([]string, len(attrs))
+	widths := make([]int, len(attrs))
 	keyWidth := 0
-	for _, a := range attrs {
-		keyWidth = max(keyWidth, min(maxAttributeKeyWidth, lipgloss.Width(clean(a.Key))))
+	for i, a := range attrs {
+		keys[i] = clean(a.Key)
+		widths[i] = ansi.StringWidth(keys[i])
+		keyWidth = max(keyWidth, min(maxAttributeKeyWidth, widths[i]))
 	}
 	rows := make([]string, 0, len(attrs))
 	for i, a := range attrs {
-		key, value := clean(a.Key), clean(a.Value.String())
-		var keyMask, valueMask []bool
-		if i < len(masks) && masks[i] != nil {
-			n := min(utf8.RuneCountInString(a.Key), len(masks[i]))
-			keyMask = masks[i][:n]
-			valueMask = masks[i][min(n+1, len(masks[i])):] // skip the "="
+		key := keys[i] + strings.Repeat(" ", max(0, keyWidth-widths[i])) + " │ "
+		value := clean(a.Value.String())
+		if i >= len(masks) || masks[i] == nil {
+			rows = append(rows, keyStyle.Render(key)+value)
+			continue
 		}
-		pad := strings.Repeat(" ", max(0, keyWidth-lipgloss.Width(key)))
+		n := min(utf8.RuneCountInString(a.Key), len(masks[i]))
 		rows = append(rows,
-			styleSegments(key, keyMask, keyStyle, matchHighlightStyle.Italic(true))+pad+
-				sep+
-				styleSegments(value, valueMask, valueStyle, matchHighlightStyle))
+			styleSegments(key, masks[i][:n], keyStyle, matchHighlightStyle.Italic(true))+
+				styleSegments(value, masks[i][min(n+1, len(masks[i])):], lipgloss.NewStyle(), matchHighlightStyle)) // skip the "="
 	}
 	return rows
 }
