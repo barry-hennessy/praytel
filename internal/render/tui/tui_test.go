@@ -52,7 +52,7 @@ func TestTreeRendersLiveStateDurationLogsAndNesting(t *testing.T) {
 	}
 }
 
-func TestTreeRendersAttributesUnderHeaderNotAsLogLine(t *testing.T) {
+func TestTreeRendersAttributesAsATableUnderHeader(t *testing.T) {
 	m := NewModel(nil, nil)
 	m.height = 12
 	m.now = time.Unix(20, 0)
@@ -65,35 +65,39 @@ func TestTreeRendersAttributesUnderHeaderNotAsLogLine(t *testing.T) {
 
 	lines := m.treeLines()
 
-	headerIdx := -1
-	attrIdx := -1
-	logIdx := -1
+	headerIdx, methodIdx, statusIdx, logIdx := -1, -1, -1, -1
 	for i, line := range lines {
 		switch {
 		case strings.Contains(line, "api.request"):
 			headerIdx = i
-		case strings.Contains(line, "http.method=GET"):
-			attrIdx = i
+		case strings.Contains(line, "http.method"):
+			methodIdx = i
+		case strings.Contains(line, "http.status_code"):
+			statusIdx = i
 		case strings.Contains(line, "started"):
 			logIdx = i
 		}
 	}
-	if headerIdx == -1 || attrIdx == -1 || logIdx == -1 {
-		t.Fatalf("missing header/attr/log line:\n%s", strings.Join(lines, "\n"))
+	if headerIdx == -1 || methodIdx == -1 || statusIdx == -1 || logIdx == -1 {
+		t.Fatalf("missing header/attribute/log line:\n%s", strings.Join(lines, "\n"))
 	}
-	if attrIdx != headerIdx+1 {
-		t.Fatalf("attribute line not directly under header: header=%d attr=%d", headerIdx, attrIdx)
+	if methodIdx != headerIdx+1 || statusIdx != headerIdx+2 {
+		t.Fatalf("attributes not one per row directly under header: header=%d attrs=%d,%d", headerIdx, methodIdx, statusIdx)
 	}
-	if attrIdx >= logIdx {
-		t.Fatalf("attribute line should render before log lines: attr=%d log=%d", attrIdx, logIdx)
+	if logIdx != statusIdx+1 {
+		t.Fatalf("attributes should render just before log lines: attr=%d log=%d", statusIdx, logIdx)
 	}
-	if !strings.Contains(lines[attrIdx], "http.status_code=200") {
-		t.Fatalf("second attribute missing from attribute line:\n%s", lines[attrIdx])
+	method := strings.Index(lines[methodIdx], "│ GET")
+	status := strings.Index(lines[statusIdx], "│ 200")
+	if method == -1 || method != status {
+		t.Fatalf("attribute values not aligned in a column:\n%s\n%s", lines[methodIdx], lines[statusIdx])
 	}
 
 	prefix := bars([]lipgloss.Color{neutralColor}, false)
-	if !strings.HasPrefix(lines[attrIdx], prefix+detailIndent) || strings.HasPrefix(lines[attrIdx], prefix+detailIndent+" ") {
-		t.Fatalf("attribute line not indented one stop in from the header:\n%q", lines[attrIdx])
+	for _, i := range []int{methodIdx, statusIdx} {
+		if !strings.HasPrefix(lines[i], prefix+detailIndent) || strings.HasPrefix(lines[i], prefix+detailIndent+" ") {
+			t.Fatalf("attribute row not indented one stop in from the header:\n%q", lines[i])
+		}
 	}
 	if !strings.HasPrefix(lines[logIdx], prefix+detailIndent) {
 		t.Fatalf("log line lost its indent:\n%q", lines[logIdx])
