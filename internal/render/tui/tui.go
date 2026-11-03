@@ -58,6 +58,7 @@ type spanView struct {
 	component  string
 	statusMsg  string
 	declared   bool
+	synthetic  bool
 	start      time.Time
 	end        time.Time
 	observed   time.Time
@@ -127,6 +128,10 @@ type Model struct {
 	// cursorBack is how many of the query's runes lie after the cursor,
 	// so the zero value keeps the cursor at the end of the query.
 	cursorBack int
+
+	// plain drops everything that varies between runs from the tree --
+	// durations -- for snapshots (see Snapshot).
+	plain bool
 }
 
 // hscrollStep is how many columns left/right move the viewport per key
@@ -327,6 +332,7 @@ func (m *Model) apply(ev domain.Event) {
 		sp.name = ev.Name
 		sp.component = ev.Component
 		sp.declared = false
+		sp.synthetic = ev.Synthetic
 		sp.start = ev.StartTime
 		sp.end = ev.EndTime
 		sp.status = ev.Status
@@ -826,12 +832,14 @@ func (m Model) renderSpan(s treeSpan, h spanHighlight) []string {
 	// top cell of its bar, or the cell left blank for a span with no bar.
 	symbol, style := m.state(sp)
 	header := fmt.Sprintf(
-		"%s%s %s %s",
+		"%s%s %s",
 		bars(ancestors, false),
 		style.Render(symbol),
 		styleSegments(spanLabel(sp), h.label, lipgloss.NewStyle(), matchHighlightStyle),
-		m.duration(sp),
 	)
+	if !m.plain {
+		header += " " + m.duration(sp)
+	}
 	lines := make([]string, 0, s.height())
 	lines = append(lines, header)
 	if sp.statusMsg != "" {
