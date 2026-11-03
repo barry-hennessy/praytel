@@ -20,6 +20,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/ingest"
 	"github.com/barry-hennessy/praytel/internal/receiver"
+	"github.com/barry-hennessy/praytel/internal/render/snapshot"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
 	"github.com/barry-hennessy/praytel/internal/render/tui"
 	"golang.org/x/sync/errgroup"
@@ -56,9 +57,19 @@ func run(
 	events, corr, rec := pipe.Events, pipe.Corr, pipe.Rec
 
 	var view renderer
-	if cfg.TUI {
+	var snap *snapshot.Snapshot
+	switch {
+	case cfg.Snapshot:
+		snap = snapshot.New(events, tui.SnapshotOptions{
+			Tree:  cfg.SnapshotTree,
+			Graph: cfg.SnapshotGraph,
+			Attrs: cfg.SnapshotAttrs,
+			Logs:  cfg.SnapshotLogs,
+		})
+		view = snap
+	case cfg.TUI:
 		view = tui.New(lt, events, stdin, stdout, nil)
-	} else {
+	default:
 		st := stream.New(lt, events, stdout, nil)
 		view = st
 	}
@@ -179,6 +190,10 @@ func run(
 
 	if err != nil {
 		log.Error("wait child", "err", err)
+	}
+
+	if snap != nil {
+		code = snap.Finish(code, stdout, stderr)
 	}
 
 	return code, nil

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/barry-hennessy/praytel/internal/attrspec"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 )
@@ -27,6 +28,60 @@ type Config struct {
 	MaxSpans     int
 	MaxLogLines  int
 	TUI          bool
+
+	// Snapshot selects the one-shot, deterministic output mode; the views
+	// say what it prints.
+	Snapshot      bool
+	SnapshotTree  bool
+	SnapshotGraph bool
+	SnapshotAttrs attrspec.Spec
+	SnapshotLogs  bool
+}
+
+// attrsFlag is --snapshot-attrs. It is a boolean flag so that the bare form
+// means "all attributes"; a selection must therefore be given with "=".
+type attrsFlag struct {
+	set  bool
+	spec attrspec.Spec
+}
+
+func (f *attrsFlag) IsBoolFlag() bool { return true }
+
+func (f *attrsFlag) String() string { return "" }
+
+func (f *attrsFlag) Set(s string) error {
+	f.set = true
+	if s == "true" {
+		f.spec = attrspec.All()
+		return nil
+	}
+	spec, err := attrspec.Parse(s)
+	if err != nil {
+		return err
+	}
+	f.spec = spec
+
+	return nil
+}
+
+// parseViews reads --snapshot's space-separated view list.
+func parseViews(s string) (tree, graph bool, err error) {
+	views := strings.Fields(s)
+	if len(views) == 0 {
+		return false, false, errors.New(`--snapshot needs views: "tree", "graph" or "tree graph"`)
+	}
+	for _, v := range views {
+		switch v {
+		case "tree":
+			tree = true
+		case "graph":
+			graph = true
+		default:
+			return false, false, fmt.Errorf("unknown --snapshot view %q (want tree or graph)", v)
+		}
+	}
+
+	return tree, graph, nil
 }
 
 // Parse splits args on "--" into flags and a child command, parses the
@@ -55,11 +110,34 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
 	tuiMode := fs.Bool("tui", false, "render an interactive live trace tree")
 
+	snapshot := fs.String("snapshot", "", `print a stable snapshot of the views "tree" and/or "graph" instead of streaming`)
+	var attrs attrsFlag
+	fs.Var(&attrs, "snapshot-attrs", `span attributes to show in a snapshot: key globs, "-" excludes; bare means all (give a value as =GLOBS)`)
+	snapshotLogs := fs.Bool("snapshot-logs", false, "include log lines in a snapshot")
+
 	if err := fs.Parse(flags); err != nil {
 		return Config{}, err
 	}
 
 	if fs.NArg() != 0 {
+		return Config{}, ErrUsage
+	}
+
+	var snapTree, snapGraph bool
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["snapshot"] {
+		var err error
+		if snapTree, snapGraph, err = parseViews(*snapshot); err != nil {
+			fmt.Fprintln(errOut, err)
+			return Config{}, ErrUsage
+		}
+		if *tuiMode {
+			fmt.Fprintln(errOut, "--snapshot cannot be combined with --tui")
+			return Config{}, ErrUsage
+		}
+	} else if set["snapshot-attrs"] || set["snapshot-logs"] {
+		fmt.Fprintln(errOut, "--snapshot-attrs and --snapshot-logs need --snapshot")
 		return Config{}, ErrUsage
 	}
 
@@ -75,6 +153,12 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		MaxSpans:     *maxSpans,
 		MaxLogLines:  *maxLogLines,
 		TUI:          *tuiMode,
+
+		Snapshot:      set["snapshot"],
+		SnapshotTree:  snapTree,
+		SnapshotGraph: snapGraph,
+		SnapshotAttrs: attrs.spec,
+		SnapshotLogs:  *snapshotLogs,
 	}, nil
 }
 
