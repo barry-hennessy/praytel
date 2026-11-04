@@ -37,6 +37,16 @@ type Ports struct {
 	HTTP int
 }
 
+// Hooks wrap the servers Listen builds. Tests use them to extract the
+// trace context a client sends, so the receiver's spans nest under the
+// caller's; praytel itself passes none.
+type Hooks struct {
+	// GRPC are extra options for the gRPC server.
+	GRPC []grpc.ServerOption
+	// HTTP wraps the HTTP handler.
+	HTTP func(http.Handler) http.Handler
+}
+
 // Receiver is an in-process OTLP listener (gRPC + HTTP traces and logs).
 // Wire payloads are cast to [domain.Span] / [domain.LogLine] at this edge.
 // There is no metrics surface.
@@ -54,7 +64,7 @@ type Receiver struct {
 	drop *atomic.Bool
 }
 
-func Listen(lt observability.LoggingTracer, ports Ports, spans chan<- domain.Span, logs chan<- domain.LogLine) (*Receiver, error) {
+func Listen(lt observability.LoggingTracer, ports Ports, spans chan<- domain.Span, logs chan<- domain.LogLine, hooks ...Hooks) (*Receiver, error) {
 	_, _, span := lt.Name("receiver.Listen").Start(context.Background())
 	defer span.End()
 
@@ -101,19 +111,31 @@ func Listen(lt observability.LoggingTracer, ports Ports, spans chan<- domain.Spa
 		drop: drop,
 	}
 
-	gs := grpc.NewServer(
+	grpcOpts := []grpc.ServerOption{
 		grpc.MaxRecvMsgSize(maxOTLPMessageBytes),
 		grpc.MaxConcurrentStreams(maxOTLPStreams),
-	)
-	colltrace.RegisterTraceServiceServer(gs, traces)
-	colllog.RegisterLogsServiceServer(gs, otlpLogs)
+	}
 
 	mux := http.NewServeMux()
 	mux.Handle("/v1/traces", traces)
 	mux.Handle("/v1/logs", otlpLogs)
 
+	handler := limitHTTPInflight(mux, maxOTLPStreams)
+
+	for _, h := range hooks {
+		grpcOpts = append(grpcOpts, h.GRPC...)
+
+		if h.HTTP != nil {
+			handler = h.HTTP(handler)
+		}
+	}
+
+	gs := grpc.NewServer(grpcOpts...)
+	colltrace.RegisterTraceServiceServer(gs, traces)
+	colllog.RegisterLogsServiceServer(gs, otlpLogs)
+
 	hs := &http.Server{
-		Handler:           limitHTTPInflight(mux, maxOTLPStreams),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,

@@ -46,10 +46,39 @@ func recvFactory(t *testing.T) recvDeps {
 	return startRecv(t, nil, nil)
 }
 
+// hooks make the receiver under test continue the trace of the caller.
+func hooks() receiver.Hooks {
+	return receiver.Hooks{GRPC: []grpc.ServerOption{testtrace.GRPCServer()}, HTTP: testtrace.HTTPServer}
+}
+
+func post(t *testing.T, url string, body io.Reader) (*http.Response, error) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(testtrace.Context(t), http.MethodPost, url, body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/x-protobuf")
+
+	return testtrace.HTTPClient().Do(req)
+}
+
+func get(t *testing.T, url string) (*http.Response, error) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(testtrace.Context(t), http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return testtrace.HTTPClient().Do(req)
+}
+
 func startRecv(t *testing.T, spans chan domain.Span, logs chan domain.LogLine) recvDeps {
 	t.Helper()
 
-	r, err := receiver.Listen(testtrace.LoggingTracer(t), receiver.Ports{GRPC: 0, HTTP: 0}, spans, logs)
+	r, err := receiver.Listen(testtrace.LoggingTracer(t), receiver.Ports{GRPC: 0, HTTP: 0}, spans, logs, hooks())
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -97,7 +126,7 @@ func TestChildEnvPointsAtBoundPorts(t *testing.T) {
 func TestNoMetricsHTTP(t *testing.T) {
 	sweet.Run(t, "HTTP has no metrics surface", recvFactory, func(t *testing.T, d recvDeps) {
 		url := "http://127.0.0.1:" + strconv.Itoa(d.r.HTTPPort()) + "/v1/metrics"
-		res, err := http.Post(url, "application/x-protobuf", strings.NewReader(""))
+		res, err := post(t, url, strings.NewReader(""))
 		if err != nil {
 			t.Fatalf("post: %v", err)
 		}
@@ -115,13 +144,14 @@ func TestNoMetricsGRPC(t *testing.T) {
 		conn, err := grpc.NewClient(
 			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			testtrace.GRPCClient(),
 		)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(testtrace.Context(t), 2*time.Second)
 		defer cancel()
 
 		_, err = collmetric.NewMetricsServiceClient(conn).Export(ctx, &collmetric.ExportMetricsServiceRequest{})
@@ -143,13 +173,14 @@ func TestGRPCTracesBecomeDomainSpans(t *testing.T) {
 		conn, err := grpc.NewClient(
 			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			testtrace.GRPCClient(),
 		)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(testtrace.Context(t), 2*time.Second)
 		defer cancel()
 
 		traceID := bytes.Repeat([]byte{0xab}, 16)
@@ -235,13 +266,14 @@ func TestGRPCTracesOutOfRangeFieldsDoNotWrap(t *testing.T) {
 		conn, err := grpc.NewClient(
 			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			testtrace.GRPCClient(),
 		)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(testtrace.Context(t), 2*time.Second)
 		defer cancel()
 
 		_, err = colltrace.NewTraceServiceClient(conn).Export(ctx, &colltrace.ExportTraceServiceRequest{
@@ -285,13 +317,14 @@ func TestGRPCTraceArrayAttributesRenderTheirValues(t *testing.T) {
 		conn, err := grpc.NewClient(
 			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			testtrace.GRPCClient(),
 		)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(testtrace.Context(t), 2*time.Second)
 		defer cancel()
 
 		traceID := bytes.Repeat([]byte{0xab}, 16)
@@ -378,14 +411,14 @@ func TestHTTPTracesBecomeDomainSpans(t *testing.T) {
 		}
 
 		url := "http://127.0.0.1:" + strconv.Itoa(d.r.HTTPPort()) + "/v1/traces"
-		req, err := http.NewRequest(http.MethodPost, url, &gz)
+		req, err := http.NewRequestWithContext(testtrace.Context(t), http.MethodPost, url, &gz)
 		if err != nil {
 			t.Fatalf("request: %v", err)
 		}
 		req.Header.Set("Content-Type", "application/x-protobuf")
 		req.Header.Set("Content-Encoding", "gzip")
 
-		res, err := http.DefaultClient.Do(req)
+		res, err := testtrace.HTTPClient().Do(req)
 		if err != nil {
 			t.Fatalf("post: %v", err)
 		}
@@ -396,7 +429,7 @@ func TestHTTPTracesBecomeDomainSpans(t *testing.T) {
 			t.Fatalf("status=%d", res.StatusCode)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(testtrace.Context(t), 2*time.Second)
 		defer cancel()
 
 		select {
@@ -455,13 +488,14 @@ func TestOTLPLogsBecomeLogLines(t *testing.T) {
 		conn, err := grpc.NewClient(
 			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			testtrace.GRPCClient(),
 		)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(testtrace.Context(t), 2*time.Second)
 		defer cancel()
 
 		if _, err := colllog.NewLogsServiceClient(conn).Export(ctx, req); err != nil {
@@ -488,7 +522,7 @@ func TestOTLPLogsBecomeLogLines(t *testing.T) {
 		}
 
 		url := "http://127.0.0.1:" + strconv.Itoa(d.r.HTTPPort()) + "/v1/logs"
-		res, err := http.Post(url, "application/x-protobuf", bytes.NewReader(body))
+		res, err := post(t, url, bytes.NewReader(body))
 		if err != nil {
 			t.Fatalf("post: %v", err)
 		}
@@ -511,13 +545,14 @@ func TestTraceAndLogServicesExist(t *testing.T) {
 		conn, err := grpc.NewClient(
 			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			testtrace.GRPCClient(),
 		)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(testtrace.Context(t), 2*time.Second)
 		defer cancel()
 
 		if _, err := colltrace.NewTraceServiceClient(conn).Export(ctx, &colltrace.ExportTraceServiceRequest{}); err != nil {
@@ -561,13 +596,14 @@ func TestDropWarnsAndDoesNotEnqueue(t *testing.T) {
 		conn, err := grpc.NewClient(
 			"127.0.0.1:"+strconv.Itoa(d.r.GRPCPort()),
 			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			testtrace.GRPCClient(),
 		)
 		if err != nil {
 			t.Fatalf("dial: %v", err)
 		}
 		defer conn.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(testtrace.Context(t), 2*time.Second)
 		defer cancel()
 
 		_, err = colltrace.NewTraceServiceClient(conn).Export(ctx, &colltrace.ExportTraceServiceRequest{
@@ -596,7 +632,7 @@ func TestDropWarnsAndDoesNotEnqueue(t *testing.T) {
 func TestHTTPTracesRejectNonPOST(t *testing.T) {
 	sweet.Run(t, "GET /v1/traces is method not allowed", recvFactory, func(t *testing.T, d recvDeps) {
 		url := "http://127.0.0.1:" + strconv.Itoa(d.r.HTTPPort()) + "/v1/traces"
-		res, err := http.Get(url)
+		res, err := get(t, url)
 		if err != nil {
 			t.Fatalf("get: %v", err)
 		}
@@ -613,7 +649,7 @@ func TestHTTPTracesRejectOversizedBody(t *testing.T) {
 	sweet.Run(t, "oversized POST is bad request", recvFactory, func(t *testing.T, d recvDeps) {
 		url := "http://127.0.0.1:" + strconv.Itoa(d.r.HTTPPort()) + "/v1/traces"
 		body := bytes.Repeat([]byte{'x'}, 4<<20+1)
-		res, err := http.Post(url, "application/x-protobuf", bytes.NewReader(body))
+		res, err := post(t, url, bytes.NewReader(body))
 		if err != nil {
 			t.Fatalf("post: %v", err)
 		}
