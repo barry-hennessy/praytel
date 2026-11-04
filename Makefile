@@ -176,3 +176,19 @@ vulncheck:
 
 zizmor:
 	$(DAGGER) call zizmor $(if $(GH_TOKEN),--token env:GH_TOKEN,)
+
+# Golden traces: each instrumented test's trace tree and graph, stamped by
+# running the test under praytel (see internal/testtrace).
+#
+#   make golden                    stamp testdata/<Test>.golden for every instrumented package
+#   make golden PKGS=internal/receiver
+#                                  stamp one package
+#   make golden-check              stamp in a container and fail if any differs from the committed one
+
+.PHONY: golden golden-check
+
+golden:
+	scripts/golden $(PKGS)
+
+golden-check:
+	$(DAGGER) call golden

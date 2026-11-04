@@ -1,0 +1,16 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestDropWarnsAndDoesNotEnqueue/Drop_accepts_export_without_enqueueing
+┃    test.name │ TestDropWarnsAndDoesNotEnqueue/Drop_accepts_export_without_enqueueing
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestDropWarnsAndDoesNotEnqueue/Drop_accepts_export_without_enqueueing │     │ praytel.receiver │
+ │ 1 span                                                                             │────▶│ 2 spans          │
+ ╰────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

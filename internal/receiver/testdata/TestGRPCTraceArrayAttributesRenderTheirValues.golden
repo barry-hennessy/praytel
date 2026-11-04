@@ -1,0 +1,16 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestGRPCTraceArrayAttributesRenderTheirValues/StringSlice-kind_(and_other_array)_attributes_render,_not_blank
+┃    test.name │ TestGRPCTraceArrayAttributesRenderTheirValues/StringSlice-kind_(and_other_array)_attributes_render,_not_blank
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestGRPCTraceArrayAttributesRenderTheirValues/StringSlice-kind_(and_other_array)_attributes_render,_not_blank │     │ praytel.receiver │
+ │ 1 span                                                                                                                     │────▶│ 2 spans          │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

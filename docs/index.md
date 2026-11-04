@@ -28,6 +28,8 @@ before instrumenting any code of your own[^1].
    span that emitted it.
 3. [Get an overview of a system](guides/overview.md): which components are hit
    and how they are really wired together.
+4. [Keep a golden of your tests' traces](guides/golden-traces.md): review and
+   check what each test calls, in pull requests and CI.
 
 ## Reference
 

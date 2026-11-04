@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestNoMetricsGRPC/gRPC_has_no_metrics_service
+┃    test.name │ TestNoMetricsGRPC/gRPC_has_no_metrics_service
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestNoMetricsGRPC/gRPC_has_no_metrics_service │     │ praytel.receiver │
+ │ 1 span                                                     │────▶│ 1 span           │
+ ╰────────────────────────────────────────────────────────────╯     ╰──────────────────╯

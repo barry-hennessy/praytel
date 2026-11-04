@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/receiver"
+	"github.com/barry-hennessy/praytel/internal/testtrace"
 	"github.com/barry-hennessy/test/sweet"
 	colllog "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	collmetric "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -49,12 +49,12 @@ func recvFactory(t *testing.T) recvDeps {
 func startRecv(t *testing.T, spans chan domain.Span, logs chan domain.LogLine) recvDeps {
 	t.Helper()
 
-	r, err := receiver.Listen(observability.LoggingTracer{}, receiver.Ports{GRPC: 0, HTTP: 0}, spans, logs)
+	r, err := receiver.Listen(testtrace.LoggingTracer(t), receiver.Ports{GRPC: 0, HTTP: 0}, spans, logs)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(testtrace.Context(t))
 	g, _ := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return r.Serve(ctx)
@@ -531,6 +531,8 @@ func TestTraceAndLogServicesExist(t *testing.T) {
 
 func TestListenOccupied(t *testing.T) {
 	sweet.Run(t, "occupied grpc port fails listen", func(t *testing.T) recvDeps { return recvDeps{} }, func(t *testing.T, _ recvDeps) {
+		_ = testtrace.Context(t) // Listen takes no context; this just roots the test's trace.
+
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			t.Fatalf("hold port: %v", err)
@@ -538,7 +540,7 @@ func TestListenOccupied(t *testing.T) {
 		defer ln.Close()
 
 		port := ln.Addr().(*net.TCPAddr).Port
-		_, err = receiver.Listen(observability.LoggingTracer{}, receiver.Ports{GRPC: port, HTTP: 0}, nil, nil)
+		_, err = receiver.Listen(testtrace.LoggingTracer(t), receiver.Ports{GRPC: port, HTTP: 0}, nil, nil)
 		if err == nil {
 			t.Fatal("expected listen error")
 		}

@@ -1,0 +1,19 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed
+┃    test.name │ TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭─────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed │     │ praytel.receiver │
+ │ 1 span                                                                      │────▶│ 3 spans          │
+ ╰─────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

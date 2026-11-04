@@ -1,0 +1,16 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestGRPCTracesBecomeDomainSpans/gRPC_Export_delivers_domain_spans
+┃    test.name │ TestGRPCTracesBecomeDomainSpans/gRPC_Export_delivers_domain_spans
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestGRPCTracesBecomeDomainSpans/gRPC_Export_delivers_domain_spans │     │ praytel.receiver │
+ │ 1 span                                                                         │────▶│ 2 spans          │
+ ╰────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

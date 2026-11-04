@@ -1,0 +1,19 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestOTLPLogsBecomeLogLines/gRPC_and_HTTP_logs_become_LogLine_with_source_otlp
+┃    test.name │ TestOTLPLogsBecomeLogLines/gRPC_and_HTTP_logs_become_LogLine_with_source_otlp
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestOTLPLogsBecomeLogLines/gRPC_and_HTTP_logs_become_LogLine_with_source_otlp │     │ praytel.receiver │
+ │ 1 span                                                                                     │────▶│ 3 spans          │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

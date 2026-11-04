@@ -5,6 +5,7 @@
 #   make lint
 #   make vulncheck
 #   make zizmor
+#   make golden-check
 #
 # Any finding fails the job. New vulnerabilities are published without
 # the code changing, so the checks also run weekly against main.
@@ -68,3 +69,18 @@ jobs:
           # Read-only, for the audits that look actions up on GitHub.
           GH_TOKEN: ${{ github.token }}
         run: make zizmor
+
+  golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: dagger
+        uses: $/.github/actions/setup-dagger
+
+      - name: Golden traces
+        env:
+          DAGGER: ${{ steps.dagger.outputs.dagger }}
+        run: make golden-check

@@ -1,0 +1,16 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestHTTPTracesRejectNonPOST/GET_/v1/traces_is_method_not_allowed
+┃    test.name │ TestHTTPTracesRejectNonPOST/GET_/v1/traces_is_method_not_allowed
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭───────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestHTTPTracesRejectNonPOST/GET_/v1/traces_is_method_not_allowed │     │ praytel.receiver │
+ │ 1 span                                                                        │────▶│ 2 spans          │
+ ╰───────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

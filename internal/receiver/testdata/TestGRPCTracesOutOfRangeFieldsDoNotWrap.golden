@@ -1,0 +1,16 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestGRPCTracesOutOfRangeFieldsDoNotWrap/out-of-range_times_and_kinds_are_clamped,_not_wrapped
+┃    test.name │ TestGRPCTracesOutOfRangeFieldsDoNotWrap/out-of-range_times_and_kinds_are_clamped,_not_wrapped
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestGRPCTracesOutOfRangeFieldsDoNotWrap/out-of-range_times_and_kinds_are_clamped,_not_wrapped │     │ praytel.receiver │
+ │ 1 span                                                                                                     │────▶│ 2 spans          │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯
