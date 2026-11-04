@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Stamp a golden of each test's trace tree and graph, one test per praytel,
+# all in parallel:  testdata/<TestName>.golden next to the test.
+#
+#   scripts/golden ./internal/receiver ...   stamp these packages
+#   scripts/golden                           stamp every package that instruments its tests
+#
+# To check rather than stamp, stamp and then:  git diff --exit-code
+# Tests need testtrace.Main in TestMain to emit spans (internal/testtrace).
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+bin=$(mktemp -d)/praytel
+go build -o "$bin" "$root/cmd/praytel"
+
+# Attribute selection is shared; see testdata/golden.attrs.
+attrs=$(cat "$root/scripts/golden.attrs")
+
+# Default: the packages whose tests call testtrace.Main.
+pkgs=${*:-$(grep -rl --include='*_test.go' 'testtrace.Main' "$root" | xargs -n1 dirname | sort -u)}
+
+stamp() { # dir test
+  out="$1/testdata/$2.golden"
+  tmp=$(mktemp)
+  if (cd "$1" && "$bin" --grpc-port=0 --http-port=0 --snapshot="tree graph" \
+        --snapshot-attrs="$attrs" -- go test -count=1 -run "^$2\$" . >"$tmp" 2>"$tmp.err"); then
+    mkdir -p "$1/testdata" && mv "$tmp" "$out"
+  else
+    echo "FAIL $1 $2" >&2; sed 's/^/  /' "$tmp.err" >&2; rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp.err"
+}
+export -f stamp
+export bin attrs
+
+for dir in $pkgs; do
+  (cd "$dir" && go test -list '^Test' . | grep '^Test') | sed "s|^|$dir |"
+done | xargs -P 8 -L1 bash -c 'stamp "$@"' _

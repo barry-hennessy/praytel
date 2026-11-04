@@ -1,0 +1,16 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestHTTPTracesRejectOversizedBody/oversized_POST_is_bad_request
+┃    test.name │ TestHTTPTracesRejectOversizedBody/oversized_POST_is_bad_request
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭──────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestHTTPTracesRejectOversizedBody/oversized_POST_is_bad_request │     │ praytel.receiver │
+ │ 1 span                                                                       │────▶│ 2 spans          │
+ ╰──────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

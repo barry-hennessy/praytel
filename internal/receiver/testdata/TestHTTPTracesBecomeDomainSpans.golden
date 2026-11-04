@@ -1,0 +1,16 @@
+# praytel-snapshot v1
+## tree
+● praytel.receiver
+     component │ receiver
+
+● praytel.test.TestHTTPTracesBecomeDomainSpans/HTTP_/v1/traces_delivers_domain_spans
+┃    test.name │ TestHTTPTracesBecomeDomainSpans/HTTP_/v1/traces_delivers_domain_spans
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestHTTPTracesBecomeDomainSpans/HTTP_/v1/traces_delivers_domain_spans │     │ praytel.receiver │
+ │ 1 span                                                                             │────▶│ 2 spans          │
+ ╰────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

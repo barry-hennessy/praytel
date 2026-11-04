@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestChildEnvPointsAtBoundPorts/ChildEnv_names_bound_grpc_and_http_ports
+┃    test.name │ TestChildEnvPointsAtBoundPorts/ChildEnv_names_bound_grpc_and_http_ports
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver
+┆      component │ receiver
+## graph
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
+ │ praytel.test.TestChildEnvPointsAtBoundPorts/ChildEnv_names_bound_grpc_and_http_ports │     │ praytel.receiver │
+ │ 1 span                                                                               │────▶│ 1 span           │
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯

@@ -1,0 +1,10 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestListenOccupied/occupied_grpc_port_fails_listen
+     test.name │ TestListenOccupied/occupied_grpc_port_fails_listen
+## graph
+
+ ╭─────────────────────────────────────────────────────────────────╮
+ │ praytel.test.TestListenOccupied/occupied_grpc_port_fails_listen │
+ │ 1 span                                                          │
+ ╰─────────────────────────────────────────────────────────────────╯
