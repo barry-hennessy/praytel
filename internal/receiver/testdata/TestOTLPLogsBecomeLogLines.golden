@@ -17,28 +17,39 @@
 ┆ ┆ ● praytel.POST /v1/logs
 ┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
 ┆ ┆ ┆ ● praytel.receiver.ingestLogs.ServeHTTP
-┆ ┆ ┆      component │ receiver.ingestLogs.ServeHTTP
-┆ ┆ ┆
+┆ ┆ ┆ ┃    component │ receiver.ingestLogs.ServeHTTP
+┆ ┆ ┆ ┃ ────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ┆ ● praytel.receiver.ingestLogs.forward
+┆ ┆ ┆ ┆      component │ receiver.ingestLogs.forward
+┆ ┆ ┆ ┆
+┆ ┆ ┆ ┆ ● praytel.receiver.readProtobuf
+┆ ┆ ┆ ┆      component │ receiver.readProtobuf
+┆ ┆ ┆ ┆
 ┆ ● praytel.opentelemetry.proto.collector.logs.v1.LogsService/Export
 ┆ ┃ ────────────────────────────────────────────────────────────────────────────
 ┆ ┆ ● praytel.opentelemetry.proto.collector.logs.v1.LogsService/Export
 ┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
 ┆ ┆ ┆ ● praytel.receiver.ingestLogs.Export
-┆ ┆ ┆      component │ receiver.ingestLogs.Export
-┆ ┆ ┆
+┆ ┆ ┆ ┃    component │ receiver.ingestLogs.Export
+┆ ┆ ┆ ┃ ────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ┆ ● praytel.receiver.ingestLogs.forward
+┆ ┆ ┆ ┆      component │ receiver.ingestLogs.forward
+┆ ┆ ┆ ┆
 ┆ ● praytel.receiver.Receiver.Serve
 ┆      component │ receiver.Receiver.Serve
 ## graph
 
-                                                                                                     ╭──────────────────────────────────────────────────────────────────╮     ╭────────────────────────────────────╮     ╭───────────────────────────────────────╮
-                                                                                                     │ praytel.HTTP POST                                                │     │ praytel.POST /v1/logs              │     │ praytel.receiver.ingestLogs.ServeHTTP │
-                                                                                                 ╭──▶│ 1 span                                                           │────▶│ 1 span                             │────▶│ 1 span                                │
-                                                                                                 │   ╰──────────────────────────────────────────────────────────────────╯     ╰────────────────────────────────────╯     ╰───────────────────────────────────────╯
-                                                                                                 │
- ╭────────────────────────────────────────────────────────────────────────────────────────────╮  │   ╭──────────────────────────────────────────────────────────────────╮     ╭────────────────────────────────────╮
- │ praytel.test.TestOTLPLogsBecomeLogLines/gRPC_and_HTTP_logs_become_LogLine_with_source_otlp │  │   │ praytel.opentelemetry.proto.collector.logs.v1.LogsService/Export │     │ praytel.receiver.ingestLogs.Export │
- │ 1 span                                                                                     │──┼──▶│ 2 spans                                                          │────▶│ 1 span                             │
- ╰────────────────────────────────────────────────────────────────────────────────────────────╯  │   ╰──────────────────────────────────────────────────────────────────╯     ╰────────────────────────────────────╯
+                                                                                                                                                                                                                                                                        ╭─────────────────────────────────────╮
+                                                                                                                                                                                                                                                                        │ praytel.receiver.readProtobuf       │
+                                                                                                     ╭──────────────────────────────────────────────────────────────────╮     ╭────────────────────────────────────╮     ╭───────────────────────────────────────╮  ╭──▶│ 1 span                              │
+                                                                                                     │ praytel.HTTP POST                                                │     │ praytel.POST /v1/logs              │     │ praytel.receiver.ingestLogs.ServeHTTP │  │   ╰─────────────────────────────────────╯
+                                                                                                 ╭──▶│ 1 span                                                           │────▶│ 1 span                             │────▶│ 1 span                                │──┤
+                                                                                                 │   ╰──────────────────────────────────────────────────────────────────╯     ╰────────────────────────────────────╯     ╰───────────────────────────────────────╯  │
+                                                                                                 │                                                                                                                                                                  │   ╭─────────────────────────────────────╮
+ ╭────────────────────────────────────────────────────────────────────────────────────────────╮  │   ╭──────────────────────────────────────────────────────────────────╮     ╭────────────────────────────────────╮                                                │   │ praytel.receiver.ingestLogs.forward │
+ │ praytel.test.TestOTLPLogsBecomeLogLines/gRPC_and_HTTP_logs_become_LogLine_with_source_otlp │  │   │ praytel.opentelemetry.proto.collector.logs.v1.LogsService/Export │     │ praytel.receiver.ingestLogs.Export │                                                ╰──▶│ 2 spans                             │
+ │ 1 span                                                                                     │──┼──▶│ 2 spans                                                          │────▶│ 1 span                             │───────────────────────────────────────────────────▶│                                     │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────╯  │   ╰──────────────────────────────────────────────────────────────────╯     ╰────────────────────────────────────╯                                                    ╰─────────────────────────────────────╯
                                                                                                  │
                                                                                                  │   ╭──────────────────────────────────────────────────────────────────╮
                                                                                                  │   │ praytel.receiver.Receiver.Serve                                  │

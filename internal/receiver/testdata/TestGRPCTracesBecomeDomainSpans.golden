@@ -14,16 +14,19 @@
 ┆ ┆ ● praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export
 ┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
 ┆ ┆ ┆ ● praytel.receiver.ingestTraces.Export
-┆ ┆ ┆      component │ receiver.ingestTraces.Export
-┆ ┆ ┆
+┆ ┆ ┆ ┃    component │ receiver.ingestTraces.Export
+┆ ┆ ┆ ┃ ────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ┆ ● praytel.receiver.ingestTraces.forward
+┆ ┆ ┆ ┆      component │ receiver.ingestTraces.forward
+┆ ┆ ┆ ┆
 ┆ ● praytel.receiver.Receiver.Serve
 ┆      component │ receiver.Receiver.Serve
 ## graph
 
-                                                                                         ╭────────────────────────────────────────────────────────────────────╮     ╭──────────────────────────────────────╮
-                                                                                         │ praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export │     │ praytel.receiver.ingestTraces.Export │
-                                                                                     ╭──▶│ 2 spans                                                            │────▶│ 1 span                               │
-                                                                                     │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯
+                                                                                         ╭────────────────────────────────────────────────────────────────────╮     ╭──────────────────────────────────────╮     ╭───────────────────────────────────────╮
+                                                                                         │ praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export │     │ praytel.receiver.ingestTraces.Export │     │ praytel.receiver.ingestTraces.forward │
+                                                                                     ╭──▶│ 2 spans                                                            │────▶│ 1 span                               │────▶│ 1 span                                │
+                                                                                     │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯     ╰───────────────────────────────────────╯
                                                                                      │
  ╭────────────────────────────────────────────────────────────────────────────────╮  │   ╭────────────────────────────────────────────────────────────────────╮
  │ praytel.test.TestGRPCTracesBecomeDomainSpans/gRPC_Export_delivers_domain_spans │  │   │ praytel.receiver.Receiver.Serve                                    │

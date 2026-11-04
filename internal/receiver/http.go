@@ -2,10 +2,12 @@ package receiver
 
 import (
 	"compress/gzip"
+	"context"
 	"errors"
 	"io"
 	"net/http"
 
+	"github.com/barry-hennessy/bones/observability"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -25,13 +27,17 @@ func limitHTTPBody(w http.ResponseWriter, req *http.Request) {
 	req.Body = http.MaxBytesReader(w, req.Body, maxOTLPMessageBytes)
 }
 
-func readProtobuf(req *http.Request, msg proto.Message) error {
+func readProtobuf(ctx context.Context, lt observability.LoggingTracer, req *http.Request, msg proto.Message) error {
+	_, log, span := lt.Name("receiver.readProtobuf").Start(ctx)
+	defer span.End()
+
 	defer req.Body.Close()
 
 	r := io.LimitReader(req.Body, maxOTLPMessageBytes+1)
 	if req.Header.Get("Content-Encoding") == "gzip" {
 		gz, err := gzip.NewReader(req.Body)
 		if err != nil {
+			log.Warn("reading gzip body", "err", err)
 			return err
 		}
 		defer gz.Close()
@@ -45,6 +51,7 @@ func readProtobuf(req *http.Request, msg proto.Message) error {
 	}
 
 	if int64(len(body)) > maxOTLPMessageBytes {
+		log.Warn("otlp body too large", "limit", maxOTLPMessageBytes)
 		return errOTLPBodyTooLarge
 	}
 

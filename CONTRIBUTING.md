@@ -18,7 +18,11 @@ offers to do it when a release tag's recordings are out of date.
 Praytel's tests are read as traces, and their trace trees are kept as goldens
 (`make golden`; see `docs/guides/golden-traces.md`). So every exported function
 and method starts a span named `package.Struct.Function` (`package.Function`
-for a plain function), including exported methods on unexported types:
+for a plain function), including exported methods on unexported types. So
+does any unexported one that does real work, such as I/O, decoding or
+forwarding. Simple helpers do not, and neither does a check like `dropping`:
+log it from the function that acts on it, where it lands on that function's
+span.
 
 ```go
 ctx, log, span := s.lt.Name("receiver.ingestTraces.Export").Start(ctx)

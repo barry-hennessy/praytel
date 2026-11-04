@@ -14,28 +14,34 @@
 ┆ ┆ ● praytel.opentelemetry.proto.collector.logs.v1.LogsService/Export
 ┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
 ┆ ┆ ┆ ● praytel.receiver.ingestLogs.Export
-┆ ┆ ┆      component │ receiver.ingestLogs.Export
-┆ ┆ ┆
+┆ ┆ ┆ ┃    component │ receiver.ingestLogs.Export
+┆ ┆ ┆ ┃ ────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ┆ ● praytel.receiver.ingestLogs.forward
+┆ ┆ ┆ ┆      component │ receiver.ingestLogs.forward
+┆ ┆ ┆ ┆
 ┆ ● praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export
 ┆ ┃ ────────────────────────────────────────────────────────────────────────────
 ┆ ┆ ● praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export
 ┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
 ┆ ┆ ┆ ● praytel.receiver.ingestTraces.Export
-┆ ┆ ┆      component │ receiver.ingestTraces.Export
-┆ ┆ ┆
+┆ ┆ ┆ ┃    component │ receiver.ingestTraces.Export
+┆ ┆ ┆ ┃ ────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ┆ ● praytel.receiver.ingestTraces.forward
+┆ ┆ ┆ ┆      component │ receiver.ingestTraces.forward
+┆ ┆ ┆ ┆
 ┆ ● praytel.receiver.Receiver.Serve
 ┆      component │ receiver.Receiver.Serve
 ## graph
 
-                                                                                      ╭────────────────────────────────────────────────────────────────────╮     ╭──────────────────────────────────────╮
-                                                                                      │ praytel.opentelemetry.proto.collector.logs.v1.LogsService/Export   │     │ praytel.receiver.ingestLogs.Export   │
-                                                                                  ╭──▶│ 2 spans                                                            │────▶│ 1 span                               │
-                                                                                  │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯
+                                                                                      ╭────────────────────────────────────────────────────────────────────╮     ╭──────────────────────────────────────╮     ╭───────────────────────────────────────╮
+                                                                                      │ praytel.opentelemetry.proto.collector.logs.v1.LogsService/Export   │     │ praytel.receiver.ingestLogs.Export   │     │ praytel.receiver.ingestLogs.forward   │
+                                                                                  ╭──▶│ 2 spans                                                            │────▶│ 1 span                               │────▶│ 1 span                                │
+                                                                                  │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯     ╰───────────────────────────────────────╯
                                                                                   │
- ╭─────────────────────────────────────────────────────────────────────────────╮  │   ╭────────────────────────────────────────────────────────────────────╮     ╭──────────────────────────────────────╮
- │ praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed │  │   │ praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export │     │ praytel.receiver.ingestTraces.Export │
- │ 1 span                                                                      │──┼──▶│ 2 spans                                                            │────▶│ 1 span                               │
- ╰─────────────────────────────────────────────────────────────────────────────╯  │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯
+ ╭─────────────────────────────────────────────────────────────────────────────╮  │   ╭────────────────────────────────────────────────────────────────────╮     ╭──────────────────────────────────────╮     ╭───────────────────────────────────────╮
+ │ praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed │  │   │ praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export │     │ praytel.receiver.ingestTraces.Export │     │ praytel.receiver.ingestTraces.forward │
+ │ 1 span                                                                      │──┼──▶│ 2 spans                                                            │────▶│ 1 span                               │────▶│ 1 span                                │
+ ╰─────────────────────────────────────────────────────────────────────────────╯  │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯     ╰───────────────────────────────────────╯
                                                                                   │
                                                                                   │   ╭────────────────────────────────────────────────────────────────────╮
                                                                                   │   │ praytel.receiver.Receiver.Serve                                    │
