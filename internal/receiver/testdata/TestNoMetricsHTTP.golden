@@ -1,13 +1,29 @@
 # praytel-snapshot v1
 ## tree
+● praytel.receiver.Listen
+     component │ receiver.Listen
+
+● praytel.receiver.Receiver.HTTPPort
+     component │ receiver.Receiver.HTTPPort
+
 ● praytel.test.TestNoMetricsHTTP/HTTP_has_no_metrics_surface
 ┃    test.name │ TestNoMetricsHTTP/HTTP_has_no_metrics_surface
 ┃ ──────────────────────────────────────────────────────────────────────────────
-┆ ● praytel.receiver
-┆      component │ receiver
+┆ ● praytel.receiver.Receiver.Serve
+┆      component │ receiver.Receiver.Serve
 ## graph
 
- ╭────────────────────────────────────────────────────────────╮     ╭──────────────────╮
- │ praytel.test.TestNoMetricsHTTP/HTTP_has_no_metrics_surface │     │ praytel.receiver │
- │ 1 span                                                     │────▶│ 1 span           │
- ╰────────────────────────────────────────────────────────────╯     ╰──────────────────╯
+ ╭────────────────────────────────────────────────────────────╮     ╭─────────────────────────────────╮
+ │ praytel.test.TestNoMetricsHTTP/HTTP_has_no_metrics_surface │     │ praytel.receiver.Receiver.Serve │
+ │ 1 span                                                     │────▶│ 1 span                          │
+ ╰────────────────────────────────────────────────────────────╯     ╰─────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Listen                                    │
+ │ 1 span                                                     │
+ ╰────────────────────────────────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Receiver.HTTPPort                         │
+ │ 1 span                                                     │
+ ╰────────────────────────────────────────────────────────────╯

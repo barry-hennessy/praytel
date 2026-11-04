@@ -1,19 +1,45 @@
 # praytel-snapshot v1
 ## tree
-● praytel.receiver
-     component │ receiver
+● praytel.receiver.Listen
+     component │ receiver.Listen
 
-● praytel.receiver
-     component │ receiver
+● praytel.receiver.Receiver.GRPCPort
+     component │ receiver.Receiver.GRPCPort
+
+● praytel.receiver.ingestLogs.Export
+     component │ receiver.ingestLogs.Export
+
+● praytel.receiver.ingestTraces.Export
+     component │ receiver.ingestTraces.Export
 
 ● praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed
 ┃    test.name │ TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed
 ┃ ──────────────────────────────────────────────────────────────────────────────
-┆ ● praytel.receiver
-┆      component │ receiver
+┆ ● praytel.receiver.Receiver.Serve
+┆      component │ receiver.Receiver.Serve
 ## graph
 
- ╭─────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
- │ praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed │     │ praytel.receiver │
- │ 1 span                                                                      │────▶│ 3 spans          │
- ╰─────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯
+ ╭─────────────────────────────────────────────────────────────────────────────╮     ╭─────────────────────────────────╮
+ │ praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed │     │ praytel.receiver.Receiver.Serve │
+ │ 1 span                                                                      │────▶│ 1 span                          │
+ ╰─────────────────────────────────────────────────────────────────────────────╯     ╰─────────────────────────────────╯
+
+ ╭─────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Listen                                                     │
+ │ 1 span                                                                      │
+ ╰─────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Receiver.GRPCPort                                          │
+ │ 1 span                                                                      │
+ ╰─────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.ingestLogs.Export                                          │
+ │ 1 span                                                                      │
+ ╰─────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.ingestTraces.Export                                        │
+ │ 1 span                                                                      │
+ ╰─────────────────────────────────────────────────────────────────────────────╯

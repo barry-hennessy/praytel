@@ -25,7 +25,7 @@ func (s ingestTraces) Export(
 	ctx context.Context,
 	req *colltrace.ExportTraceServiceRequest,
 ) (*colltrace.ExportTraceServiceResponse, error) {
-	ctx, log, span := s.lt.Start(ctx)
+	ctx, log, span := s.lt.Name("receiver.ingestTraces.Export").Start(ctx)
 	defer span.End()
 
 	if s.dropping() {
@@ -41,7 +41,7 @@ func (s ingestTraces) Export(
 }
 
 func (s ingestTraces) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	ctx, log, span := s.lt.Start(req.Context())
+	ctx, log, span := s.lt.Name("receiver.ingestTraces.ServeHTTP").Start(req.Context())
 	defer span.End()
 
 	if !requirePOST(w, req) {

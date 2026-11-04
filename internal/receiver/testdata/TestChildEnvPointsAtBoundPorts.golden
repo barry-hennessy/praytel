@@ -1,13 +1,48 @@
 # praytel-snapshot v1
 ## tree
+● praytel.receiver.Listen
+     component │ receiver.Listen
+
+● praytel.receiver.Receiver.ChildEnv
+     component │ receiver.Receiver.ChildEnv
+
+● praytel.receiver.Receiver.ChildEnv
+     component │ receiver.Receiver.ChildEnv
+
+● praytel.receiver.Receiver.GRPCPort
+     component │ receiver.Receiver.GRPCPort
+
+● praytel.receiver.Receiver.HTTPPort
+     component │ receiver.Receiver.HTTPPort
+
 ● praytel.test.TestChildEnvPointsAtBoundPorts/ChildEnv_names_bound_grpc_and_http_ports
 ┃    test.name │ TestChildEnvPointsAtBoundPorts/ChildEnv_names_bound_grpc_and_http_ports
 ┃ ──────────────────────────────────────────────────────────────────────────────
-┆ ● praytel.receiver
-┆      component │ receiver
+┆ ● praytel.receiver.Receiver.Serve
+┆      component │ receiver.Receiver.Serve
 ## graph
 
- ╭──────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
- │ praytel.test.TestChildEnvPointsAtBoundPorts/ChildEnv_names_bound_grpc_and_http_ports │     │ praytel.receiver │
- │ 1 span                                                                               │────▶│ 1 span           │
- ╰──────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮     ╭─────────────────────────────────╮
+ │ praytel.test.TestChildEnvPointsAtBoundPorts/ChildEnv_names_bound_grpc_and_http_ports │     │ praytel.receiver.Receiver.Serve │
+ │ 1 span                                                                               │────▶│ 1 span                          │
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯     ╰─────────────────────────────────╯
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Listen                                                              │
+ │ 1 span                                                                               │
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Receiver.ChildEnv                                                   │
+ │ 2 spans                                                                              │
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Receiver.GRPCPort                                                   │
+ │ 1 span                                                                               │
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Receiver.HTTPPort                                                   │
+ │ 1 span                                                                               │
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯
