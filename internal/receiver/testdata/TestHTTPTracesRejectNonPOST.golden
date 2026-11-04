@@ -6,20 +6,29 @@
 ● praytel.receiver.Receiver.HTTPPort
      component │ receiver.Receiver.HTTPPort
 
-● praytel.receiver.ingestTraces.ServeHTTP
-     component │ receiver.ingestTraces.ServeHTTP
-
 ● praytel.test.TestHTTPTracesRejectNonPOST/GET_/v1/traces_is_method_not_allowed
 ┃    test.name │ TestHTTPTracesRejectNonPOST/GET_/v1/traces_is_method_not_allowed
 ┃ ──────────────────────────────────────────────────────────────────────────────
+┆ × praytel.HTTP GET
+┆ ┃ ────────────────────────────────────────────────────────────────────────────
+┆ ┆ ● praytel.GET /v1/traces
+┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ● praytel.receiver.ingestTraces.ServeHTTP
+┆ ┆ ┆      component │ receiver.ingestTraces.ServeHTTP
+┆ ┆ ┆
 ┆ ● praytel.receiver.Receiver.Serve
 ┆      component │ receiver.Receiver.Serve
 ## graph
 
- ╭───────────────────────────────────────────────────────────────────────────────╮     ╭─────────────────────────────────╮
- │ praytel.test.TestHTTPTracesRejectNonPOST/GET_/v1/traces_is_method_not_allowed │     │ praytel.receiver.Receiver.Serve │
- │ 1 span                                                                        │────▶│ 1 span                          │
- ╰───────────────────────────────────────────────────────────────────────────────╯     ╰─────────────────────────────────╯
+                                                                                        ╭─────────────────────────────────╮     ╭────────────────────────╮     ╭─────────────────────────────────────────╮
+                                                                                        │ praytel.HTTP GET                │     │ praytel.GET /v1/traces │     │ praytel.receiver.ingestTraces.ServeHTTP │
+                                                                                    ╭──▶│ 1 span                          │────▶│ 1 span                 │────▶│ 1 span                                  │
+                                                                                    │   ╰─────────────────────────────────╯     ╰────────────────────────╯     ╰─────────────────────────────────────────╯
+                                                                                    │
+ ╭───────────────────────────────────────────────────────────────────────────────╮  │   ╭─────────────────────────────────╮
+ │ praytel.test.TestHTTPTracesRejectNonPOST/GET_/v1/traces_is_method_not_allowed │  │   │ praytel.receiver.Receiver.Serve │
+ │ 1 span                                                                        │──┴──▶│ 1 span                          │
+ ╰───────────────────────────────────────────────────────────────────────────────╯      ╰─────────────────────────────────╯
 
  ╭───────────────────────────────────────────────────────────────────────────────╮
  │ praytel.receiver.Listen                                                       │
@@ -28,10 +37,5 @@
 
  ╭───────────────────────────────────────────────────────────────────────────────╮
  │ praytel.receiver.Receiver.HTTPPort                                            │
- │ 1 span                                                                        │
- ╰───────────────────────────────────────────────────────────────────────────────╯
-
- ╭───────────────────────────────────────────────────────────────────────────────╮
- │ praytel.receiver.ingestTraces.ServeHTTP                                       │
  │ 1 span                                                                        │
  ╰───────────────────────────────────────────────────────────────────────────────╯
