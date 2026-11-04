@@ -1,16 +1,37 @@
 # praytel-snapshot v1
 ## tree
-● praytel.receiver
-     component │ receiver
+● praytel.receiver.Listen
+     component │ receiver.Listen
+
+● praytel.receiver.Receiver.GRPCPort
+     component │ receiver.Receiver.GRPCPort
+
+● praytel.receiver.ingestTraces.Export
+     component │ receiver.ingestTraces.Export
 
 ● praytel.test.TestGRPCTracesOutOfRangeFieldsDoNotWrap/out-of-range_times_and_kinds_are_clamped,_not_wrapped
 ┃    test.name │ TestGRPCTracesOutOfRangeFieldsDoNotWrap/out-of-range_times_and_kinds_are_clamped,_not_wrapped
 ┃ ──────────────────────────────────────────────────────────────────────────────
-┆ ● praytel.receiver
-┆      component │ receiver
+┆ ● praytel.receiver.Receiver.Serve
+┆      component │ receiver.Receiver.Serve
 ## graph
 
- ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
- │ praytel.test.TestGRPCTracesOutOfRangeFieldsDoNotWrap/out-of-range_times_and_kinds_are_clamped,_not_wrapped │     │ praytel.receiver │
- │ 1 span                                                                                                     │────▶│ 2 spans          │
- ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭─────────────────────────────────╮
+ │ praytel.test.TestGRPCTracesOutOfRangeFieldsDoNotWrap/out-of-range_times_and_kinds_are_clamped,_not_wrapped │     │ praytel.receiver.Receiver.Serve │
+ │ 1 span                                                                                                     │────▶│ 1 span                          │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰─────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Listen                                                                                    │
+ │ 1 span                                                                                                     │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Receiver.GRPCPort                                                                         │
+ │ 1 span                                                                                                     │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.ingestTraces.Export                                                                       │
+ │ 1 span                                                                                                     │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

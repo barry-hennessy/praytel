@@ -55,6 +55,10 @@ type Receiver struct {
 }
 
 func Listen(lt observability.LoggingTracer, ports Ports, spans chan<- domain.Span, logs chan<- domain.LogLine) (*Receiver, error) {
+	_, _, span := lt.Name("receiver.Listen").Start(context.Background())
+	defer span.End()
+
+	// Components started later name themselves; this is the default.
 	lt = lt.Name("receiver")
 
 	grpcLis, err := net.Listen("tcp", listenAddr(ports.GRPC))
@@ -134,6 +138,9 @@ func (r *Receiver) Drop() {
 		return
 	}
 
+	_, _, span := r.lt.Name("receiver.Receiver.Drop").Start(context.Background())
+	defer span.End()
+
 	r.drop.Store(true)
 }
 
@@ -151,15 +158,24 @@ func tcpPort(lis net.Listener) (int, error) {
 }
 
 func (r *Receiver) GRPCPort() int {
+	_, _, span := r.lt.Name("receiver.Receiver.GRPCPort").Start(context.Background())
+	defer span.End()
+
 	return r.grpcPort
 }
 
 func (r *Receiver) HTTPPort() int {
+	_, _, span := r.lt.Name("receiver.Receiver.HTTPPort").Start(context.Background())
+	defer span.End()
+
 	return r.httpPort
 }
 
 // ChildEnv returns OTel-standard exporter keys pointing at this listener.
 func (r *Receiver) ChildEnv() []string {
+	_, _, span := r.lt.Name("receiver.Receiver.ChildEnv").Start(context.Background())
+	defer span.End()
+
 	grpcEP := fmt.Sprintf("http://127.0.0.1:%d", r.grpcPort)
 	httpBase := fmt.Sprintf("http://127.0.0.1:%d", r.httpPort)
 
@@ -172,7 +188,7 @@ func (r *Receiver) ChildEnv() []string {
 }
 
 func (r *Receiver) Serve(ctx context.Context) error {
-	ctx, _, span := r.lt.Start(ctx)
+	ctx, _, span := r.lt.Name("receiver.Receiver.Serve").Start(ctx)
 	defer span.End()
 
 	gg, ctx := errgroup.WithContext(ctx)

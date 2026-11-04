@@ -1,13 +1,29 @@
 # praytel-snapshot v1
 ## tree
+● praytel.receiver.Listen
+     component │ receiver.Listen
+
+● praytel.receiver.Receiver.GRPCPort
+     component │ receiver.Receiver.GRPCPort
+
 ● praytel.test.TestNoMetricsGRPC/gRPC_has_no_metrics_service
 ┃    test.name │ TestNoMetricsGRPC/gRPC_has_no_metrics_service
 ┃ ──────────────────────────────────────────────────────────────────────────────
-┆ ● praytel.receiver
-┆      component │ receiver
+┆ ● praytel.receiver.Receiver.Serve
+┆      component │ receiver.Receiver.Serve
 ## graph
 
- ╭────────────────────────────────────────────────────────────╮     ╭──────────────────╮
- │ praytel.test.TestNoMetricsGRPC/gRPC_has_no_metrics_service │     │ praytel.receiver │
- │ 1 span                                                     │────▶│ 1 span           │
- ╰────────────────────────────────────────────────────────────╯     ╰──────────────────╯
+ ╭────────────────────────────────────────────────────────────╮     ╭─────────────────────────────────╮
+ │ praytel.test.TestNoMetricsGRPC/gRPC_has_no_metrics_service │     │ praytel.receiver.Receiver.Serve │
+ │ 1 span                                                     │────▶│ 1 span                          │
+ ╰────────────────────────────────────────────────────────────╯     ╰─────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Listen                                    │
+ │ 1 span                                                     │
+ ╰────────────────────────────────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Receiver.GRPCPort                         │
+ │ 1 span                                                     │
+ ╰────────────────────────────────────────────────────────────╯

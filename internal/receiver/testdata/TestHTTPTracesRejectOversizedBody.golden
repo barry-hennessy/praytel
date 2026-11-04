@@ -1,16 +1,37 @@
 # praytel-snapshot v1
 ## tree
-● praytel.receiver
-     component │ receiver
+● praytel.receiver.Listen
+     component │ receiver.Listen
+
+● praytel.receiver.Receiver.HTTPPort
+     component │ receiver.Receiver.HTTPPort
+
+● praytel.receiver.ingestTraces.ServeHTTP
+     component │ receiver.ingestTraces.ServeHTTP
 
 ● praytel.test.TestHTTPTracesRejectOversizedBody/oversized_POST_is_bad_request
 ┃    test.name │ TestHTTPTracesRejectOversizedBody/oversized_POST_is_bad_request
 ┃ ──────────────────────────────────────────────────────────────────────────────
-┆ ● praytel.receiver
-┆      component │ receiver
+┆ ● praytel.receiver.Receiver.Serve
+┆      component │ receiver.Receiver.Serve
 ## graph
 
- ╭──────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────╮
- │ praytel.test.TestHTTPTracesRejectOversizedBody/oversized_POST_is_bad_request │     │ praytel.receiver │
- │ 1 span                                                                       │────▶│ 2 spans          │
- ╰──────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────╯
+ ╭──────────────────────────────────────────────────────────────────────────────╮     ╭─────────────────────────────────╮
+ │ praytel.test.TestHTTPTracesRejectOversizedBody/oversized_POST_is_bad_request │     │ praytel.receiver.Receiver.Serve │
+ │ 1 span                                                                       │────▶│ 1 span                          │
+ ╰──────────────────────────────────────────────────────────────────────────────╯     ╰─────────────────────────────────╯
+
+ ╭──────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Listen                                                      │
+ │ 1 span                                                                       │
+ ╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ╭──────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.Receiver.HTTPPort                                           │
+ │ 1 span                                                                       │
+ ╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ╭──────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.receiver.ingestTraces.ServeHTTP                                      │
+ │ 1 span                                                                       │
+ ╰──────────────────────────────────────────────────────────────────────────────╯
