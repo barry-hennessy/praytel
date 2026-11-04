@@ -1,0 +1,78 @@
+# praytel-snapshot v1
+## tree
+● praytel.correlator.Correlator.Logs
+     component │ correlator.Correlator.Logs
+
+● praytel.correlator.Correlator.Logs
+     component │ correlator.Correlator.Logs
+
+● praytel.correlator.Correlator.Logs
+     component │ correlator.Correlator.Logs
+
+● praytel.correlator.Correlator.Spans
+     component │ correlator.Correlator.Spans
+
+● praytel.correlator.Correlator.Spans
+     component │ correlator.Correlator.Spans
+
+● praytel.correlator.Correlator.Spans
+     component │ correlator.Correlator.Spans
+
+● praytel.correlator.Correlator.Stop
+     component │ correlator.Correlator.Stop
+
+● praytel.correlator.Correlator.Stop
+     component │ correlator.Correlator.Stop
+
+● praytel.test.TestCorrelatorEventsDriveFocusAdmit/correlator_events_through_filter_admit_path_logs_only
+┃    test.name │ TestCorrelatorEventsDriveFocusAdmit/correlator_events_through_filter_admit_path_logs_only
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.correlator.Correlator.Run
+┆ ┃    component │ correlator.Correlator.Run
+┆ ┃ ────────────────────────────────────────────────────────────────────────────
+┆ ┆ ● praytel.correlator.Correlator.waitIdleOrCap
+┆ ┆ ┃    component │ correlator.Correlator.waitIdleOrCap
+┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ● praytel.correlator.Correlator.finishDrain
+┆ ┆ ┆ ┃    component │ correlator.Correlator.finishDrain
+┆ ┆ ┆ ┃ ────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆      component │ correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆      component │ correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.resolvePending
+┆ ┆ ┆ ┆      component │ correlator.Correlator.resolvePending
+┆ ┆ ┆ ┆
+┆ ● praytel.correlator.New
+┆      component │ correlator.New
+## graph
+
+                                                                                                                                                                                                                                                                    ╭──────────────────────────────────────────────╮
+                                                                                                                                                                                                                                                                    │ praytel.correlator.Correlator.drainInbound   │
+                                                                                                                                                                                                                                                              ╭─×2─▶│ 2 spans                                      │
+                                                                                                                 ╭───────────────────────────────────╮     ╭─────────────────────────────────────────────╮     ╭───────────────────────────────────────────╮  │     ╰──────────────────────────────────────────────╯
+                                                                                                                 │ praytel.correlator.Correlator.Run │     │ praytel.correlator.Correlator.waitIdleOrCap │     │ praytel.correlator.Correlator.finishDrain │  │
+                                                                                                             ╭──▶│ 1 span                            │────▶│ 1 span                                      │────▶│ 1 span                                    │──┤     ╭──────────────────────────────────────────────╮
+                                                                                                             │   ╰───────────────────────────────────╯     ╰─────────────────────────────────────────────╯     ╰───────────────────────────────────────────╯  │     │ praytel.correlator.Correlator.resolvePending │
+                                                                                                             │                                                                                                                                                ╰────▶│ 1 span                                       │
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │   ╭───────────────────────────────────╮                                                                                                              ╰──────────────────────────────────────────────╯
+ │ praytel.test.TestCorrelatorEventsDriveFocusAdmit/correlator_events_through_filter_admit_path_logs_only │  │   │ praytel.correlator.New            │
+ │ 1 span                                                                                                 │──┴──▶│ 1 span                            │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯      ╰───────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.correlator.Correlator.Logs                                                                     │
+ │ 3 spans                                                                                                │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.correlator.Correlator.Spans                                                                    │
+ │ 3 spans                                                                                                │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.correlator.Correlator.Stop                                                                     │
+ │ 2 spans                                                                                                │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────╯

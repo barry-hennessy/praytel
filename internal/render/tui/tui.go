@@ -1362,11 +1362,14 @@ func New(
 	out io.Writer,
 	filt *filter.Filter,
 ) TUI {
-	return TUI{lt: lt.Name("tui"), events: events, filt: filt, in: in, out: out}
+	_, _, span := lt.Name("tui.New").Start(context.Background())
+	defer span.End()
+
+	return TUI{lt: lt, events: events, filt: filt, in: in, out: out}
 }
 
 func (t TUI) Run(ctx context.Context) error {
-	_, log, span := t.lt.Start(ctx)
+	_, log, span := t.lt.Name("tui.TUI.Run").Start(ctx)
 	defer span.End()
 	if os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb" {
 		lipgloss.SetColorProfile(termenv.ANSI256)

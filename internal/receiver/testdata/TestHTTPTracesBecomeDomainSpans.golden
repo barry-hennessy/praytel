@@ -1,8 +1,5 @@
 # praytel-snapshot v1
 ## tree
-● praytel.receiver.Listen
-     component │ receiver.Listen
-
 ● praytel.receiver.Receiver.HTTPPort
      component │ receiver.Receiver.HTTPPort
 
@@ -22,6 +19,9 @@
 ┆ ┆ ┆ ┆ ● praytel.receiver.readProtobuf
 ┆ ┆ ┆ ┆      component │ receiver.readProtobuf
 ┆ ┆ ┆ ┆
+┆ ● praytel.receiver.Listen
+┆      component │ receiver.Listen
+┆
 ┆ ● praytel.receiver.Receiver.Serve
 ┆      component │ receiver.Receiver.Serve
 ## graph
@@ -35,14 +35,14 @@
                                                                                          │   ╰─────────────────────────────────╯     ╰─────────────────────────╯     ╰─────────────────────────────────────────╯  │   │ praytel.receiver.readProtobuf         │
                                                                                          │                                                                                                                        ╰──▶│ 1 span                                │
  ╭────────────────────────────────────────────────────────────────────────────────────╮  │   ╭─────────────────────────────────╮                                                                                      ╰───────────────────────────────────────╯
- │ praytel.test.TestHTTPTracesBecomeDomainSpans/HTTP_/v1/traces_delivers_domain_spans │  │   │ praytel.receiver.Receiver.Serve │
- │ 1 span                                                                             │──┴──▶│ 1 span                          │
- ╰────────────────────────────────────────────────────────────────────────────────────╯      ╰─────────────────────────────────╯
-
- ╭────────────────────────────────────────────────────────────────────────────────────╮
- │ praytel.receiver.Listen                                                            │
- │ 1 span                                                                             │
- ╰────────────────────────────────────────────────────────────────────────────────────╯
+ │ praytel.test.TestHTTPTracesBecomeDomainSpans/HTTP_/v1/traces_delivers_domain_spans │  │   │ praytel.receiver.Listen         │
+ │ 1 span                                                                             │──┼──▶│ 1 span                          │
+ ╰────────────────────────────────────────────────────────────────────────────────────╯  │   ╰─────────────────────────────────╯
+                                                                                         │
+                                                                                         │   ╭─────────────────────────────────╮
+                                                                                         │   │ praytel.receiver.Receiver.Serve │
+                                                                                         ╰──▶│ 1 span                          │
+                                                                                             ╰─────────────────────────────────╯
 
  ╭────────────────────────────────────────────────────────────────────────────────────╮
  │ praytel.receiver.Receiver.HTTPPort                                                 │

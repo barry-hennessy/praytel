@@ -4,6 +4,7 @@
 package ingest
 
 import (
+	"context"
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -19,10 +20,13 @@ type Pipeline struct {
 
 // New starts an OTLP receiver, creates a correlator fed by it, and wires the
 // receiver to drop ingest once the correlator stops accepting it.
-func New(lt observability.LoggingTracer, drain correlator.Drain, limits correlator.Limits, ports receiver.Ports) (Pipeline, error) {
+func New(ctx context.Context, lt observability.LoggingTracer, drain correlator.Drain, limits correlator.Limits, ports receiver.Ports) (Pipeline, error) {
+	ctx, _, span := lt.Name("ingest.New").Start(ctx)
+	defer span.End()
+
 	events := make(chan domain.Event, 64)
-	corr := correlator.New(lt, events, drain, limits)
-	rec, err := receiver.Listen(lt, ports, corr.Spans(), corr.Logs())
+	corr := correlator.New(ctx, lt, events, drain, limits)
+	rec, err := receiver.Listen(ctx, lt, ports, corr.Spans(), corr.Logs())
 	if err != nil {
 		return Pipeline{}, err
 	}

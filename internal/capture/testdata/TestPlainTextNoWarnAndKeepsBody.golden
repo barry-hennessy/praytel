@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestPlainTextNoWarnAndKeepsBody/plain_text_is_not_an_error
+┃    test.name │ TestPlainTextNoWarnAndKeepsBody/plain_text_is_not_an_error
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭─────────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestPlainTextNoWarnAndKeepsBody/plain_text_is_not_an_error │     │ praytel.capture.Copy │
+ │ 1 span                                                                  │────▶│ 1 span               │
+ ╰─────────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯

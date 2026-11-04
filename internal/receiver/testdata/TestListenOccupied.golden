@@ -1,18 +1,13 @@
 # praytel-snapshot v1
 ## tree
-● praytel.receiver.Listen
-     component │ receiver.Listen
-
 ● praytel.test.TestListenOccupied/occupied_grpc_port_fails_listen
-     test.name │ TestListenOccupied/occupied_grpc_port_fails_listen
+┃    test.name │ TestListenOccupied/occupied_grpc_port_fails_listen
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.receiver.Listen
+┆      component │ receiver.Listen
 ## graph
 
- ╭─────────────────────────────────────────────────────────────────╮
- │ praytel.receiver.Listen                                         │
- │ 1 span                                                          │
- ╰─────────────────────────────────────────────────────────────────╯
-
- ╭─────────────────────────────────────────────────────────────────╮
- │ praytel.test.TestListenOccupied/occupied_grpc_port_fails_listen │
- │ 1 span                                                          │
- ╰─────────────────────────────────────────────────────────────────╯
+ ╭─────────────────────────────────────────────────────────────────╮     ╭─────────────────────────╮
+ │ praytel.test.TestListenOccupied/occupied_grpc_port_fails_listen │     │ praytel.receiver.Listen │
+ │ 1 span                                                          │────▶│ 1 span                  │
+ ╰─────────────────────────────────────────────────────────────────╯     ╰─────────────────────────╯

@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestMalformedJSONWarnsRateLimited/broken_JSON_warns_once_when_gated
+┃    test.name │ TestMalformedJSONWarnsRateLimited/broken_JSON_warns_once_when_gated
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭──────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestMalformedJSONWarnsRateLimited/broken_JSON_warns_once_when_gated │     │ praytel.capture.Copy │
+ │ 1 span                                                                           │────▶│ 1 span               │
+ ╰──────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯

@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestJSONPrecedenceOverLogfmt/JSON_lines_are_not_parsed_as_logfmt
+┃    test.name │ TestJSONPrecedenceOverLogfmt/JSON_lines_are_not_parsed_as_logfmt
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭───────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestJSONPrecedenceOverLogfmt/JSON_lines_are_not_parsed_as_logfmt │     │ praytel.capture.Copy │
+ │ 1 span                                                                        │────▶│ 1 span               │
+ ╰───────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯

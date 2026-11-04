@@ -56,7 +56,7 @@ func (g *WarnGate) Allow() bool {
 
 // Copy reads lines from r and sends [domain.LogLine]s to out until EOF or ctx cancel.
 func Copy(ctx context.Context, lt observability.LoggingTracer, source domain.Source, r io.Reader, out chan<- domain.LogLine, gate *WarnGate) error {
-	ctx, log, span := lt.Name("capture").Start(ctx)
+	ctx, log, span := lt.Name("capture.Copy").Start(ctx)
 	defer span.End()
 
 	sc := bufio.NewScanner(r)

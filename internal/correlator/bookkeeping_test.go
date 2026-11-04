@@ -1,13 +1,12 @@
 package correlator
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"testing"
 
-	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/testtrace"
 )
 
 // TestForestBookkeepingMatchesARecount checks the forest's running log
@@ -20,8 +19,8 @@ func TestForestBookkeepingMatchesARecount(t *testing.T) {
 		for range out {
 		}
 	}()
-	c := New(observability.LoggingTracer{}, out, Drain{}, Limits{MaxSpans: 60, MaxLogLines: 80})
-	ctx := context.Background()
+	ctx := testtrace.Context(t)
+	c := New(ctx, testtrace.LoggingTracer(t), out, Drain{}, Limits{MaxSpans: 60, MaxLogLines: 80})
 
 	check := func(step string) {
 		t.Helper()

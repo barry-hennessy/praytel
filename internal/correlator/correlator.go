@@ -116,7 +116,10 @@ type forestSpan struct {
 	logs          []domain.LogLine
 }
 
-func New(lt observability.LoggingTracer, out chan<- domain.Event, drain Drain, limits Limits) *Correlator {
+func New(ctx context.Context, lt observability.LoggingTracer, out chan<- domain.Event, drain Drain, limits Limits) *Correlator {
+	_, _, span := lt.Name("correlator.New").Start(ctx)
+	defer span.End()
+
 	if limits.MaxSpans <= 0 {
 		limits.MaxSpans = DefaultMaxSpans
 	}
@@ -125,7 +128,7 @@ func New(lt observability.LoggingTracer, out chan<- domain.Event, drain Drain, l
 	}
 
 	return &Correlator{
-		lt:     lt.Name("correlator"),
+		lt:     lt,
 		out:    out,
 		logs:   make(chan domain.LogLine, 64),
 		spans:  make(chan domain.Span, 64),
@@ -143,19 +146,28 @@ func New(lt observability.LoggingTracer, out chan<- domain.Event, drain Drain, l
 
 // DropIngest is called once drain finishes, before Run returns, so late OTLP is not blocked on unread channels.
 func (c *Correlator) DropIngest(fn func()) {
+	_, _, span := c.lt.Name("correlator.Correlator.DropIngest").Start(context.Background())
+	defer span.End()
+
 	c.dropIngest = fn
 }
 
 func (c *Correlator) Logs() chan<- domain.LogLine {
+	_, _, span := c.lt.Name("correlator.Correlator.Logs").Start(context.Background())
+	defer span.End()
+
 	return c.logs
 }
 
 func (c *Correlator) Spans() chan<- domain.Span {
+	_, _, span := c.lt.Name("correlator.Correlator.Spans").Start(context.Background())
+	defer span.End()
+
 	return c.spans
 }
 
 func (c *Correlator) Run(ctx context.Context) error {
-	ctx, _, span := c.lt.Start(ctx)
+	ctx, _, span := c.lt.Name("correlator.Correlator.Run").Start(ctx)
 	defer span.End()
 
 	defer c.closeOut()
@@ -193,6 +205,9 @@ func (c *Correlator) Run(ctx context.Context) error {
 }
 
 func (c *Correlator) Stop() {
+	_, _, span := c.lt.Name("correlator.Correlator.Stop").Start(context.Background())
+	defer span.End()
+
 	c.stopOnce.Do(func() {
 		close(c.stop)
 	})
@@ -205,6 +220,9 @@ func (c *Correlator) closeOut() {
 }
 
 func (c *Correlator) waitIdleOrCap(ctx context.Context, logs <-chan domain.LogLine, spans <-chan domain.Span) {
+	ctx, _, span := c.lt.Name("correlator.Correlator.waitIdleOrCap").Start(ctx)
+	defer span.End()
+
 	if c.drain.Idle <= 0 {
 		c.finishDrain(ctx, logs, spans)
 		return
@@ -272,6 +290,9 @@ func (c *Correlator) waitIdleOrCap(ctx context.Context, logs <-chan domain.LogLi
 }
 
 func (c *Correlator) finishDrain(ctx context.Context, logs <-chan domain.LogLine, spans <-chan domain.Span) {
+	ctx, _, span := c.lt.Name("correlator.Correlator.finishDrain").Start(ctx)
+	defer span.End()
+
 	c.drainInbound(ctx, logs, spans)
 	if c.dropIngest != nil {
 		c.dropIngest()
@@ -282,6 +303,9 @@ func (c *Correlator) finishDrain(ctx context.Context, logs <-chan domain.LogLine
 }
 
 func (c *Correlator) drainInbound(ctx context.Context, logs <-chan domain.LogLine, spans <-chan domain.Span) {
+	ctx, _, span := c.lt.Name("correlator.Correlator.drainInbound").Start(ctx)
+	defer span.End()
+
 	for {
 		select {
 		case sp, ok := <-spans:
@@ -558,6 +582,9 @@ func (c *Correlator) linkParents(ctx context.Context, sp *forestSpan) {
 }
 
 func (c *Correlator) resolvePending(ctx context.Context) {
+	ctx, _, span := c.lt.Name("correlator.Correlator.resolvePending").Start(ctx)
+	defer span.End()
+
 	for key, waiting := range c.forest.pending {
 		delete(c.forest.pending, key)
 
@@ -686,6 +713,9 @@ func (c *Correlator) oldestClosedTrace() string {
 }
 
 func (c *Correlator) evictTrace(ctx context.Context, traceID string) {
+	ctx, _, span := c.lt.Name("correlator.Correlator.evictTrace").Start(ctx)
+	defer span.End()
+
 	for key, sp := range c.forest.spans {
 		if sp.traceID != traceID {
 			continue

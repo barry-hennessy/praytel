@@ -2,22 +2,21 @@ package stream_test
 
 import (
 	"bytes"
-	"context"
 	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
+	"github.com/barry-hennessy/praytel/internal/testtrace"
 	"github.com/barry-hennessy/test/sweet"
 )
 
 func TestRunReturnsWhenEventsClose(t *testing.T) {
 	sweet.Run(t, "closed event channel ends Run", closedStreamFactory, func(t *testing.T, s stream.Stream) {
-		if err := s.Run(context.Background()); err != nil {
+		if err := s.Run(testtrace.Context(t)); err != nil {
 			t.Fatalf("Run: %v", err)
 		}
 	})
@@ -29,7 +28,7 @@ func closedStreamFactory(t *testing.T) stream.Stream {
 	ch := make(chan domain.Event)
 	close(ch)
 
-	return stream.New(observability.LoggingTracer{}, ch, &bytes.Buffer{}, mustPass(t))
+	return stream.New(testtrace.LoggingTracer(t), ch, &bytes.Buffer{}, mustPass(t))
 }
 
 func TestLogReceivedPrintedOnceAppendOnly(t *testing.T) {
@@ -46,7 +45,7 @@ func TestLogReceivedPrintedOnceAppendOnly(t *testing.T) {
 		ch := make(chan domain.Event, 2)
 
 		return deps{
-			s:   stream.New(observability.LoggingTracer{}, ch, &out, mustPass(t)),
+			s:   stream.New(testtrace.LoggingTracer(t), ch, &out, mustPass(t)),
 			out: &out,
 			ch:  ch,
 		}
@@ -55,7 +54,7 @@ func TestLogReceivedPrintedOnceAppendOnly(t *testing.T) {
 	sweet.Run(t, "LogReceived is printed once and not rewritten", factory, func(t *testing.T, d deps) {
 		done := make(chan error, 1)
 		go func() {
-			done <- d.s.Run(context.Background())
+			done <- d.s.Run(testtrace.Context(t))
 		}()
 
 		d.ch <- domain.LogReceived{
@@ -106,7 +105,7 @@ func TestLogAssignedHydratesWithoutRewriting(t *testing.T) {
 		ch := make(chan domain.Event, 2)
 
 		return deps{
-			s:   stream.New(observability.LoggingTracer{}, ch, &out, mustPass(t)),
+			s:   stream.New(testtrace.LoggingTracer(t), ch, &out, mustPass(t)),
 			out: &out,
 			ch:  ch,
 		}
@@ -115,7 +114,7 @@ func TestLogAssignedHydratesWithoutRewriting(t *testing.T) {
 	sweet.Run(t, "LogAssigned appends a hydrate line and leaves the original", factory, func(t *testing.T, d deps) {
 		done := make(chan error, 1)
 		go func() {
-			done <- d.s.Run(context.Background())
+			done <- d.s.Run(testtrace.Context(t))
 		}()
 
 		d.ch <- domain.LogReceived{
@@ -174,7 +173,7 @@ func TestFocusHidesSiblingAndLateAdmitsParent(t *testing.T) {
 		}
 
 		return deps{
-			s:   stream.New(observability.LoggingTracer{}, ch, &out, filt),
+			s:   stream.New(testtrace.LoggingTracer(t), ch, &out, filt),
 			out: &out,
 			ch:  ch,
 		}
@@ -183,7 +182,7 @@ func TestFocusHidesSiblingAndLateAdmitsParent(t *testing.T) {
 	sweet.Run(t, "stream prints admitted lines only and late-admits without rewrite", factory, func(t *testing.T, d deps) {
 		done := make(chan error, 1)
 		go func() {
-			done <- d.s.Run(context.Background())
+			done <- d.s.Run(testtrace.Context(t))
 		}()
 
 		d.ch <- domain.SpanUpserted{SpanID: "orders", Name: "orders"}
@@ -241,7 +240,8 @@ func TestForestPressureWarnsOnLoggerNotStream(t *testing.T) {
 
 		var out, logBuf bytes.Buffer
 		ch := make(chan domain.Event, 2)
-		lt := observability.LoggingTracer{Log: *slog.New(slog.NewTextHandler(&logBuf, nil))}
+		lt := testtrace.LoggingTracer(t)
+		lt.Log = *slog.New(slog.NewTextHandler(&logBuf, nil))
 
 		return deps{
 			s:      stream.New(lt, ch, &out, mustPass(t)),
@@ -254,7 +254,7 @@ func TestForestPressureWarnsOnLoggerNotStream(t *testing.T) {
 	sweet.Run(t, "ForestEvicted and ForestShed warn on the logger, not the stream", factory, func(t *testing.T, d deps) {
 		done := make(chan error, 1)
 		go func() {
-			done <- d.s.Run(context.Background())
+			done <- d.s.Run(testtrace.Context(t))
 		}()
 
 		d.ch <- domain.ForestEvicted{}
@@ -298,7 +298,7 @@ func TestOTLPControlCharsStripped(t *testing.T) {
 		ch := make(chan domain.Event, 1)
 
 		return deps{
-			s:   stream.New(observability.LoggingTracer{}, ch, &out, mustPass(t)),
+			s:   stream.New(testtrace.LoggingTracer(t), ch, &out, mustPass(t)),
 			out: &out,
 			ch:  ch,
 		}
@@ -307,7 +307,7 @@ func TestOTLPControlCharsStripped(t *testing.T) {
 	sweet.Run(t, "OTLP span name CSI and body C0 do not reach the stream", factory, func(t *testing.T, d deps) {
 		done := make(chan error, 1)
 		go func() {
-			done <- d.s.Run(context.Background())
+			done <- d.s.Run(testtrace.Context(t))
 		}()
 
 		d.ch <- domain.LogReceived{

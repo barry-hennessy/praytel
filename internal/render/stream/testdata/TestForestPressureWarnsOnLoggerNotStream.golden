@@ -1,0 +1,21 @@
+# praytel-snapshot v1
+## tree
+● praytel.stream.New
+     component │ stream.New
+
+● praytel.test.TestForestPressureWarnsOnLoggerNotStream/ForestEvicted_and_ForestShed_warn_on_the_logger,_not_the_stream
+┃    test.name │ TestForestPressureWarnsOnLoggerNotStream/ForestEvicted_and_ForestShed_warn_on_the_logger,_not_the_stream
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.stream.Stream.Run
+┆      component │ stream.Stream.Run
+## graph
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭───────────────────────────╮
+ │ praytel.test.TestForestPressureWarnsOnLoggerNotStream/ForestEvicted_and_ForestShed_warn_on_the_logger,_not_the_stream │     │ praytel.stream.Stream.Run │
+ │ 1 span                                                                                                                │────▶│ 1 span                    │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰───────────────────────────╯
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.stream.New                                                                                                    │
+ │ 1 span                                                                                                                │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

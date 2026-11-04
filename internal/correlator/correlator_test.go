@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/testtrace"
 	"github.com/barry-hennessy/test/sweet"
 )
 
@@ -27,10 +27,11 @@ func startCorr(t *testing.T, drain correlator.Drain, limits correlator.Limits) c
 	t.Helper()
 
 	out := make(chan domain.Event, 32)
-	c := correlator.New(observability.LoggingTracer{}, out, drain, limits)
+	ctx := context.WithoutCancel(testtrace.Context(t))
+	c := correlator.New(ctx, testtrace.LoggingTracer(t), out, drain, limits)
 	done := make(chan error, 1)
 	go func() {
-		done <- c.Run(context.Background())
+		done <- c.Run(ctx)
 	}()
 	t.Cleanup(func() {
 		c.Stop()

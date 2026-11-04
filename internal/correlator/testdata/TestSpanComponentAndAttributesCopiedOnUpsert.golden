@@ -1,0 +1,55 @@
+# praytel-snapshot v1
+## tree
+● praytel.correlator.Correlator.Spans
+     component │ correlator.Correlator.Spans
+
+● praytel.correlator.Correlator.Stop
+     component │ correlator.Correlator.Stop
+
+● praytel.test.TestSpanComponentAndAttributesCopiedOnUpsert/span_resource_component_and_attributes_are_copied_onto_SpanUpserted
+┃    test.name │ TestSpanComponentAndAttributesCopiedOnUpsert/span_resource_component_and_attributes_are_copied_onto_SpanUpserted
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.correlator.Correlator.Run
+┆ ┃    component │ correlator.Correlator.Run
+┆ ┃ ────────────────────────────────────────────────────────────────────────────
+┆ ┆ ● praytel.correlator.Correlator.waitIdleOrCap
+┆ ┆ ┃    component │ correlator.Correlator.waitIdleOrCap
+┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ● praytel.correlator.Correlator.finishDrain
+┆ ┆ ┆ ┃    component │ correlator.Correlator.finishDrain
+┆ ┆ ┆ ┃ ────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆      component │ correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆      component │ correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.resolvePending
+┆ ┆ ┆ ┆      component │ correlator.Correlator.resolvePending
+┆ ┆ ┆ ┆
+┆ ● praytel.correlator.New
+┆      component │ correlator.New
+## graph
+
+                                                                                                                                                                                                                                                                                           ╭──────────────────────────────────────────────╮
+                                                                                                                                                                                                                                                                                           │ praytel.correlator.Correlator.drainInbound   │
+                                                                                                                                                                                                                                                                                     ╭─×2─▶│ 2 spans                                      │
+                                                                                                                                        ╭───────────────────────────────────╮     ╭─────────────────────────────────────────────╮     ╭───────────────────────────────────────────╮  │     ╰──────────────────────────────────────────────╯
+                                                                                                                                        │ praytel.correlator.Correlator.Run │     │ praytel.correlator.Correlator.waitIdleOrCap │     │ praytel.correlator.Correlator.finishDrain │  │
+                                                                                                                                    ╭──▶│ 1 span                            │────▶│ 1 span                                      │────▶│ 1 span                                    │──┤     ╭──────────────────────────────────────────────╮
+                                                                                                                                    │   ╰───────────────────────────────────╯     ╰─────────────────────────────────────────────╯     ╰───────────────────────────────────────────╯  │     │ praytel.correlator.Correlator.resolvePending │
+                                                                                                                                    │                                                                                                                                                ╰────▶│ 1 span                                       │
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │   ╭───────────────────────────────────╮                                                                                                              ╰──────────────────────────────────────────────╯
+ │ praytel.test.TestSpanComponentAndAttributesCopiedOnUpsert/span_resource_component_and_attributes_are_copied_onto_SpanUpserted │  │   │ praytel.correlator.New            │
+ │ 1 span                                                                                                                        │──┴──▶│ 1 span                            │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯      ╰───────────────────────────────────╯
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.correlator.Correlator.Spans                                                                                           │
+ │ 1 span                                                                                                                        │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.correlator.Correlator.Stop                                                                                            │
+ │ 1 span                                                                                                                        │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -22,13 +22,15 @@ pkgs=${*:-$(grep -rl --include='*_test.go' 'testtrace.Main' "$root" | xargs -n1 
 stamp() { # dir test
   out="$1/testdata/$2.golden"
   tmp=$(mktemp)
-  if (cd "$1" && "$bin" --grpc-port=0 --http-port=0 --snapshot="tree graph" \
-        --snapshot-attrs="$attrs" -- go test -count=1 -run "^$2\$" . >"$tmp" 2>"$tmp.err"); then
-    mkdir -p "$1/testdata" && mv "$tmp" "$out"
-  else
-    echo "FAIL $1 $2" >&2; sed 's/^/  /' "$tmp.err" >&2; rm -f "$tmp"
-    return 1
-  fi
+  rc=0
+  (cd "$1" && "$bin" --grpc-port=0 --http-port=0 --snapshot="tree graph" \
+        --snapshot-attrs="$attrs" -- go test -count=1 -run "^$2\$" . >"$tmp" 2>"$tmp.err") || rc=$?
+  case $rc in
+    0) mkdir -p "$1/testdata" && mv "$tmp" "$out" ;;
+    3) rm -f "$tmp" "$out" ;; # the test emitted no spans: it has no golden
+    *) echo "FAIL $1 $2" >&2; sed 's/^/  /' "$tmp.err" >&2; rm -f "$tmp" "$tmp.err"
+       return 1 ;;
+  esac
   rm -f "$tmp.err"
 }
 export -f stamp

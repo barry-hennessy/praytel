@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestLogfmtQuotedValuesExtractIDs/quoted_logfmt_values_still_extract_ids
+┃    test.name │ TestLogfmtQuotedValuesExtractIDs/quoted_logfmt_values_still_extract_ids
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestLogfmtQuotedValuesExtractIDs/quoted_logfmt_values_still_extract_ids │     │ praytel.capture.Copy │
+ │ 1 span                                                                               │────▶│ 1 span               │
+ ╰──────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯

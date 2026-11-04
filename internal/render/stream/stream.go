@@ -35,12 +35,15 @@ type Stream struct {
 }
 
 func New(lt observability.LoggingTracer, events <-chan domain.Event, out io.Writer, filt *filter.Filter) Stream {
+	_, _, span := lt.Name("stream.New").Start(context.Background())
+	defer span.End()
+
 	if filt == nil {
 		filt, _ = filter.New(filter.Query{})
 	}
 
 	return Stream{
-		lt:     lt.Name("stream"),
+		lt:     lt,
 		events: events,
 		filt:   filt,
 		out:    out,
@@ -49,7 +52,7 @@ func New(lt observability.LoggingTracer, events <-chan domain.Event, out io.Writ
 }
 
 func (s Stream) Run(ctx context.Context) error {
-	_, log, span := s.lt.Start(ctx)
+	_, log, span := s.lt.Name("stream.Stream.Run").Start(ctx)
 	defer span.End()
 
 	seen := make(map[string]printed)
