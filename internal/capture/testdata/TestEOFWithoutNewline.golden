@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestEOFWithoutNewline/last_line_without_newline_is_kept
+┃    test.name │ TestEOFWithoutNewline/last_line_without_newline_is_kept
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭──────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestEOFWithoutNewline/last_line_without_newline_is_kept │     │ praytel.capture.Copy │
+ │ 1 span                                                               │────▶│ 1 span               │
+ ╰──────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯

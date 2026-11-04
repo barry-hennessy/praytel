@@ -2,7 +2,6 @@ package capture_test
 
 import (
 	"bytes"
-	"context"
 	"log/slog"
 	"strings"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/capture"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/testtrace"
 	"github.com/barry-hennessy/test/sweet"
 )
 
@@ -26,7 +26,7 @@ func capFactory(t *testing.T) capDeps {
 	log := slog.New(slog.NewTextHandler(&buf, nil))
 
 	return capDeps{
-		lt:   observability.LoggingTracer{Log: *log},
+		lt:   withLog(testtrace.LoggingTracer(t), log),
 		logs: &buf,
 	}
 }
@@ -34,7 +34,7 @@ func capFactory(t *testing.T) capDeps {
 func TestPlainTextNoWarnAndKeepsBody(t *testing.T) {
 	sweet.Run(t, "plain text is not an error", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader("hello world\n"), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader("hello world\n"), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -59,7 +59,7 @@ func TestMalformedJSONWarnsRateLimited(t *testing.T) {
 	sweet.Run(t, "broken JSON warns once when gated", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 4)
 		input := "{not json\n{also broken\n{still broken\n"
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStderr, strings.NewReader(input), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStderr, strings.NewReader(input), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -85,7 +85,7 @@ func TestLogfmtExtractsIDsWithoutWarn(t *testing.T) {
 	sweet.Run(t, "slog-shaped logfmt trace_id and span_id are parsed", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)
 		body := `time=2026-01-01T00:00:00Z level=INFO msg="ok" trace_id=aaa span_id=bbb`
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -107,7 +107,7 @@ func TestLogfmtQuotedValuesExtractIDs(t *testing.T) {
 	sweet.Run(t, "quoted logfmt values still extract ids", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)
 		body := `msg="hello world" trace_id=aaa span_id=bbb`
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -123,7 +123,7 @@ func TestLogfmtTraceIDOnly(t *testing.T) {
 	sweet.Run(t, "logfmt trace_id only leaves span empty", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)
 		body := `msg=ok trace_id=aaa`
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -139,7 +139,7 @@ func TestLogfmtWithoutIDsIsPlainText(t *testing.T) {
 	sweet.Run(t, "logfmt without ids is unstructured and does not warn", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 2)
 		input := "foo=bar\nbaz=qux\n"
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(input), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader(input), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -160,7 +160,7 @@ func TestJSONPrecedenceOverLogfmt(t *testing.T) {
 	sweet.Run(t, "JSON lines are not parsed as logfmt", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)
 		body := `{"msg":"ok","trace_id":"aaa","span_id":"bbb"}`
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -176,7 +176,7 @@ func TestValidJSONExtractsIDsWithoutWarn(t *testing.T) {
 	sweet.Run(t, "JSON trace_id and span_id are parsed", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)
 		body := `{"msg":"ok","trace_id":"aaa","span_id":"bbb"}`
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -205,7 +205,7 @@ func TestAnsiColorizedConsoleLineIsStrippedAndExtractsIDs(t *testing.T) {
 			esc + "[36mtrace_id=" + esc + "[0m" + esc + "[1mabc123" + esc + "[0m " +
 			esc + "[36mspan_id=" + esc + "[0m" + esc + "[1mdef456" + esc + "[0m"
 
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader(body+"\n"), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -226,7 +226,7 @@ func TestAnsiColorizedConsoleLineIsStrippedAndExtractsIDs(t *testing.T) {
 func TestEOFWithoutNewline(t *testing.T) {
 	sweet.Run(t, "last line without newline is kept", capFactory, func(t *testing.T, d capDeps) {
 		out := make(chan domain.LogLine, 1)
-		err := capture.Copy(context.Background(), d.lt, domain.SourceStdout, strings.NewReader("tail"), out, capture.NewWarnGate(time.Hour))
+		err := capture.Copy(testtrace.Context(t), d.lt, domain.SourceStdout, strings.NewReader("tail"), out, capture.NewWarnGate(time.Hour))
 		if err != nil {
 			t.Fatalf("Copy: %v", err)
 		}
@@ -247,4 +247,10 @@ func recvLine(t *testing.T, out <-chan domain.LogLine) domain.LogLine {
 		t.Fatal("expected a log line")
 		return domain.LogLine{}
 	}
+}
+
+func withLog(lt observability.LoggingTracer, log *slog.Logger) observability.LoggingTracer {
+	lt.Log = *log
+
+	return lt
 }

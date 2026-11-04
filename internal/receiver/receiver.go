@@ -64,8 +64,8 @@ type Receiver struct {
 	drop *atomic.Bool
 }
 
-func Listen(lt observability.LoggingTracer, ports Ports, spans chan<- domain.Span, logs chan<- domain.LogLine, hooks ...Hooks) (*Receiver, error) {
-	_, _, span := lt.Name("receiver.Listen").Start(context.Background())
+func Listen(ctx context.Context, lt observability.LoggingTracer, ports Ports, spans chan<- domain.Span, logs chan<- domain.LogLine, hooks ...Hooks) (*Receiver, error) {
+	_, _, span := lt.Name("receiver.Listen").Start(ctx)
 	defer span.End()
 
 	// Components started later name themselves; this is the default.

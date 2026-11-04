@@ -38,10 +38,10 @@ func run(
 	stdout io.Writer,
 	stderr io.Writer,
 ) (int, error) {
-	ctx, log, span := lt.Start(ctx)
+	ctx, log, span := lt.Name("main.run").Start(ctx)
 	defer span.End()
 
-	pipe, err := ingest.New(lt, correlator.Drain{
+	pipe, err := ingest.New(ctx, lt, correlator.Drain{
 		Idle:    cfg.DrainIdle,
 		Timeout: cfg.DrainTimeout,
 	}, correlator.Limits{
@@ -145,6 +145,8 @@ func run(
 		childIn = nil
 	}
 	code, started, err := startChild(
+		ctx,
+		lt,
 		cfg.Command,
 		rec.ChildEnv(),
 		childIn,
@@ -200,12 +202,17 @@ func run(
 }
 
 func startChild(
+	ctx context.Context,
+	lt observability.LoggingTracer,
 	command []string,
 	extraEnv []string,
 	stdin io.Reader,
 	stdout *os.File,
 	stderr *os.File,
 ) (int, bool, error) {
+	_, _, span := lt.Name("main.startChild").Start(ctx)
+	defer span.End()
+
 	cmd := exec.Command(command[0], command[1:]...) //nolint:gosec // running the command praytel was given is its job
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout

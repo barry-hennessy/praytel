@@ -48,7 +48,7 @@ func newErrMapper(lt observability.LoggingTracer, stderr io.Writer) bones.ErrMap
 			return 1
 		}
 
-		_, log, span := lt.Start(context.Background())
+		_, log, span := lt.Name("main.newErrMapper").Start(context.Background())
 		defer span.End()
 		log.Error("praytel failed", "err", err)
 

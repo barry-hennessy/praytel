@@ -1,0 +1,58 @@
+# praytel-snapshot v1
+## tree
+● praytel.correlator.Correlator.Logs
+     component │ correlator.Correlator.Logs
+
+● praytel.correlator.Correlator.Stop
+     component │ correlator.Correlator.Stop
+
+● praytel.correlator.Correlator.Stop
+     component │ correlator.Correlator.Stop
+
+● praytel.test.TestPendingResolvedOnStop/Stop_drains_pending_onto_the_global_orphan_when_the_trace_was_never_seen
+┃    test.name │ TestPendingResolvedOnStop/Stop_drains_pending_onto_the_global_orphan_when_the_trace_was_never_seen
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.correlator.Correlator.Run
+┆ ┃    component │ correlator.Correlator.Run
+┆ ┃ ────────────────────────────────────────────────────────────────────────────
+┆ ┆ ● praytel.correlator.Correlator.waitIdleOrCap
+┆ ┆ ┃    component │ correlator.Correlator.waitIdleOrCap
+┆ ┆ ┃ ──────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ● praytel.correlator.Correlator.finishDrain
+┆ ┆ ┆ ┃    component │ correlator.Correlator.finishDrain
+┆ ┆ ┆ ┃ ────────────────────────────────────────────────────────────────────────
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆      component │ correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆      component │ correlator.Correlator.drainInbound
+┆ ┆ ┆ ┆
+┆ ┆ ┆ ┆ ● praytel.correlator.Correlator.resolvePending
+┆ ┆ ┆ ┆      component │ correlator.Correlator.resolvePending
+┆ ┆ ┆ ┆
+┆ ● praytel.correlator.New
+┆      component │ correlator.New
+## graph
+
+                                                                                                                                                                                                                                                                             ╭──────────────────────────────────────────────╮
+                                                                                                                                                                                                                                                                             │ praytel.correlator.Correlator.drainInbound   │
+                                                                                                                                                                                                                                                                       ╭─×2─▶│ 2 spans                                      │
+                                                                                                                          ╭───────────────────────────────────╮     ╭─────────────────────────────────────────────╮     ╭───────────────────────────────────────────╮  │     ╰──────────────────────────────────────────────╯
+                                                                                                                          │ praytel.correlator.Correlator.Run │     │ praytel.correlator.Correlator.waitIdleOrCap │     │ praytel.correlator.Correlator.finishDrain │  │
+                                                                                                                      ╭──▶│ 1 span                            │────▶│ 1 span                                      │────▶│ 1 span                                    │──┤     ╭──────────────────────────────────────────────╮
+                                                                                                                      │   ╰───────────────────────────────────╯     ╰─────────────────────────────────────────────╯     ╰───────────────────────────────────────────╯  │     │ praytel.correlator.Correlator.resolvePending │
+                                                                                                                      │                                                                                                                                                ╰────▶│ 1 span                                       │
+ ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │   ╭───────────────────────────────────╮                                                                                                              ╰──────────────────────────────────────────────╯
+ │ praytel.test.TestPendingResolvedOnStop/Stop_drains_pending_onto_the_global_orphan_when_the_trace_was_never_seen │  │   │ praytel.correlator.New            │
+ │ 1 span                                                                                                          │──┴──▶│ 1 span                            │
+ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯      ╰───────────────────────────────────╯
+
+ ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.correlator.Correlator.Logs                                                                              │
+ │ 1 span                                                                                                          │
+ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ ╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.correlator.Correlator.Stop                                                                              │
+ │ 2 spans                                                                                                         │
+ ╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

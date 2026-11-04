@@ -30,5 +30,16 @@ defer span.End()
 ```
 
 Pass the caller's context so the span nests; use `context.Background()` only
-when the function takes none. `internal/receiver` follows the rule; the other
-packages are still to be brought in line.
+when the function takes none. A constructor that starts spans or wires others
+takes a context for that reason (`ingest.New`, `receiver.Listen`,
+`correlator.New`).
+
+Keep spans off hot paths: anything that runs per event, per line or per frame
+(`handleSpan`, `admit`, the stream writers, the TUI model). `LoggingTracer.Start`
+allocates a logger on every call, even with no tracer. Check anything borderline
+with `make bench-diff`.
+
+`internal/receiver`, `internal/correlator` (drain and eviction only),
+`internal/capture`, `internal/render/stream`, `internal/render/tui` (`New`,
+`Run`), `internal/ingest` and `cmd/praytel` follow the rule. `internal/filter`,
+`internal/attrspec` and `internal/render/snapshot` take no tracer yet.

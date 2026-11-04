@@ -1,8 +1,5 @@
 # praytel-snapshot v1
 ## tree
-● praytel.receiver.Listen
-     component │ receiver.Listen
-
 ● praytel.receiver.Receiver.GRPCPort
      component │ receiver.Receiver.GRPCPort
 
@@ -29,6 +26,9 @@
 ┆ ┆ ┆ ┆ ● praytel.receiver.ingestTraces.forward
 ┆ ┆ ┆ ┆      component │ receiver.ingestTraces.forward
 ┆ ┆ ┆ ┆
+┆ ● praytel.receiver.Listen
+┆      component │ receiver.Listen
+┆
 ┆ ● praytel.receiver.Receiver.Serve
 ┆      component │ receiver.Receiver.Serve
 ## graph
@@ -38,20 +38,20 @@
                                                                                   ╭──▶│ 2 spans                                                            │────▶│ 1 span                               │────▶│ 1 span                                │
                                                                                   │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯     ╰───────────────────────────────────────╯
                                                                                   │
- ╭─────────────────────────────────────────────────────────────────────────────╮  │   ╭────────────────────────────────────────────────────────────────────╮     ╭──────────────────────────────────────╮     ╭───────────────────────────────────────╮
- │ praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed │  │   │ praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export │     │ praytel.receiver.ingestTraces.Export │     │ praytel.receiver.ingestTraces.forward │
- │ 1 span                                                                      │──┼──▶│ 2 spans                                                            │────▶│ 1 span                               │────▶│ 1 span                                │
- ╰─────────────────────────────────────────────────────────────────────────────╯  │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯     ╰───────────────────────────────────────╯
+                                                                                  │   ╭────────────────────────────────────────────────────────────────────╮     ╭──────────────────────────────────────╮     ╭───────────────────────────────────────╮
+                                                                                  │   │ praytel.opentelemetry.proto.collector.trace.v1.TraceService/Export │     │ praytel.receiver.ingestTraces.Export │     │ praytel.receiver.ingestTraces.forward │
+                                                                                  ├──▶│ 2 spans                                                            │────▶│ 1 span                               │────▶│ 1 span                                │
+                                                                                  │   ╰────────────────────────────────────────────────────────────────────╯     ╰──────────────────────────────────────╯     ╰───────────────────────────────────────╯
+                                                                                  │
+ ╭─────────────────────────────────────────────────────────────────────────────╮  │   ╭────────────────────────────────────────────────────────────────────╮
+ │ praytel.test.TestTraceAndLogServicesExist/gRPC_trace_and_log_export_succeed │  │   │ praytel.receiver.Listen                                            │
+ │ 1 span                                                                      │──┼──▶│ 1 span                                                             │
+ ╰─────────────────────────────────────────────────────────────────────────────╯  │   ╰────────────────────────────────────────────────────────────────────╯
                                                                                   │
                                                                                   │   ╭────────────────────────────────────────────────────────────────────╮
                                                                                   │   │ praytel.receiver.Receiver.Serve                                    │
                                                                                   ╰──▶│ 1 span                                                             │
                                                                                       ╰────────────────────────────────────────────────────────────────────╯
-
- ╭─────────────────────────────────────────────────────────────────────────────╮
- │ praytel.receiver.Listen                                                     │
- │ 1 span                                                                      │
- ╰─────────────────────────────────────────────────────────────────────────────╯
 
  ╭─────────────────────────────────────────────────────────────────────────────╮
  │ praytel.receiver.Receiver.GRPCPort                                          │

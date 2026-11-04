@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestLogfmtWithoutIDsIsPlainText/logfmt_without_ids_is_unstructured_and_does_not_warn
+┃    test.name │ TestLogfmtWithoutIDsIsPlainText/logfmt_without_ids_is_unstructured_and_does_not_warn
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭───────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestLogfmtWithoutIDsIsPlainText/logfmt_without_ids_is_unstructured_and_does_not_warn │     │ praytel.capture.Copy │
+ │ 1 span                                                                                            │────▶│ 1 span               │
+ ╰───────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯

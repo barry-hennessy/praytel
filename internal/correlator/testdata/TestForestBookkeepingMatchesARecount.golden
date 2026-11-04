@@ -1,0 +1,32 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestForestBookkeepingMatchesARecount
+┃    test.name │ TestForestBookkeepingMatchesARecount
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.correlator.Correlator.evictTrace
+┆      component │ correlator.Correlator.evictTrace
+┆
+┆ ● praytel.correlator.Correlator.evictTrace
+┆      component │ correlator.Correlator.evictTrace
+┆
+┆ ● praytel.correlator.Correlator.resolvePending
+┆      component │ correlator.Correlator.resolvePending
+┆
+┆ ● praytel.correlator.New
+┆      component │ correlator.New
+## graph
+
+                                                              ╭──────────────────────────────────────────────╮
+                                                              │ praytel.correlator.Correlator.evictTrace     │
+                                                        ╭─×2─▶│ 2 spans                                      │
+                                                        │     ╰──────────────────────────────────────────────╯
+                                                        │
+ ╭───────────────────────────────────────────────────╮  │     ╭──────────────────────────────────────────────╮
+ │ praytel.test.TestForestBookkeepingMatchesARecount │  │     │ praytel.correlator.Correlator.resolvePending │
+ │ 1 span                                            │──┼────▶│ 1 span                                       │
+ ╰───────────────────────────────────────────────────╯  │     ╰──────────────────────────────────────────────╯
+                                                        │
+                                                        │     ╭──────────────────────────────────────────────╮
+                                                        │     │ praytel.correlator.New                       │
+                                                        ╰────▶│ 1 span                                       │
+                                                              ╰──────────────────────────────────────────────╯

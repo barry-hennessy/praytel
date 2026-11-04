@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestLogfmtTraceIDOnly/logfmt_trace_id_only_leaves_span_empty
+┃    test.name │ TestLogfmtTraceIDOnly/logfmt_trace_id_only_leaves_span_empty
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭───────────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestLogfmtTraceIDOnly/logfmt_trace_id_only_leaves_span_empty │     │ praytel.capture.Copy │
+ │ 1 span                                                                    │────▶│ 1 span               │
+ ╰───────────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯

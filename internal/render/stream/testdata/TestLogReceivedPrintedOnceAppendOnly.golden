@@ -1,0 +1,21 @@
+# praytel-snapshot v1
+## tree
+● praytel.stream.New
+     component │ stream.New
+
+● praytel.test.TestLogReceivedPrintedOnceAppendOnly/LogReceived_is_printed_once_and_not_rewritten
+┃    test.name │ TestLogReceivedPrintedOnceAppendOnly/LogReceived_is_printed_once_and_not_rewritten
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.stream.Stream.Run
+┆      component │ stream.Stream.Run
+## graph
+
+ ╭─────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭───────────────────────────╮
+ │ praytel.test.TestLogReceivedPrintedOnceAppendOnly/LogReceived_is_printed_once_and_not_rewritten │     │ praytel.stream.Stream.Run │
+ │ 1 span                                                                                          │────▶│ 1 span                    │
+ ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰───────────────────────────╯
+
+ ╭─────────────────────────────────────────────────────────────────────────────────────────────────╮
+ │ praytel.stream.New                                                                              │
+ │ 1 span                                                                                          │
+ ╰─────────────────────────────────────────────────────────────────────────────────────────────────╯

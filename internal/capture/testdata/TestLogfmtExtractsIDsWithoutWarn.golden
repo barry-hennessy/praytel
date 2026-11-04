@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestLogfmtExtractsIDsWithoutWarn/slog-shaped_logfmt_trace_id_and_span_id_are_parsed
+┃    test.name │ TestLogfmtExtractsIDsWithoutWarn/slog-shaped_logfmt_trace_id_and_span_id_are_parsed
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestLogfmtExtractsIDsWithoutWarn/slog-shaped_logfmt_trace_id_and_span_id_are_parsed │     │ praytel.capture.Copy │
+ │ 1 span                                                                                           │────▶│ 1 span               │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯

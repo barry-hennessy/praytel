@@ -78,7 +78,7 @@ func get(t *testing.T, url string) (*http.Response, error) {
 func startRecv(t *testing.T, spans chan domain.Span, logs chan domain.LogLine) recvDeps {
 	t.Helper()
 
-	r, err := receiver.Listen(testtrace.LoggingTracer(t), receiver.Ports{GRPC: 0, HTTP: 0}, spans, logs, hooks())
+	r, err := receiver.Listen(testtrace.Context(t), testtrace.LoggingTracer(t), receiver.Ports{GRPC: 0, HTTP: 0}, spans, logs, hooks())
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -575,7 +575,7 @@ func TestListenOccupied(t *testing.T) {
 		defer ln.Close()
 
 		port := ln.Addr().(*net.TCPAddr).Port
-		_, err = receiver.Listen(testtrace.LoggingTracer(t), receiver.Ports{GRPC: port, HTTP: 0}, nil, nil)
+		_, err = receiver.Listen(testtrace.Context(t), testtrace.LoggingTracer(t), receiver.Ports{GRPC: port, HTTP: 0}, nil, nil)
 		if err == nil {
 			t.Fatal("expected listen error")
 		}

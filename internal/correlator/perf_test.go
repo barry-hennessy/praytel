@@ -22,7 +22,7 @@ func BenchmarkIngest(b *testing.B) {
 		b.Run(fmt.Sprintf("spans=%d", spans), func(b *testing.B) {
 			for b.Loop() {
 				out := make(chan domain.Event, 1024)
-				c := correlator.New(observability.LoggingTracer{}, out, correlator.Drain{}, correlator.Limits{})
+				c := correlator.New(context.Background(), observability.LoggingTracer{}, out, correlator.Drain{}, correlator.Limits{})
 				done := make(chan struct{})
 				go func() {
 					for range out {

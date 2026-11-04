@@ -1,0 +1,13 @@
+# praytel-snapshot v1
+## tree
+● praytel.test.TestAnsiColorizedConsoleLineIsStrippedAndExtractsIDs/zerolog-style_colorized_console_output_loses_its_ANSI_codes_and_still_yields_ids
+┃    test.name │ TestAnsiColorizedConsoleLineIsStrippedAndExtractsIDs/zerolog-style_colorized_console_output_loses_its_ANSI_codes_and_still_yields_ids
+┃ ──────────────────────────────────────────────────────────────────────────────
+┆ ● praytel.capture.Copy
+┆      component │ capture.Copy
+## graph
+
+ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮     ╭──────────────────────╮
+ │ praytel.test.TestAnsiColorizedConsoleLineIsStrippedAndExtractsIDs/zerolog-style_colorized_console_output_loses_its_ANSI_codes_and_still_yields_ids │     │ praytel.capture.Copy │
+ │ 1 span                                                                                                                                             │────▶│ 1 span               │
+ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯     ╰──────────────────────╯
