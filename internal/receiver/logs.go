@@ -56,7 +56,7 @@ func (s ingestLogs) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	var in colllog.ExportLogsServiceRequest
-	if err := readProtobuf(req, &in); err != nil {
+	if err := readProtobuf(ctx, s.lt, req, &in); err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
@@ -74,12 +74,16 @@ func (s ingestLogs) dropping() bool {
 }
 
 func (s ingestLogs) forward(ctx context.Context, req *colllog.ExportLogsServiceRequest) error {
+	ctx, log, span := s.lt.Name("receiver.ingestLogs.forward").Start(ctx)
+	defer span.End()
+
 	if s.logs == nil {
 		return nil
 	}
 
 	for _, line := range domainLogs(req) {
 		if s.dropping() {
+			log.Warn("dropping otlp after drain")
 			return nil
 		}
 

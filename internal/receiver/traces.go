@@ -57,7 +57,7 @@ func (s ingestTraces) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	var in colltrace.ExportTraceServiceRequest
-	if err := readProtobuf(req, &in); err != nil {
+	if err := readProtobuf(ctx, s.lt, req, &in); err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
@@ -82,12 +82,16 @@ func (s ingestTraces) forward(
 	ctx context.Context,
 	req *colltrace.ExportTraceServiceRequest,
 ) error {
+	ctx, log, span := s.lt.Name("receiver.ingestTraces.forward").Start(ctx)
+	defer span.End()
+
 	if s.spans == nil {
 		return nil
 	}
 
 	for _, ds := range domainSpans(req) {
 		if s.dropping() {
+			log.Warn("dropping otlp after drain")
 			return nil
 		}
 
