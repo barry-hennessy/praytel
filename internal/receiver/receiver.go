@@ -68,9 +68,6 @@ func Listen(ctx context.Context, lt observability.LoggingTracer, ports Ports, sp
 	_, _, span := lt.Name("receiver.Listen").Start(ctx)
 	defer span.End()
 
-	// Components started later name themselves; this is the default.
-	lt = lt.Name("receiver")
-
 	grpcLis, err := net.Listen("tcp", listenAddr(ports.GRPC))
 	if err != nil {
 		return nil, fmt.Errorf("%w: grpc %d: %w", ErrListen, ports.GRPC, err)
