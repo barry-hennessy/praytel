@@ -114,6 +114,9 @@ type GitHub struct {
 	API    string // such as https://api.github.com
 	Token  string
 	Client *http.Client
+	// Marker is what identifies the comment to keep up to date. It defaults
+	// to Marker, the benchmark comment's.
+	Marker string
 }
 
 type issueComment struct {
@@ -123,8 +126,22 @@ type issueComment struct {
 }
 
 // Upsert updates the comment on pull request pr of repo (owner/name) that
-// carries Marker, or posts one if there is none, and returns its URL.
+// carries the marker, or posts one if there is none, and returns its URL.
 func (g GitHub) Upsert(ctx context.Context, repo string, pr int, body string) (string, error) {
+	return g.sync(ctx, repo, pr, body, true)
+}
+
+// Update is Upsert that never posts: with no comment to update it does
+// nothing and returns an empty URL.
+func (g GitHub) Update(ctx context.Context, repo string, pr int, body string) (string, error) {
+	return g.sync(ctx, repo, pr, body, false)
+}
+
+func (g GitHub) sync(ctx context.Context, repo string, pr int, body string, create bool) (string, error) {
+	marker := g.Marker
+	if marker == "" {
+		marker = Marker
+	}
 	api := strings.TrimSuffix(g.API, "/")
 	for page := 1; ; page++ {
 		var comments []issueComment
@@ -133,7 +150,7 @@ func (g GitHub) Upsert(ctx context.Context, repo string, pr int, body string) (s
 			return "", fmt.Errorf("list comments: %w", err)
 		}
 		for _, c := range comments {
-			if strings.Contains(c.Body, Marker) {
+			if strings.Contains(c.Body, marker) {
 				var updated issueComment
 				url := fmt.Sprintf("%s/repos/%s/issues/comments/%d", api, repo, c.ID)
 				if err := g.do(ctx, http.MethodPatch, url, map[string]string{"body": body}, &updated); err != nil {
@@ -145,6 +162,9 @@ func (g GitHub) Upsert(ctx context.Context, repo string, pr int, body string) (s
 		if len(comments) < 100 {
 			break
 		}
+	}
+	if !create {
+		return "", nil
 	}
 	var created issueComment
 	url := fmt.Sprintf("%s/repos/%s/issues/%d/comments", api, repo, pr)

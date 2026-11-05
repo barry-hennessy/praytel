@@ -46,6 +46,15 @@ out anything that changes between runs (ports, temp paths, ids).
 
 ## 3. Check in CI
 
-`make golden-check` stamps again in a container and fails, with the diff, if
-any golden differs from the committed one. It runs on every pull request as the
-`golden` job in `check.yml`. To accept a change, run `make golden` and commit.
+`make golden-check` stamps again in a container and prints what differs from
+the committed goldens. It runs on every pull request as the `golden` job in
+`check.yml`, and it never fails the run: a difference is for a person to read.
+Instead the job comments the differences on the pull request, a header and the
+diff, and keeps that comment up to date on every push. When the differences are
+gone it edits the comment to say so; when there never were any it posts nothing.
+The same report is in the run's summary.
+
+To accept a change, run `make golden` and commit. A golden that differs between
+runs of the same code is a test whose trace depends on timing, such as one that
+calls a traced function in a loop it sleeps in. `GOMAXPROCS=1 make golden`, then
+a diff, finds them.

@@ -1,3 +1,4 @@
 .amp/portals/*
 bench-out/
+golden-out/
 .idea

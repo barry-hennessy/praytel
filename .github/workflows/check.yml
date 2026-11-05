@@ -7,7 +7,8 @@
 #   make zizmor
 #   make golden-check
 #
-# Any finding fails the job. New vulnerabilities are published without
+# Any finding fails the job, except golden traces, whose differences are
+# commented on the pull request instead. New vulnerabilities are published without
 # the code changing, so the checks also run weekly against main.
 name: check
 
@@ -70,8 +71,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: make zizmor
 
+  # Never fails the run: a difference in a golden is for a person to read, so
+  # it is commented on the pull request (kept up to date on every push) and
+  # put in the run's summary.
   golden:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # To comment the differences on the pull request.
+      pull-requests: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,6 +89,32 @@ jobs:
         uses: $/.github/actions/setup-dagger
 
       - name: Golden traces
+        continue-on-error: true
         env:
           DAGGER: ${{ steps.dagger.outputs.dagger }}
-        run: make golden-check
+          DETAILS: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -o pipefail
+          make golden-check | tee golden-report.md
+
+      - name: Comment
+        # A pull request from a fork gets a read-only token, which can't
+        # comment; the differences are still in the summary.
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          DAGGER: ${{ steps.dagger.outputs.dagger }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          DETAILS: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: make golden-comment
+
+      - name: Summarize
+        if: always()
+        run: |
+          if [ -f golden-report.md ]; then
+            cat golden-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The golden traces could not be compared; see the log." >> "$GITHUB_STEP_SUMMARY"
+          fi
