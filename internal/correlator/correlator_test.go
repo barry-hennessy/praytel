@@ -324,6 +324,8 @@ func TestHardCapReturnsWhileSpansArrive(t *testing.T) {
 		stopSend := make(chan struct{})
 		t.Cleanup(func() { close(stopSend) })
 
+		spans := d.c.Spans() // once: every call is a span, and the loop's length is timing
+
 		go func() {
 			i := 0
 			for {
@@ -336,7 +338,7 @@ func TestHardCapReturnsWhileSpansArrive(t *testing.T) {
 				select {
 				case <-stopSend:
 					return
-				case d.c.Spans() <- domain.Span{TraceID: "t", SpanID: strconv.Itoa(i), Name: "keep"}:
+				case spans <- domain.Span{TraceID: "t", SpanID: strconv.Itoa(i), Name: "keep"}:
 					i++
 					time.Sleep(2 * time.Millisecond)
 				default:
