@@ -155,3 +155,47 @@ func TestUpsertCommentPostsOnceThenUpdates(t *testing.T) {
 		t.Fatalf("bad token: err = %v, want a 401", err)
 	}
 }
+
+func TestUpdatePostsNothingAndMarkersKeepCommentsApart(t *testing.T) {
+	fake := &fakeGitHub{}
+	srv := httptest.NewServer(fake)
+	defer srv.Close()
+	ctx := context.Background()
+	bench := GitHub{API: srv.URL, Token: "secret", Client: srv.Client()}
+	golden := GitHub{API: srv.URL, Token: "secret", Client: srv.Client(), Marker: "<!-- golden -->"}
+
+	// With no comment of its own, Update leaves the pull request alone.
+	url, err := golden.Update(ctx, "o/r", 7, "<!-- golden -->\nclean")
+	if err != nil || url != "" || len(fake.comments) != 0 {
+		t.Fatalf("Update with nothing to update: url=%q err=%v comments=%d", url, err, len(fake.comments))
+	}
+
+	// The two comments live side by side, each updated in place.
+	for _, step := range []struct {
+		gh   GitHub
+		body string
+	}{
+		{bench, Marker + "\nbench"},
+		{golden, "<!-- golden -->\nfirst"},
+		{golden, "<!-- golden -->\nsecond"},
+		{bench, Marker + "\nbench again"},
+	} {
+		if _, err := step.gh.Upsert(ctx, "o/r", 7, step.body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(fake.comments) != 2 {
+		t.Fatalf("%d comments, want one each", len(fake.comments))
+	}
+	if !strings.HasSuffix(fake.comments[0].Body, "bench again") || !strings.HasSuffix(fake.comments[1].Body, "second") {
+		t.Fatalf("comments: %q, %q", fake.comments[0].Body, fake.comments[1].Body)
+	}
+
+	// Update now finds ours and edits it.
+	if url, err := golden.Update(ctx, "o/r", 7, "<!-- golden -->\nclean"); err != nil || url == "" {
+		t.Fatalf("Update: url=%q err=%v", url, err)
+	}
+	if !strings.HasSuffix(fake.comments[1].Body, "clean") {
+		t.Fatalf("comment says %q", fake.comments[1].Body)
+	}
+}

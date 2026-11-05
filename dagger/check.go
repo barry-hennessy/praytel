@@ -80,24 +80,3 @@ func (m *Demos) Zizmor(
 		WithExec(append(args, ".github")).
 		Stdout(ctx)
 }
-
-// goldenCheck stamps every golden again in a copy of the repository and
-// compares each with the one committed. A missing, changed or stale golden
-// fails it and prints the diff.
-const goldenCheck = `set -e
-cp -R /src /before
-scripts/golden
-rc=0
-for f in $(cd /src && find . -name '*.golden' | sort); do
-  diff -u "/before/$f" "/src/$f" || rc=1
-done
-exit $rc`
-
-// Golden stamps the goldens of every test's trace tree and graph with
-// scripts/golden, and fails if any differs from the committed one. Update
-// them with make golden and commit.
-func (m *Demos) Golden(ctx context.Context) (string, error) {
-	return goContainer(m.Source).
-		WithExec([]string{"bash", "-c", goldenCheck}).
-		Stdout(ctx)
-}

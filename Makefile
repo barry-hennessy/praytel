@@ -183,12 +183,38 @@ zizmor:
 #   make golden                    stamp testdata/<Test>.golden for every instrumented package
 #   make golden PKGS=internal/receiver
 #                                  stamp one package
-#   make golden-check              stamp in a container and fail if any differs from the committed one
+#   make golden-check              stamp in a container and print what differs from the
+#                                  committed goldens (the report CI comments); it never
+#                                  fails on a difference, results land in golden-out/
+#   GITHUB_TOKEN=$(gh auth token) make golden-comment PR=12
+#                                  post that report to pull request 12, or update the
+#                                  one posted before
 
-.PHONY: golden golden-check
+GOLDEN ?= golden-out
+
+.PHONY: golden golden-check golden-comment
 
 golden:
 	scripts/golden $(PKGS)
 
+# The results are of the working tree, committed or not, like bench-diff's.
 golden-check:
-	$(DAGGER) call golden
+	@set -e; \
+	rm -rf $(GOLDEN); \
+	$(DAGGER) call golden-diff export --path $(GOLDEN); \
+	dirty=$$(test -z "$$(git status --porcelain --untracked-files=no)" || echo ' with uncommitted changes'); \
+	echo "$$(git rev-parse --short HEAD)$$dirty" > $(GOLDEN)/title.txt; \
+	$(DAGGER) call golden-report $(golden_report_args)
+
+golden_report_args = --results $(GOLDEN) --title "$$(cat $(GOLDEN)/title.txt)" $(if $(DETAILS),--details-url "$(DETAILS)",)
+
+golden-comment:
+	@test -n "$(PR)" || { echo 'usage: GITHUB_TOKEN=$$(gh auth token) make golden-comment PR=<number>'; exit 2; }
+	@test -n "$$GITHUB_TOKEN" || { echo 'golden-comment needs GITHUB_TOKEN; locally: GITHUB_TOKEN=$$(gh auth token) make golden-comment PR=$(PR)'; exit 2; }
+	@test -f $(GOLDEN)/title.txt || { echo 'no results in $(GOLDEN): run make golden-check first'; exit 2; }
+	@set -e; \
+	repo="$(REPO)"; \
+	if [ -z "$$repo" ]; then \
+		repo=$$(git remote get-url origin | sed -E -e 's#\.git$$##' -e 's#^.*[:/]([^/:]+/[^/]+)$$#\1#'); \
+	fi; \
+	$(DAGGER) call golden-comment $(golden_report_args) --repo "$$repo" --pr $(PR) --token env:GITHUB_TOKEN
