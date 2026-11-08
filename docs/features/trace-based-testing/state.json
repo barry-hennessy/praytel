@@ -1,0 +1,84 @@
+{
+  "slug": "trace-based-testing",
+  "phase": "tasks",
+  "auto": false,
+  "gates": {
+    "research": {
+      "passed": true,
+      "comparables_covered": 6,
+      "patterns": 5,
+      "retries": 0,
+      "gaps": [
+        "no prior art for violation->alert->generated test",
+        "no evidence for terminal record-then-pick-attributes flow for traces",
+        "Tracetest maintenance status UNVERIFIED",
+        "Hypothesis live-trace transfer is inference",
+        "Helios/Kolo/Odigos thin",
+        "Starlark: no try/except, not a sandbox, no tagged releases"
+      ]
+    },
+    "vision": {
+      "passed": true,
+      "note": "template complete per PM; orchestrator verified headings"
+    },
+    "design": {
+      "passed": true,
+      "decided": 12,
+      "contradictions_found_and_fixed": [
+        "D7 duration open marker (D6)",
+        "D2 caseResult fields (D10)"
+      ],
+      "pending": "vision amendments from D2,D6,D8,D11"
+    },
+    "tasks": {
+      "passed": false,
+      "critic_rounds": 3,
+      "verdict": "FAIL",
+      "status": "ESCALATED to human: revision cap (2) reached; 4 findings remain",
+      "remaining_findings": [
+        "T16/T24 second-signal handoff gaps: groupLive set after cmd.Start (should be OnArmed before fork); OnGroupDone vs signal.Stop ordering; first signal between Run cause check and T16 signal.Notify lets child run to timeout",
+        "T16 cannot build its own second-signal test fixture (needs cmd/praytel/testdata/child/main.go -ignore-signals in T16 Owns)",
+        "Golden stamping procedure step 3 reverts regenerated surface.golden (T18a/T18b/T19)",
+        "testrun.Run parameter order in plan (exitFor before stdout,stderr) contradicts D10 amendment (stdout, stderr, exitFor)"
+      ]
+    },
+    "integrate": null
+  },
+  "human_approvals": {
+    "vision": "approved v4 (readings confirmed: test --record=FILE, *.praytest.star)",
+    "tasks": null
+  },
+  "retries": {
+    "task-critic": 1,
+    "task-planner": 2
+  },
+  "spawns": {
+    "research": 10,
+    "vision": 4,
+    "design": 37,
+    "tasks": 3,
+    "implement": 0
+  },
+  "decisions": {
+    "D4": "decided",
+    "D1": "decided",
+    "D5": "decided",
+    "D2": "decided",
+    "D7": "decided",
+    "D6": "decided",
+    "D8": "decided",
+    "D10": "decided",
+    "D12": "decided",
+    "D9": "decided",
+    "D3": "decided",
+    "D11": "decided"
+  },
+  "tasks": {},
+  "open_questions": [
+    "D2 proposes amending vision exit table: add 130/143 interrupted (fallback: exit 3 + INTERRUPTED); row 4 = child exited early with wrong code; confirm with human",
+    "D6 vision amendments (verbatim in D6 file): s4 run.one row, M6 target, A3 wording; columns stay 13:5 unless position test fails",
+    "D8 vision amendments (verbatim in D8 file): S1 header v0 marker, volatile list wording, commented-out absence picks, M3 rewording, P3 row"
+  ],
+  "spike_R1": "YES",
+  "note": "rate limit hit during wave 4; D11 explorers (3) and D9 decider failed mid-run, to be resumed"
+}
