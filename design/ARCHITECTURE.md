@@ -8,7 +8,7 @@ weight: 80
 
 Praytel is a **transparent CLI wrapper**: `praytel [flags] -- cmd …`. It forwards signals, runs one command to completion, captures that process’s logs and OpenTelemetry data, joins them, and prints a unified view. No daemon, no leftover files. The TUI may stay open after the child exits; everything else drains and exits.
 
-This document is the decided architecture. Decision detail lives in [`.scratch/MAP.md`](../.scratch/MAP.md) and its tickets. [Pipeline](PIPELINE.md) gives the detail of the outputs, the plan, the query language and the checks. The code changes to this design in phases. The phases are in the pipeline plan.
+This document is the decided architecture. Decision detail lives in [`.scratch/MAP.md`](../.scratch/MAP.md) and its tickets. [Pipeline](PIPELINE.md) gives the detail of the outputs, the plan, the query language and the checks. The code changes to this design in phases.
 
 Go. [Bones](https://github.com/barry-hennessy/bones) for process lifecycle (`RootCtx`, `errgroup`) and `LoggingTracer`. [Bubble Tea](https://github.com/charmbracelet/bubbletea) for the TUI sink. [Starlark](https://github.com/google/starlark-go) for the `--execute` front-end. Starlark makes a plan one time for each change. It does not see events.
 
