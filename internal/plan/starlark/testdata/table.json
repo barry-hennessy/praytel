@@ -1,0 +1,52 @@
+{
+  "outputs": [
+    {
+      "name": "snapshot",
+      "stages": [
+        {
+          "kind": "no_attrs"
+        }
+      ],
+      "view": {
+        "kind": "snapshot",
+        "sections": [
+          "tree"
+        ]
+      },
+      "emit": "final",
+      "sink": {
+        "kind": "file",
+        "path": "tree.txt"
+      }
+    },
+    {
+      "name": "snapshot",
+      "stages": [
+        {
+          "kind": "no_attrs"
+        }
+      ],
+      "view": {
+        "kind": "snapshot",
+        "sections": [
+          "graph"
+        ]
+      },
+      "emit": "final",
+      "sink": {
+        "kind": "file",
+        "path": "graph.txt"
+      }
+    },
+    {
+      "name": "stream",
+      "view": {
+        "kind": "stream"
+      },
+      "emit": "each",
+      "sink": {
+        "kind": "stderr"
+      }
+    }
+  ]
+}

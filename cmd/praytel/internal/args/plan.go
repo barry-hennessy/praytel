@@ -1,10 +1,23 @@
 package args
 
-import "github.com/barry-hennessy/praytel/internal/plan"
+import (
+	"os"
 
-// Plan is the plan the flags make. The flags are shorthand for plans; see
-// design/PIPELINE.md.
-func (c Config) Plan() plan.Plan {
+	"github.com/barry-hennessy/praytel/internal/plan"
+	"github.com/barry-hennessy/praytel/internal/plan/starlark"
+)
+
+// Plan is the plan the flags make: the Starlark of --execute, or the mode
+// flags, which are shorthand for plans. See design/PIPELINE.md.
+func (c Config) Plan() (plan.Plan, error) {
+	if len(c.Execute) > 0 {
+		return starlark.Compile(c.Execute, ".", os.Stderr)
+	}
+	p := c.flagPlan()
+	return p, p.Validate()
+}
+
+func (c Config) flagPlan() plan.Plan {
 	switch {
 	case c.Snapshot:
 		return plan.Plan{Outputs: []plan.Output{c.snapshotOutput()}}

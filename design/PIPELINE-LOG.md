@@ -126,3 +126,50 @@ To know:
   returned at once and a goroutine read the rest.
 - The incomplete message comes from the output's name:
   `praytel: snapshot incomplete: …` for the flag plan, as before.
+
+## Phase 4: `--execute` (Starlark)
+
+Branch `pipeline-phase4-execute`.
+
+Checks:
+- `go test ./...`: pass. New tests in `internal/plan/starlark`: each
+  `testdata/*.star` (statements, a helper function, a loop, `load()` of a
+  library) compiles to its JSON golden; a snippet table (expressions,
+  lists, statements, two snippets, every join and validation error, the
+  error position, a runtime error inside a function, an endless loop);
+  `load()` rules (inside the directory, `.star` only, no cycles, no
+  outputs while a module loads); `print()`.
+- `cmd/praytel/internal/args`: each mode flag set and its documented `-e`
+  form make byte-equal plans; `-e` with `--tui` or `--snapshot` is a
+  usage error.
+- `cmd/praytel` with the built binary: two outputs in one run (a snapshot
+  to a file and the stream to stdout); a `.star` file; a bad snippet fails
+  with its position before the child starts.
+- `go test -fuzz FuzzSnippet -fuzztime 30s`: 1.6 M inputs, no panic, no
+  invalid plan returned.
+- `scripts/golden`: no golden changed.
+- `golangci-lint run ./...`: 0 issues.
+
+Departures:
+- `go.starlark.net` has no release tags. The module is the pseudo-version
+  `v0.0.0-20261021141710-4f4267fb140d` (2026-10-21).
+- `exit` is a value that marks the output's sink, not `exit(code)`. The
+  incomplete code is 3 for now; Phase 8 adds the check code.
+- `tree()` and `graph()` take no arguments; `logs=` is on `snapshot()`
+  only, the one view that has the option.
+- The snapshot is `snapshot("tree", "graph", logs=False)`, as in Phase 2.
+  Its sections render tree first, whatever order they are given in, so
+  the plan matches `--snapshot`.
+- An output's name is its pane name, or else its view kind. This makes
+  the `-e` forms equal to the flag plans.
+- `settled` is defined but the driver rejects it until Phase 6.
+- A plan with TUI panes and other outputs is an error until Phase 5.
+- A script's work is capped (10 M Starlark steps), because the scripts
+  may use `while` loops and run before the child starts.
+- Plan errors print as `praytel: plan: <file>:<line>:<col>: …` and exit 1,
+  for `--print-plan` too.
+
+To know:
+- The reference page (`docs/reference/praytel.1.md`) has a Plans section:
+  the builtins and the `-e` form of each mode flag.
+- `print()` in a script writes to stderr.

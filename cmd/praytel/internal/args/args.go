@@ -44,6 +44,20 @@ type Config struct {
 	// PrintPlan prints the plan the other flags make, as JSON, and exits.
 	// It does not need a command.
 	PrintPlan bool
+
+	// Execute is each --execute (-e) value in order: Starlark code, or a
+	// path to a .star file. It replaces the mode flags.
+	Execute []string
+}
+
+// executeFlag collects every --execute and -e value.
+type executeFlag []string
+
+func (f *executeFlag) String() string { return strings.Join(*f, " ") }
+
+func (f *executeFlag) Set(s string) error {
+	*f = append(*f, s)
+	return nil
 }
 
 // attrsFlag is --snapshot-attrs. It is a boolean flag so that the bare form
@@ -123,6 +137,9 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	fs.Var(&attrs, "snapshot-attrs", `span attributes to show in a snapshot: key globs, "-" excludes; bare means all (give a value as =GLOBS)`)
 	snapshotLogs := fs.Bool("snapshot-logs", false, "include log lines in a snapshot")
 	printPlan := fs.Bool("print-plan", false, "print the plan the other flags make, as JSON, and exit")
+	var execute executeFlag
+	fs.Var(&execute, "execute", "Starlark that declares the outputs, or a path to a .star file; repeatable")
+	fs.Var(&execute, "e", "short for --execute")
 
 	if err := fs.Parse(flags); err != nil {
 		return Config{}, err
@@ -154,6 +171,11 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		return Config{}, ErrUsage
 	}
 
+	if len(execute) > 0 && (*tuiMode || set["snapshot"]) {
+		fmt.Fprintln(errOut, "--execute cannot be combined with --tui or --snapshot")
+		return Config{}, ErrUsage
+	}
+
 	idle := max(0, *drainIdle)
 	hard := max(0, *drainTimeout)
 
@@ -175,6 +197,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		snapshotGlobs: globsOf(attrs),
 
 		PrintPlan: *printPlan,
+		Execute:   execute,
 	}, nil
 }
 

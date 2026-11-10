@@ -34,6 +34,7 @@ func run(
 	ctx context.Context,
 	lt observability.LoggingTracer,
 	cfg args.Config,
+	pl plan.Plan,
 	stdin io.Reader,
 	stdout io.Writer,
 	stderr io.Writer,
@@ -41,11 +42,10 @@ func run(
 	ctx, log, span := lt.Name("main.run").Start(ctx)
 	defer span.End()
 
-	pl := cfg.Plan()
-	if err := pl.Validate(); err != nil {
-		return 1, fmt.Errorf("plan: %w", err)
-	}
 	interactive := pl.HasSink(plan.SinkTUI)
+	if interactive && len(pl.Outputs) != countSink(pl, plan.SinkTUI) {
+		return 1, errors.New("plan: TUI panes cannot share a run with other outputs yet")
+	}
 
 	pipe, err := ingest.New(ctx, lt, correlator.Drain{
 		Idle:    cfg.DrainIdle,
@@ -289,4 +289,14 @@ func withOTelExporterEnv(base, extra []string) []string {
 	}
 
 	return append(out, extra...)
+}
+
+func countSink(p plan.Plan, kind string) int {
+	n := 0
+	for _, o := range p.Outputs {
+		if o.Sink.Kind == kind {
+			n++
+		}
+	}
+	return n
 }
