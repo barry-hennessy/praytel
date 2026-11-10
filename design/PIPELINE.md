@@ -6,8 +6,8 @@ weight: 81
 
 # Pipeline
 
-Status: Planned. This document gives the target design. The current code
-follows [Architecture](ARCHITECTURE.md). The changes occur in phases. Each
+Status: Decided. [Architecture](ARCHITECTURE.md) gives the summary. This
+document gives the detail. The code changes to this design in phases. Each
 phase keeps the golden files and the benchmarks.
 
 This document is in ASD-STE100 Simplified Technical English. Technical names
