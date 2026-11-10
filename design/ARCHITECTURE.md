@@ -54,6 +54,11 @@ Every renderer consults `internal/filter` before showing a span: the stream and 
 
 Visual design (colours, TUI chrome, how orphans look) is not specified here.
 
+Planned change: [Pipeline](PIPELINE.md) replaces "one renderer per process"
+with "one or more outputs per plan". One projection of the events replaces
+the separate models in the renderers and in `internal/filter`. Until each
+phase of that change is complete, this section gives the current design.
+
 ## Pressure and errors
 
 In-memory only. `--max-spans` / `--max-log-lines`. Evict oldest **closed** traces, then shed newest. Never silent (stderr + events). No spill files.
