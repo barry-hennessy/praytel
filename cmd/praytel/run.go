@@ -16,14 +16,12 @@ import (
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/cmd/praytel/internal/args"
 	"github.com/barry-hennessy/praytel/internal/capture"
-	"github.com/barry-hennessy/praytel/internal/attrspec"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/ingest"
+	"github.com/barry-hennessy/praytel/internal/pipeline"
 	"github.com/barry-hennessy/praytel/internal/plan"
 	"github.com/barry-hennessy/praytel/internal/receiver"
-	"github.com/barry-hennessy/praytel/internal/render/snapshot"
-	"github.com/barry-hennessy/praytel/internal/render/stream"
 	"github.com/barry-hennessy/praytel/internal/render/tui"
 	"golang.org/x/sync/errgroup"
 )
@@ -64,22 +62,20 @@ func run(
 	}
 	events, corr, rec := pipe.Events, pipe.Corr, pipe.Rec
 
+	// The pipeline driver runs every output except TUI panes, which the TUI
+	// runs on its own until it becomes a sink.
 	var view renderer
-	var snap *snapshot.Snapshot
-	// One renderer per process until the pipeline driver lands: the plan
-	// picks which.
-	switch {
-	case interactive:
+	var drv *pipeline.Driver
+	if interactive {
 		view = tui.New(lt, events, stdin, stdout, nil)
-	case pl.Outputs[0].View.Kind == plan.ViewSnapshot:
-		opts, err := snapshotOptions(pl.Outputs[0])
+	} else {
+		drv, err = pipeline.Compile(pl, pipeline.Deps{
+			LT: lt, Events: events, Stdout: stdout, Stderr: stderr,
+		})
 		if err != nil {
 			return 1, fmt.Errorf("plan: %w", err)
 		}
-		snap = snapshot.New(events, opts)
-		view = snap
-	default:
-		view = stream.New(lt, events, stdout, nil)
+		view = drv
 	}
 
 	outR, outW, err := os.Pipe()
@@ -202,8 +198,8 @@ func run(
 		log.Error("wait child", "err", err)
 	}
 
-	if snap != nil {
-		code = snap.Finish(code, stdout, stderr)
+	if drv != nil {
+		code = drv.Close(code)
 	}
 
 	return code, nil
@@ -293,30 +289,4 @@ func withOTelExporterEnv(base, extra []string) []string {
 	}
 
 	return append(out, extra...)
-}
-
-// snapshotOptions reads a snapshot output of the plan.
-func snapshotOptions(o plan.Output) (tui.SnapshotOptions, error) {
-	opts := tui.SnapshotOptions{Logs: o.View.Logs}
-	for _, sec := range o.View.Sections {
-		switch sec {
-		case plan.SectionTree:
-			opts.Tree = true
-		case plan.SectionGraph:
-			opts.Graph = true
-		}
-	}
-	for _, st := range o.Stages {
-		switch st.Kind {
-		case plan.StageAttrs:
-			spec, err := attrspec.Parse(st.Globs)
-			if err != nil {
-				return tui.SnapshotOptions{}, err
-			}
-			opts.Attrs = spec
-		case plan.StageNoAttrs:
-			opts.Attrs = attrspec.Spec{}
-		}
-	}
-	return opts, nil
 }

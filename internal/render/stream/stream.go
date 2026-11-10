@@ -13,6 +13,8 @@ import (
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	"github.com/barry-hennessy/praytel/internal/projection"
+	"github.com/barry-hennessy/praytel/internal/view"
 )
 
 type printed struct {
@@ -47,7 +49,7 @@ func New(lt observability.LoggingTracer, events <-chan domain.Event, out io.Writ
 		events: events,
 		filt:   filt,
 		out:    out,
-		color:  colorEnabled(out),
+		color:  ColorEnabled(out),
 	}
 }
 
@@ -55,29 +57,55 @@ func (s Stream) Run(ctx context.Context) error {
 	_, log, span := s.lt.Name("stream.Stream.Run").Start(ctx)
 	defer span.End()
 
-	seen := make(map[string]printed)
-
+	v := NewView(log, s.color, s.filt)
 	for ev, ok := <-s.events; ok; ev, ok = <-s.events {
-		if err := s.handle(log, ev, seen); err != nil {
-			log.Error("write stream", "err", err)
+		v.Observe(ev, nil)
+		for _, line := range v.Render(nil, view.Viewport{}) {
+			if _, err := io.WriteString(s.out, line+"\n"); err != nil {
+				log.Error("write stream", "err", err)
+			}
 		}
 	}
 
 	return nil
 }
 
-func (s Stream) handle(log *slog.Logger, ev domain.Event, seen map[string]printed) error {
+// View is the append-only stream as a pipeline view: each event may add
+// lines, and Render hands them over once. It reads only events, never the
+// projection.
+type View struct {
+	log     *slog.Logger
+	color   bool
+	filt    *filter.Filter
+	seen    map[string]printed
+	pending []string
+}
+
+var _ view.View = (*View)(nil)
+
+// NewView makes a stream view. Warnings about memory pressure go to log, not
+// to the stream. color wraps each line's prefix in an ANSI color per trace.
+func NewView(log *slog.Logger, color bool, filt *filter.Filter) *View {
+	if filt == nil {
+		filt, _ = filter.New(filter.Query{})
+	}
+	return &View{log: log, color: color, filt: filt, seen: make(map[string]printed)}
+}
+
+// Observe adds the lines that ev makes.
+func (v *View) Observe(ev domain.Event, _ projection.Reader) {
 	switch ev.(type) {
 	case domain.ForestEvicted:
-		log.Warn("evicted oldest closed trace")
+		v.log.Warn("evicted oldest closed trace")
 
-		return nil
+		return
 	case domain.ForestShed:
-		log.Warn("shed newest inbound data")
+		v.log.Warn("shed newest inbound data")
 
-		return nil
+		return
 	}
 
+	seen := v.seen
 	var prev printed
 	var hadPrev bool
 
@@ -107,7 +135,7 @@ func (s Stream) handle(log *slog.Logger, ev domain.Event, seen map[string]printe
 		}
 	}
 
-	admitted := s.filt.Observe(ev)
+	admitted := v.filt.Observe(ev)
 	just := make(map[string]struct{}, len(admitted))
 	for _, id := range admitted {
 		just[id] = struct{}{}
@@ -117,27 +145,31 @@ func (s Stream) handle(log *slog.Logger, ev domain.Event, seen map[string]printe
 			continue
 		}
 
-		if err := s.writeLine(p.source, p.spanName, p.traceID, p.spanID, p.body); err != nil {
-			return err
-		}
-
+		v.line(p.source, p.spanName, p.traceID, p.spanID, p.body)
 		p.emitted = true
 		seen[id] = p
 	}
 
 	if !isAssigned || !hadPrev || !prev.emitted {
-		return nil
+		return
 	}
 
 	if _, ok := just[as.ID]; ok {
-		return nil
+		return
 	}
 
 	if !needsHydrate(prev, as) {
-		return nil
+		return
 	}
 
-	return s.writeLine(prev.source, as.SpanName, as.TraceID, as.SpanID, prev.body)
+	v.line(prev.source, as.SpanName, as.TraceID, as.SpanID, prev.body)
+}
+
+// Render hands over the lines made since the last call.
+func (v *View) Render(_ projection.Reader, _ view.Viewport) []string {
+	out := v.pending
+	v.pending = nil
+	return out
 }
 
 func needsHydrate(prev printed, as domain.LogAssigned) bool {
@@ -148,7 +180,7 @@ func needsHydrate(prev printed, as domain.LogAssigned) bool {
 	return prev.traceID != as.TraceID || prev.spanID != as.SpanID || prev.spanName != as.SpanName || prev.synthetic != as.Synthetic
 }
 
-func (s Stream) writeLine(source domain.Source, spanName, traceID, spanID, body string) error {
+func (v *View) line(source domain.Source, spanName, traceID, spanID, body string) {
 	spanName = sanitizeField(spanName)
 	traceID = sanitizeField(traceID)
 	spanID = sanitizeField(spanID)
@@ -157,13 +189,11 @@ func (s Stream) writeLine(source domain.Source, spanName, traceID, spanID, body 
 	}
 
 	prefix := fmt.Sprintf("%s %s %s %s ", source, spanName, traceID, spanID)
-	if s.color {
+	if v.color {
 		prefix = ansiWrap(prefix, colorCode(traceID))
 	}
 
-	_, err := fmt.Fprint(s.out, prefix, body, "\n")
-
-	return err
+	v.pending = append(v.pending, prefix+body)
 }
 
 var ctlSeq = regexp.MustCompile(`\x1b\[[?-]*[0-9;]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
@@ -195,7 +225,8 @@ func sanitizeField(s string) string {
 	return b.String()
 }
 
-func colorEnabled(w io.Writer) bool {
+// ColorEnabled reports whether w is a terminal that should get color.
+func ColorEnabled(w io.Writer) bool {
 	if os.Getenv("NO_COLOR") != "" {
 		return false
 	}

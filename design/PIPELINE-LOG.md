@@ -78,3 +78,51 @@ To know:
 - `--tui` is now a plan with two panes (`tree`, `graph`). The TUI renderer
   does not change until Phase 5.
 - `--print-plan` prints JSON for any flag set and exits 0.
+
+## Phase 3: Driver, views, triggers, sinks
+
+Branch `pipeline-phase3-driver`.
+
+Checks:
+- `go test ./...`: pass. New tests in `internal/pipeline`: the snapshot
+  through the driver is byte-equal to `tui.Snapshot` on the same events;
+  fan-out to two outputs (a snapshot to a file and the stream to stdout) in
+  one run; the exit sink's three rules (failed child, incomplete,
+  interrupted); compile rejects an invalid plan, a TUI sink and an exit
+  sink on a view that cannot report.
+- The current `cmd/praytel` tests (stream, snapshot, failed-child replay,
+  incomplete snapshot, signals) pass through the driver without change.
+- `scripts/golden`: no golden changed.
+- `golangci-lint run ./...`: 0 issues.
+
+Departures:
+- The end-to-end test with two outputs is in `internal/pipeline`, not
+  `cmd/praytel`. The `cmd` tests run the built binary, and no flag makes
+  two outputs before `-e` (Phase 4). Phase 4 adds the `cmd` test.
+- The view contract is in a leaf package, `internal/view` (`View`,
+  `Viewport`, `Reporter`, `Interrupter`). The views and the driver both
+  use it without an import cycle.
+- `Render` takes a viewport but no dirty set yet. Phase 6 adds the dirty
+  set with the trigger `settled`.
+- The driver runs the triggers `each` and `final`. `tick` stays with the
+  TUI until Phase 5; `settled` comes in Phase 6. Compile rejects them.
+- The stream view logs pressure warnings to the praytel logger, as before.
+  `stream.Stream` stays as a thin wrapper on the view for its tests, whose
+  span goldens name `stream.New` and `stream.Stream.Run`.
+- `tui.SnapshotOptions.Attrs` stays for the `tui.Snapshot` helper that the
+  tests use. The snapshot view ignores it: its attributes come from the
+  output's stages.
+- `internal/render/snapshot` is removed. The exit sink in
+  `internal/pipeline` has its rules.
+
+To know:
+- The snapshot is built from the shared projection through the output's
+  lens. Component colors decide where the tree draws its gutters and rules,
+  so the snapshot view rebuilds them from the settled forest
+  (`Model.recolor`): a component has a color when one of its real spans is
+  a parent. Only "color or no color" shows in the ASCII snapshot.
+- On an interrupt the driver keeps reading events until the channel
+  closes, so the correlator never blocks. Before, the snapshot renderer
+  returned at once and a goroutine read the rest.
+- The incomplete message comes from the output's name:
+  `praytel: snapshot incomplete: …` for the flag plan, as before.

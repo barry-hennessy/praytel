@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -345,6 +346,28 @@ func (m *Model) colorCallers(sp *spanView) {
 	if sp.ParentID != "" {
 		m.callers[selectionKey(sp.TraceID, sp.ParentID)] = true
 		assign(m.forest.Span(sp.TraceID, sp.ParentID))
+	}
+}
+
+// recolor rebuilds callers and colors from the forest as it is now, for a
+// model that did not see the events arrive: every span named as a parent is
+// a caller, and every caller that is not a placeholder gives its component
+// a color. Colors go out in arrival order, as colorCallers gives them.
+func (m *Model) recolor() {
+	m.callers = make(map[string]bool)
+	m.colors = make(map[string]int)
+	spans := slices.SortedFunc(m.forest.Spans(), func(a, b *spanView) int { return a.Order - b.Order })
+	for _, sp := range spans {
+		if sp.ParentID != "" {
+			m.callers[selectionKey(sp.TraceID, sp.ParentID)] = true
+		}
+	}
+	for _, sp := range spans {
+		if !sp.Declared && m.callers[selectionKey(sp.TraceID, sp.ID)] {
+			if label := spanLabel(sp); m.colors[label] == 0 {
+				m.colors[label] = len(m.colors)%len(componentPalette) + 1
+			}
+		}
 	}
 }
 
