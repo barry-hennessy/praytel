@@ -225,7 +225,7 @@ func TestComponentsThatCallOthersKeepOneColorEach(t *testing.T) {
 		if parent != "" {
 			m.apply(domain.SpanParentLinked{TraceID: trace, SpanID: id, ParentSpanID: parent})
 		}
-		return m.spans[selectionKey(trace, id)]
+		return m.forest.Span(trace, id)
 	}
 
 	// The child arrives before the parent it names.
