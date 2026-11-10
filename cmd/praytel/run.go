@@ -16,9 +16,11 @@ import (
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/cmd/praytel/internal/args"
 	"github.com/barry-hennessy/praytel/internal/capture"
+	"github.com/barry-hennessy/praytel/internal/attrspec"
 	"github.com/barry-hennessy/praytel/internal/correlator"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/ingest"
+	"github.com/barry-hennessy/praytel/internal/plan"
 	"github.com/barry-hennessy/praytel/internal/receiver"
 	"github.com/barry-hennessy/praytel/internal/render/snapshot"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
@@ -41,6 +43,12 @@ func run(
 	ctx, log, span := lt.Name("main.run").Start(ctx)
 	defer span.End()
 
+	pl := cfg.Plan()
+	if err := pl.Validate(); err != nil {
+		return 1, fmt.Errorf("plan: %w", err)
+	}
+	interactive := pl.HasSink(plan.SinkTUI)
+
 	pipe, err := ingest.New(ctx, lt, correlator.Drain{
 		Idle:    cfg.DrainIdle,
 		Timeout: cfg.DrainTimeout,
@@ -58,20 +66,20 @@ func run(
 
 	var view renderer
 	var snap *snapshot.Snapshot
+	// One renderer per process until the pipeline driver lands: the plan
+	// picks which.
 	switch {
-	case cfg.Snapshot:
-		snap = snapshot.New(events, tui.SnapshotOptions{
-			Tree:  cfg.SnapshotTree,
-			Graph: cfg.SnapshotGraph,
-			Attrs: cfg.SnapshotAttrs,
-			Logs:  cfg.SnapshotLogs,
-		})
-		view = snap
-	case cfg.TUI:
+	case interactive:
 		view = tui.New(lt, events, stdin, stdout, nil)
+	case pl.Outputs[0].View.Kind == plan.ViewSnapshot:
+		opts, err := snapshotOptions(pl.Outputs[0])
+		if err != nil {
+			return 1, fmt.Errorf("plan: %w", err)
+		}
+		snap = snapshot.New(events, opts)
+		view = snap
 	default:
-		st := stream.New(lt, events, stdout, nil)
-		view = st
+		view = stream.New(lt, events, stdout, nil)
 	}
 
 	outR, outW, err := os.Pipe()
@@ -140,7 +148,7 @@ func run(
 	}()
 
 	childIn := stdin
-	if cfg.TUI {
+	if interactive {
 		// The terminal belongs to Bubble Tea in interactive mode.
 		childIn = nil
 	}
@@ -285,4 +293,30 @@ func withOTelExporterEnv(base, extra []string) []string {
 	}
 
 	return append(out, extra...)
+}
+
+// snapshotOptions reads a snapshot output of the plan.
+func snapshotOptions(o plan.Output) (tui.SnapshotOptions, error) {
+	opts := tui.SnapshotOptions{Logs: o.View.Logs}
+	for _, sec := range o.View.Sections {
+		switch sec {
+		case plan.SectionTree:
+			opts.Tree = true
+		case plan.SectionGraph:
+			opts.Graph = true
+		}
+	}
+	for _, st := range o.Stages {
+		switch st.Kind {
+		case plan.StageAttrs:
+			spec, err := attrspec.Parse(st.Globs)
+			if err != nil {
+				return tui.SnapshotOptions{}, err
+			}
+			opts.Attrs = spec
+		case plan.StageNoAttrs:
+			opts.Attrs = attrspec.Spec{}
+		}
+	}
+	return opts, nil
 }

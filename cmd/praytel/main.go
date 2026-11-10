@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -64,6 +65,16 @@ func runProcess(ctx context.Context, lt observability.LoggingTracer, mapErr bone
 	cfg, err := args.Parse(argv, stderr)
 	if err != nil {
 		return mapErr(err)
+	}
+
+	if cfg.PrintPlan {
+		pl := cfg.Plan()
+		if err := pl.Validate(); err != nil {
+			return mapErr(fmt.Errorf("plan: %w", err))
+		}
+		_, _ = stdout.Write(pl.Explain())
+
+		return 0
 	}
 
 	code, err := run(ctx, lt, cfg, stdin, stdout, stderr)

@@ -1,0 +1,23 @@
+{
+  "outputs": [
+    {
+      "name": "snapshot",
+      "stages": [
+        {
+          "kind": "no_attrs"
+        }
+      ],
+      "view": {
+        "kind": "snapshot",
+        "sections": [
+          "tree"
+        ]
+      },
+      "emit": "final",
+      "sink": {
+        "kind": "stdout",
+        "exit": true
+      }
+    }
+  ]
+}

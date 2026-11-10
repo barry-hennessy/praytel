@@ -9,6 +9,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/attrspec"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
+	"github.com/barry-hennessy/praytel/internal/stage"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -57,6 +58,9 @@ func Snapshot(events <-chan domain.Event, opts SnapshotOptions) SnapshotResult {
 	m.plain = true
 	m.width = snapshotWidth
 
+	// Attribute selection is a stage, so the view sees only what it shows.
+	stages := []stage.Stage{stage.Attrs(opts.Attrs)}
+
 	var (
 		res                   SnapshotResult
 		drained, evicted, shd bool
@@ -74,7 +78,7 @@ func Snapshot(events <-chan domain.Event, opts SnapshotOptions) SnapshotResult {
 				res.Captured = append(res.Captured, CapturedLine{Source: ev.Source, Body: ev.Body})
 			}
 		}
-		m.apply(ev)
+		stage.Chain(stages, ev, m.apply)
 	}
 
 	var problems []string
@@ -201,7 +205,7 @@ func (m *Model) canonicalise(opts SnapshotOptions) []string {
 		if sp.Declared {
 			sp.Name, sp.Component = missingSpan, ""
 		}
-		sp.Attributes = m.snapshotAttrs(sp.Attributes, opts.Attrs)
+		sortAttrs(sp.Attributes)
 		sort.SliceStable(sp.Logs, func(i, j int) bool {
 			return m.logBody(sp.Logs[i]) < m.logBody(sp.Logs[j])
 		})
@@ -290,19 +294,12 @@ func (m *Model) logBody(id string) string {
 	return ""
 }
 
-// snapshotAttrs is attrs filtered by spec and sorted by key, then value.
-func (m *Model) snapshotAttrs(attrs []domain.Attr, spec attrspec.Spec) []domain.Attr {
-	var out []domain.Attr
-	for _, a := range attrs {
-		if spec.Match(a.Key) {
-			out = append(out, a)
+// sortAttrs sorts attrs by key, then value.
+func sortAttrs(attrs []domain.Attr) {
+	sort.SliceStable(attrs, func(i, j int) bool {
+		if attrs[i].Key != attrs[j].Key {
+			return attrs[i].Key < attrs[j].Key
 		}
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Key != out[j].Key {
-			return out[i].Key < out[j].Key
-		}
-		return out[i].Value.String() < out[j].Value.String()
+		return attrs[i].Value.String() < attrs[j].Value.String()
 	})
-	return out
 }
