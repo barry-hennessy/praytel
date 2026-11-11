@@ -90,6 +90,43 @@ func TestWhereKeepsTheSelection(t *testing.T) {
 	})
 }
 
+func TestChecksDecideTheExitCode(t *testing.T) {
+	child := []string{"--", childBin, "-export-grpc-span", "-span-name", "child-work"}
+	cases := map[string]struct {
+		script string
+		exit   int
+		want   string
+	}{
+		"some passes": {`some(span(name = "child-work"))`, 0, `praytel: check some(span{ span:name = "child-work" }): PASS`},
+		"never fails": {`never(span(name = "child-work"))`, 4, "FAIL"},
+		"an anchor that never matched": {`every(span(name = "checkout"), has = span())`, 4,
+			`check never exercised: span{ span:name = "checkout" } matched nothing`},
+		"a count": {`exactly(1, span(name = "child-work"), name = "one unit of work")`, 0, "check one unit of work: PASS"},
+	}
+	for name, c := range cases {
+		sweet.Run(t, name, wrapFactory, func(t *testing.T, d wrapDeps) {
+			res := runPraytel(t, d.dir, append([]string{"--settle-after=50ms", "-e", c.script}, child...)...)
+			if res.exit != c.exit || !strings.Contains(res.stderr, c.want) {
+				t.Fatalf("exit=%d (want %d) stderr=%q (want %q)", res.exit, c.exit, res.stderr, c.want)
+			}
+		})
+	}
+
+	sweet.Run(t, "ndjson", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, append([]string{"--format=ndjson", "-e", `never(span(name = "child-work"), name = "n")`}, child...)...)
+		if res.exit != 4 || !strings.Contains(res.stderr, `{"check":"n","trace_id":`) || !strings.Contains(res.stderr, `"outcome":"fail"`) {
+			t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+		}
+	})
+
+	sweet.Run(t, "a failed child's code wins", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "-e", `never(span(name = "child-work"))`, "--", childBin, "-export-grpc-span", "-span-name", "child-work", "-exit", "7")
+		if res.exit != 7 || !strings.Contains(res.stderr, "FAIL") {
+			t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+		}
+	})
+}
+
 func TestExecuteErrorNamesThePosition(t *testing.T) {
 	sweet.Run(t, "a bad snippet fails before the child runs", wrapFactory, func(t *testing.T, d wrapDeps) {
 		marker := filepath.Join(d.dir, "ran")

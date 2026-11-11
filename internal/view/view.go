@@ -43,3 +43,16 @@ type Reporter interface {
 type Interrupter interface {
 	Interrupt()
 }
+
+// Finisher is a view with something to say once the run is final, after
+// its last per-trace render: a report over the whole run.
+type Finisher interface {
+	Finish(r projection.Reader) []string
+}
+
+// Verdict is a view that decides praytel's exit code itself, such as a
+// check: 0 to pass, or a code for what went wrong. An exit sink writes the
+// view's lines whatever the code.
+type Verdict interface {
+	ExitCode() int
+}

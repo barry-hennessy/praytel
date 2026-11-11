@@ -33,6 +33,7 @@ trace/span tree instead.
 | `--snapshot-logs` | off | Include log lines (and captured stdout/stderr) in a snapshot. |
 | `-e`, `--execute=CODE\|FILE.star` | none | Declare the outputs in Starlark instead (see [Plans](#plans)). Repeatable; a value ending in `.star` is a file. Cannot be combined with `--tui` or `--snapshot`. |
 | `--print-plan` | off | Print the plan the other flags make, as JSON, and exit. Needs no command. |
+| `--format=text\|ndjson` | `text` | How [checks](#checks) report. |
 
 ### Ingest and drain
 
@@ -237,6 +238,47 @@ descendants and their logs (a log query keeps only the selected logs). On
 the stream, which prints each line as it comes, `where` takes only a query
 that one log decides, such as `log(source = "stderr")`.
 
+## Checks
+
+A check is a statement about selections, declared in `-e` with a call:
+
+| Statement | Holds when |
+|---|---|
+| `never(S)` | nothing matches `S` |
+| `some(S)` | something in the run matches `S` |
+| `every(A, has = S)` | each span of `A` has an item of `S` below it |
+| `every(A, has = at_most(N, S))` | … at most `N` of them (also `at_least`, `exactly`) |
+| `at_least(N, S)`, `at_most(N, S)`, `exactly(N, S)` | the run has that many items of `S` |
+
+Each check judges a trace when it settles, again if a late span gives it a
+new revision, and the whole run when it drains; it reports to stderr at the
+end, and gives `name = "..."` or its own text as its name:
+
+```sh
+praytel -e demo/checks/shop.star -- sh -c 'cd demo/workloads/shop && go run .'
+```
+
+The **anchor rule**: the left side of each `>` and `>>`, and the first
+argument of `every`, must match at least once in the run, or the check fails
+with `check never exercised`. A span renamed in the code then fails the
+check instead of passing it with nothing to judge. To say something never
+happens, write `never(S)`.
+
+A trace with something missing (a span that named a parent that never
+arrived, a span that logs named but that never arrived, a span that never
+ended, telemetry dropped under memory pressure) never passes: its result is
+`incomplete`. `--format=ndjson` reports one JSON object per judged trace
+(`check`, `trace_id`, `revision`, `outcome`, `evidence`,
+`incomplete_reasons`) and one for the run.
+
+Loops and functions make table tests:
+
+```python
+for x in [0, 1, 2]:
+    every(span(attrs = {"test.name": "TestDouble", "input": x}),
+          has = span(attrs = {"output": x * 2}))
+```
+
 ## Exit status
 
 If the child started, praytel exits with the child's exit code. If the child
@@ -251,6 +293,10 @@ With `--snapshot`:
 | Child exits 0, snapshot complete | the snapshot | | `0` |
 | Child exits non-zero | nothing | the child's captured output, then any problems | the child's code |
 | Child exits 0, snapshot incomplete | nothing | the problems | `3` |
+
+With [checks](#checks), the report always goes to stderr. If the child
+exits non-zero its code wins; otherwise praytel exits `4` if a check fails,
+`3` if one is incomplete, and `0` if all pass.
 
 ## Examples
 

@@ -64,6 +64,7 @@ func run(
 	drv, err := pipeline.Compile(pl, pipeline.Deps{
 		LT: lt, Events: events, Stdout: stdout, Stderr: stderr,
 		SettleAfter: cfg.SettleAfter,
+		Format:      cfg.Format,
 	})
 	if err != nil {
 		return 1, fmt.Errorf("plan: %w", err)

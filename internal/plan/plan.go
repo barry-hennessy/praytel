@@ -5,6 +5,7 @@
 package plan
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,7 +58,49 @@ const (
 	ViewTree = "tree"
 	// ViewGraph is the live component graph.
 	ViewGraph = "graph"
+	// ViewCheck judges a statement about selections (see Check).
+	ViewCheck = "check"
 )
+
+// Check kinds; see design/PIPELINE.md, "Checks".
+const (
+	// CheckNever: no item matches Select.
+	CheckNever = "never"
+	// CheckSome: at least one item in the run matches Select.
+	CheckSome = "some"
+	// CheckEvery: each item of Anchor has an item of Select below it (or,
+	// with Count, a number of them that Count accepts).
+	CheckEvery = "every"
+	// CheckCount: the number of items of Select in the run is one that
+	// Count accepts.
+	CheckCount = "count"
+)
+
+// Count bounds a number of items.
+type Count struct {
+	Op string `json:"op"` // "at_least", "at_most" or "exactly"
+	N  int    `json:"n"`
+}
+
+// Accepts reports whether n satisfies the bound.
+func (c Count) Accepts(n int) bool {
+	switch c.Op {
+	case "at_least":
+		return n >= c.N
+	case "at_most":
+		return n <= c.N
+	}
+	return n == c.N
+}
+
+// Check is a statement about selections. Its queries are query text.
+type Check struct {
+	Kind   string `json:"kind"`
+	Select string `json:"select"`
+	Anchor string `json:"anchor,omitempty"`
+	Count  *Count `json:"count,omitempty"`
+	Name   string `json:"name"`
+}
 
 // Snapshot sections.
 const (
@@ -71,6 +114,8 @@ type View struct {
 	Sections []string `json:"sections,omitempty"`
 	// Logs includes log lines and the synthetic spans that hold them.
 	Logs bool `json:"logs,omitempty"`
+	// Check is the statement of a check view.
+	Check *Check `json:"check,omitempty"`
 }
 
 // Trigger tells a view when to send output.
@@ -141,6 +186,10 @@ func (o Output) validate() error {
 	}
 
 	switch o.View.Kind {
+	case ViewCheck:
+		if err := o.View.Check.validate(); err != nil {
+			errs = append(errs, err)
+		}
 	case ViewStream, ViewTree, ViewGraph:
 		if len(o.View.Sections) > 0 {
 			errs = append(errs, fmt.Errorf("view %s has no sections", o.View.Kind))
@@ -169,8 +218,8 @@ func (o Output) validate() error {
 	if o.Emit == Tick && o.Sink.Kind != SinkTUI {
 		errs = append(errs, errors.New("the trigger tick is for TUI panes"))
 	}
-	if o.Sink.Exit && (o.Emit != Final || o.Sink.Templated()) {
-		errs = append(errs, errors.New("an exit sink needs the trigger final and one output file"))
+	if o.Sink.Exit && ((o.Emit != Final && o.View.Kind != ViewCheck) || o.Sink.Templated()) {
+		errs = append(errs, errors.New("an exit sink needs the trigger final (or a check) and one output file"))
 	}
 
 	switch o.Sink.Kind {
@@ -213,6 +262,41 @@ func (o Output) validateWhere(src string) error {
 	return nil
 }
 
+func (c *Check) validate() error {
+	if c == nil {
+		return errors.New("view check needs a check")
+	}
+	var errs []error
+	parse := func(what, src string) {
+		if _, err := query.Parse(src); err != nil {
+			errs = append(errs, fmt.Errorf("check %s: %s: %w", c.Name, what, err))
+		}
+	}
+	parse("select", c.Select)
+	switch c.Kind {
+	case CheckNever, CheckSome:
+	case CheckEvery:
+		parse("anchor", c.Anchor)
+	case CheckCount:
+		if c.Count == nil {
+			errs = append(errs, fmt.Errorf("check %s needs a count", c.Name))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("unknown check %q", c.Kind))
+	}
+	if c.Count != nil {
+		switch c.Count.Op {
+		case "at_least", "at_most", "exactly":
+		default:
+			errs = append(errs, fmt.Errorf("check %s: unknown count %q", c.Name, c.Count.Op))
+		}
+		if c.Count.N < 0 {
+			errs = append(errs, fmt.Errorf("check %s: a count cannot be negative", c.Name))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 // triggerFits reports whether a view can run with a trigger. The stream
 // makes lines per event (each, or a pane's tick); the tree and graph render
 // the projection (a pane's tick, or a trace or the run when it is settled or
@@ -223,7 +307,7 @@ func triggerFits(view string, t Trigger) bool {
 		return t == Each || t == Tick
 	case ViewTree, ViewGraph:
 		return t == Tick || t == Settled || t == Final
-	case ViewSnapshot:
+	case ViewSnapshot, ViewCheck:
 		return t == Settled || t == Final
 	}
 	return true // an unknown view is reported on its own
@@ -238,12 +322,16 @@ func (s Sink) Templated() bool {
 
 // Explain is the plan as stable, indented JSON.
 func (p Plan) Explain() []byte {
-	b, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		// Plan holds only strings, bools and slices of them.
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetIndent("", "  ")
+	// Queries hold > and &: keep them readable.
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(p); err != nil {
+		// Plan holds only strings, numbers, bools and slices of them.
 		panic(err)
 	}
-	return append(b, '\n')
+	return b.Bytes()
 }
 
 // HasSink reports whether any output writes to a sink of this kind.

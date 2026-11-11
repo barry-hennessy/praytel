@@ -145,6 +145,14 @@ var predeclared = sl.StringDict{
 
 	// Statements.
 	"output": builtin("output", outputFn),
+
+	// Checks.
+	"never":    builtin("never", neverSomeFn(plan.CheckNever)),
+	"some":     builtin("some", neverSomeFn(plan.CheckSome)),
+	"every":    builtin("every", everyFn),
+	"at_least": builtin("at_least", countFn("at_least")),
+	"at_most":  builtin("at_most", countFn("at_most")),
+	"exactly":  builtin("exactly", countFn("exactly")),
 }
 
 type builtinFn func(th *sl.Thread, b *sl.Builtin, args sl.Tuple, kwargs []sl.Tuple) (sl.Value, error)
