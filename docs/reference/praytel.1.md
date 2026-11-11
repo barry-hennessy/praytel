@@ -42,6 +42,7 @@ trace/span tree instead.
 | `--http-port PORT` | `4318` | OTLP HTTP listen port. |
 | `--drain-idle DURATION` | `250ms` | Idle time with no OTLP after child exit before drain completes. |
 | `--drain-timeout DURATION` | `2s` | Hard cap on drain after child exit. |
+| `--settle-after DURATION` | `500ms` | Quiet time before a trace whose spans have all ended counts as settled (see [Plans](#plans)). |
 
 ### Memory limits
 
@@ -149,8 +150,31 @@ starts; they cannot read files, the time or random values.
 |---|---|
 | Views | `stream()`, `snapshot("tree", "graph", logs=False)`, `tree()`, `graph()` |
 | Stages | `attrs("GLOBS")` (as `--snapshot-attrs`), `no_attrs()` |
-| Triggers | `each`, `tick`, `final` |
+| Triggers | `each` (per event: the stream), `tick` (TUI panes), `settled` (per trace, when it settles), `final` (once the run drains) |
 | Sinks | `stdout`, `stderr`, `file("PATH")`, `pane("NAME")`; add `exit` to let the output decide the exit code as `--snapshot` does |
+
+Away from the TUI, `tree()` and `graph()` print as a snapshot prints them.
+
+A trace is **settled** when every span it has ended and nothing new arrived
+for `--settle-after` (default 500ms). OTLP never says a trace is complete,
+so a late span makes it live again; a `settled` output then sends it again,
+with a higher revision. Each trace a `settled` output sends starts with
+`# trace ID revision N STATE`, where STATE is `settled`, or `final` for a
+trace still open when the run drained:
+
+```sh
+praytel -e 'tree() | settled | stderr' -- ./server
+```
+
+A file path may name the trace: `{trace_id}`, `{name}` (the root span's
+name) or `{KEY}` (an attribute of the root span). The output then writes one
+file per trace, with `final` or `settled`. Characters that would leave the
+directory are replaced:
+
+```sh
+praytel -e 'attrs("test.name") | snapshot("tree") | final | file("testdata/{test.name}.golden")' \
+  -- go test -count=1 .
+```
 
 The mode flags as `-e`:
 

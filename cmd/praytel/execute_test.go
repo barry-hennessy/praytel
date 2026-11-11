@@ -44,6 +44,35 @@ func TestExecuteFile(t *testing.T) {
 	})
 }
 
+func TestSettledTraceIsSentOnce(t *testing.T) {
+	sweet.Run(t, "a settled output sends each trace with its revision", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "--settle-after=50ms",
+			"-e", `tree() | settled | stderr`,
+			"--", childBin, "-export-grpc-span", "-span-name", "settles")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+		}
+		if n := strings.Count(res.stderr, "# trace "); n != 1 || !strings.Contains(res.stderr, "settles") {
+			t.Fatalf("want the trace once, got %d:\n%s", n, res.stderr)
+		}
+	})
+}
+
+func TestFilePerTraceFromTheCLI(t *testing.T) {
+	sweet.Run(t, "a file path with a placeholder writes one file per trace", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir,
+			"-e", `snapshot("tree") | final | file("out/{name}.txt")`,
+			"--", childBin, "-export-grpc-span", "-span-name", "per-trace")
+		if res.exit != 0 {
+			t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+		}
+		b, err := os.ReadFile(filepath.Join(d.dir, "out", "per-trace.txt"))
+		if err != nil || !strings.Contains(string(b), "per-trace") {
+			t.Fatalf("out/per-trace.txt %q %v; stderr %q", b, err, res.stderr)
+		}
+	})
+}
+
 func TestExecuteErrorNamesThePosition(t *testing.T) {
 	sweet.Run(t, "a bad snippet fails before the child runs", wrapFactory, func(t *testing.T, d wrapDeps) {
 		marker := filepath.Join(d.dir, "ran")

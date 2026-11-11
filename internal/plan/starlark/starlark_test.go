@@ -63,7 +63,7 @@ func TestSnippets(t *testing.T) {
 		"two sinks":              {[]string{`stdout | stderr`}, 0, "one sink"},
 		"missing parts":          {[]string{`stream()`}, 0, "needs a trigger, a sink"},
 		"not an output":          {[]string{`42`}, 0, "int, not an output"},
-		"invalid plan":           {[]string{`snapshot("tree") | each | stdout`}, 0, "-e[1]:1:1: view snapshot needs the trigger final"},
+		"invalid plan":           {[]string{`snapshot("tree") | each | stdout`}, 0, "-e[1]:1:1: view snapshot cannot have the trigger each"},
 		"invalid in statements":  {[]string{"\n\noutput(tree() | final | pane(\"t\"))"}, 0, "-e[1]:3:7: sink tui needs the trigger tick"},
 		"bad section":            {[]string{`snapshot("pie")`}, 0, `unknown section "pie"`},
 		"no section":             {[]string{`snapshot()`}, 0, "needs a section"},
@@ -111,11 +111,11 @@ func TestLoad(t *testing.T) {
 
 	cases := map[string]string{
 		`load("lib/ok.star", "s")` + "\noutput(s())": "",
-		`load("lib/declares.star", "x")`:              "cannot declare outputs while it loads",
-		`load("lib/a.star", "x")`:                     "cycle",
-		`load("../escape.star", "x")`:                 "inside the current directory",
-		`load("/etc/passwd.star", "x")`:               "inside the current directory",
-		`load("lib/ok.py", "x")`:                      "inside the current directory",
+		`load("lib/declares.star", "x")`:             "cannot declare outputs while it loads",
+		`load("lib/a.star", "x")`:                    "cycle",
+		`load("../escape.star", "x")`:                "inside the current directory",
+		`load("/etc/passwd.star", "x")`:              "inside the current directory",
+		`load("lib/ok.py", "x")`:                     "inside the current directory",
 	}
 	for src, want := range cases {
 		t.Run(src, func(t *testing.T) {

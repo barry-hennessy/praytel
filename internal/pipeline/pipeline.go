@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -21,12 +22,25 @@ import (
 	"github.com/barry-hennessy/praytel/internal/view"
 )
 
+// DefaultSettleAfter is how long a trace with every real span ended must go
+// without an event before it counts as settled.
+const DefaultSettleAfter = 500 * time.Millisecond
+
 // Deps is what the outputs of a plan write to and read from.
 type Deps struct {
 	LT     observability.LoggingTracer
 	Events <-chan domain.Event
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// SettleAfter is the quiet time before a trace settles; zero means
+	// DefaultSettleAfter.
+	SettleAfter time.Duration
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
+	// Tick wakes the driver to settle traces; nil means a ticker of its
+	// own, started only if an output has the trigger settled.
+	Tick <-chan time.Time
 }
 
 type output struct {
@@ -36,6 +50,11 @@ type output struct {
 	view    view.View
 	trigger plan.Trigger
 	sink    Sink
+	// perTrace outputs render one trace at a time: the trigger settled, or
+	// a file path with placeholders. emitted is the revision of each trace
+	// they last sent.
+	perTrace bool
+	emitted  map[string]int
 }
 
 // Driver runs the outputs of a plan.
@@ -44,6 +63,12 @@ type Driver struct {
 	events  <-chan domain.Event
 	forest  *projection.Forest
 	outputs []*output
+
+	now         func() time.Time
+	tick        <-chan time.Time
+	stopTick    func()
+	settleAfter time.Duration
+	settling    bool
 
 	// panes are the plan's TUI outputs. The TUI runs them on its own
 	// goroutine with its own projection; the driver passes it every event
@@ -59,7 +84,21 @@ func Compile(p plan.Plan, deps Deps) (*Driver, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
-	d := &Driver{lt: deps.LT, events: deps.Events, forest: projection.New()}
+	d := &Driver{
+		lt:          deps.LT,
+		events:      deps.Events,
+		forest:      projection.New(),
+		now:         deps.Now,
+		tick:        deps.Tick,
+		stopTick:    func() {},
+		settleAfter: deps.SettleAfter,
+	}
+	if d.now == nil {
+		d.now = time.Now
+	}
+	if d.settleAfter <= 0 {
+		d.settleAfter = DefaultSettleAfter
+	}
 	if p.HasSink(plan.SinkTUI) {
 		for _, o := range p.Outputs {
 			if o.Sink.Kind == plan.SinkStdout || o.Sink.Kind == plan.SinkStderr {
@@ -84,6 +123,11 @@ func Compile(p plan.Plan, deps Deps) (*Driver, error) {
 			return nil, fmt.Errorf("output %d: %w", i+1, err)
 		}
 		d.outputs = append(d.outputs, out)
+		d.settling = d.settling || o.Emit == plan.Settled
+	}
+	if d.settling && d.tick == nil {
+		t := time.NewTicker(min(max(d.settleAfter/4, 10*time.Millisecond), 250*time.Millisecond))
+		d.tick, d.stopTick = t.C, t.Stop
 	}
 	return d, nil
 }
@@ -93,10 +137,8 @@ func (d *Driver) compile(o plan.Output, deps Deps) (*output, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch o.Emit {
-	case plan.Each, plan.Final:
-	default:
-		return nil, fmt.Errorf("the trigger %q is not run by the pipeline yet", o.Emit)
+	if o.Emit == plan.Tick {
+		return nil, errors.New("the trigger tick is for TUI panes")
 	}
 
 	var v view.View
@@ -112,8 +154,14 @@ func (d *Driver) compile(o plan.Output, deps Deps) (*output, error) {
 			opts.Graph = opts.Graph || s == plan.SectionGraph
 		}
 		v = tui.NewSnapshotView(opts)
+	case plan.ViewTree:
+		// Away from the TUI, the tree and the graph are drawn as a snapshot
+		// draws them: plain text that does not depend on arrival order.
+		v = tui.NewSnapshotView(tui.SnapshotOptions{Tree: true})
+	case plan.ViewGraph:
+		v = tui.NewSnapshotView(tui.SnapshotOptions{Graph: true})
 	default:
-		return nil, fmt.Errorf("view %q is not run by the pipeline yet", o.View.Kind)
+		return nil, fmt.Errorf("view %q is not run by the pipeline", o.View.Kind)
 	}
 
 	sink, err := buildSink(o, v, deps)
@@ -121,12 +169,14 @@ func (d *Driver) compile(o plan.Output, deps Deps) (*output, error) {
 		return nil, err
 	}
 	return &output{
-		name:    o.Name,
-		stages:  stages,
-		reader:  stage.LensAll(stages, d.forest),
-		view:    v,
-		trigger: o.Emit,
-		sink:    sink,
+		name:     o.Name,
+		stages:   stages,
+		reader:   stage.LensAll(stages, d.forest),
+		view:     v,
+		trigger:  o.Emit,
+		sink:     sink,
+		perTrace: o.Emit == plan.Settled || o.Sink.Templated(),
+		emitted:  map[string]int{},
 	}, nil
 }
 
@@ -169,24 +219,28 @@ func (d *Driver) TUIEnded() {
 }
 
 // Run reads events until the channel closes, then fires the "final"
-// triggers. If ctx ends first, views that care are told the run was cut
-// short, and Run keeps reading so the producer never blocks.
+// triggers. Meanwhile each tick settles quiet traces for "settled" outputs.
+// If ctx ends first, views that care are told the run was cut short, and
+// Run keeps reading so the producer never blocks.
 func (d *Driver) Run(ctx context.Context) error {
 	_, log, span := d.lt.Name("pipeline.Driver.Run").Start(ctx)
 	defer span.End()
+	defer d.stopTick()
 
 	done := ctx.Done()
 	for {
 		select {
 		case ev, ok := <-d.events:
 			if !ok {
-				d.fire(plan.Final, log.Error)
+				d.finish(log.Error)
 				if d.tui != nil {
 					close(d.tui)
 				}
 				return nil
 			}
 			d.apply(ev, log.Error)
+		case <-d.tick:
+			d.settle(log.Error)
 		case <-done:
 			done = nil
 			for _, o := range d.outputs {
@@ -205,6 +259,7 @@ func (d *Driver) apply(ev domain.Event, logErr func(string, ...any)) {
 		case <-d.tuiDone:
 		}
 	}
+	d.forest.SetNow(d.now())
 	d.forest.Apply(ev)
 	for _, o := range d.outputs {
 		stage.Chain(o.stages, ev, func(ev domain.Event) {
@@ -216,9 +271,35 @@ func (d *Driver) apply(ev domain.Event, logErr func(string, ...any)) {
 	}
 }
 
-func (d *Driver) fire(t plan.Trigger, logErr func(string, ...any)) {
+// settle sends each trace that has just settled to the "settled" outputs.
+func (d *Driver) settle(logErr func(string, ...any)) {
+	if !d.settling {
+		return
+	}
+	d.forest.SetNow(d.now())
+	for _, id := range d.forest.Settle(d.settleAfter) {
+		for _, o := range d.outputs {
+			if o.trigger == plan.Settled {
+				d.sendTrace(o, id, logErr)
+			}
+		}
+	}
+}
+
+// finish makes every trace final, then sends the "final" outputs and every
+// per-trace output's traces it has not sent at their last revision.
+func (d *Driver) finish(logErr func(string, ...any)) {
+	d.forest.SetNow(d.now())
+	ids := d.forest.Finalize()
 	for _, o := range d.outputs {
-		if o.trigger == t {
+		switch {
+		case o.perTrace:
+			for _, id := range ids {
+				if rev, ok := o.emitted[id]; !ok || rev != d.forest.Revision(id) {
+					d.sendTrace(o, id, logErr)
+				}
+			}
+		case o.trigger == plan.Final:
 			d.send(o, logErr)
 		}
 	}
@@ -230,6 +311,26 @@ func (d *Driver) send(o *output, logErr func(string, ...any)) {
 		return
 	}
 	if err := o.sink.Write(lines); err != nil {
+		logErr("write output", "output", o.name, "err", err)
+	}
+}
+
+// sendTrace renders one trace. A sink with a file per trace gets it as is;
+// any other sink gets a header line naming the trace, its revision and its
+// state first, since one sink holds many traces and a trace can come again.
+func (d *Driver) sendTrace(o *output, id string, logErr func(string, ...any)) {
+	r := projection.OneTrace(o.reader, id)
+	rev := d.forest.Revision(id)
+	o.emitted[id] = rev
+	lines := o.view.Render(r, view.Viewport{})
+	if ts, ok := o.sink.(traceSink); ok {
+		if err := ts.WriteTrace(r, id, lines); err != nil {
+			logErr("write output", "output", o.name, "trace", id, "err", err)
+		}
+		return
+	}
+	header := fmt.Sprintf("# trace %s revision %d %s", id, rev, d.forest.State(id))
+	if err := o.sink.Write(append([]string{header}, lines...)); err != nil {
 		logErr("write output", "output", o.name, "err", err)
 	}
 }
