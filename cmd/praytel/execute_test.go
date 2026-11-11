@@ -127,6 +127,16 @@ func TestChecksDecideTheExitCode(t *testing.T) {
 	})
 }
 
+func TestTable(t *testing.T) {
+	sweet.Run(t, "a table of the selected spans", wrapFactory, func(t *testing.T, d wrapDeps) {
+		res := runPraytel(t, d.dir, "-e", `table(span(name = "child-work"), columns = ["span:name", "span:kind"]) | final | stdout`,
+			"--", childBin, "-export-grpc-span", "-span-name", "child-work")
+		if res.exit != 0 || !strings.HasPrefix(res.stdout, "span:name\tspan:kind\nchild-work\t") {
+			t.Fatalf("exit=%d stdout=%q stderr=%q", res.exit, res.stdout, res.stderr)
+		}
+	})
+}
+
 func TestExecuteErrorNamesThePosition(t *testing.T) {
 	sweet.Run(t, "a bad snippet fails before the child runs", wrapFactory, func(t *testing.T, d wrapDeps) {
 		marker := filepath.Join(d.dir, "ran")

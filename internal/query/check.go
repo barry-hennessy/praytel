@@ -13,6 +13,7 @@ const (
 	ftString fieldType = iota
 	ftInt
 	ftEnum
+	ftDuration
 )
 
 type intrinsic struct {
@@ -28,9 +29,11 @@ var intrinsics = map[string]map[string]intrinsic{
 		"parent_id": {typ: ftString},
 		"status":    {typ: ftEnum, enums: []string{"unset", "ok", "error"}},
 		"kind":      {typ: ftEnum, enums: []string{"unspecified", "internal", "server", "client", "producer", "consumer"}},
+		"duration":  {typ: ftDuration},
 	},
 	"trace": {
-		"id": {typ: ftString},
+		"id":       {typ: ftString},
+		"duration": {typ: ftDuration},
 	},
 	"log": {
 		"body":          {typ: ftString},
@@ -61,6 +64,14 @@ func Check(e Expr) error {
 		return errors.Join(Check(e.Parent), Check(e.Kid))
 	case Desc:
 		return errors.Join(Check(e.Anc), Check(e.Kid))
+	case After:
+		return errors.Join(Check(e.Prev), Check(e.Next))
+	case Count:
+		switch e.Op {
+		case Re, NRe, Contains:
+			return fmt.Errorf("count() compares with =, !=, <, <=, > or >=, not %s", e.Op)
+		}
+		return Check(e.X)
 	case nil:
 		return errors.New("empty query")
 	}
@@ -113,6 +124,19 @@ func checkCmp(c *Cmp, k Kind) error {
 		return err
 	}
 	field := FormatField(c.Field)
+	if c.Value.Kind == Arith {
+		switch c.Op {
+		case Re, NRe, Contains:
+			return fmt.Errorf("%s %s needs a string, not arithmetic", field, c.Op)
+		}
+		return checkExpression(c.Value.E)
+	}
+	if in != nil && in.typ == ftDuration && c.Value.Kind != Duration {
+		return fmt.Errorf("%s is a duration such as 200ms, not %s", field, FormatValue(c.Value))
+	}
+	if c.Value.Kind == Duration && (in == nil || in.typ != ftDuration) {
+		return fmt.Errorf("%s: a duration compares only with span:duration or trace:duration", field)
+	}
 	if c.Value.Kind == Ident && (in == nil || in.typ != ftEnum) {
 		return fmt.Errorf("%s: bare word %s is not a value here; quote it", field, c.Value.S)
 	}
@@ -174,4 +198,95 @@ func sameKind(a, b Expr) (Kind, bool) {
 	ka, oka := RecordLocal(a)
 	kb, okb := RecordLocal(b)
 	return ka, oka && okb && ka == kb
+}
+
+func checkExpression(e *Expression) error {
+	switch {
+	case e == nil:
+		return errors.New("empty arithmetic")
+	case e.Var != "" || e.Num != nil:
+		return nil
+	}
+	if e.Op == '/' && e.R.Num != nil && e.R.Num.I == 0 && e.R.Num.F == 0 {
+		return errors.New("division by zero")
+	}
+	return errors.Join(checkExpression(e.L), checkExpression(e.R))
+}
+
+// Vars are the variables an expression uses, in the order they appear.
+func Vars(e Expr) []string {
+	var out []string
+	seen := map[string]bool{}
+	var expr func(*Expression)
+	expr = func(x *Expression) {
+		if x == nil {
+			return
+		}
+		if x.Var != "" && !seen[x.Var] {
+			seen[x.Var] = true
+			out = append(out, x.Var)
+		}
+		expr(x.L)
+		expr(x.R)
+	}
+	var pred func(Pred)
+	pred = func(p Pred) {
+		switch p := p.(type) {
+		case *Cmp:
+			if p.Value.Kind == Arith {
+				expr(p.Value.E)
+			}
+		case PNot:
+			pred(p.P)
+		case PAnd:
+			pred(p.L)
+			pred(p.R)
+		case POr:
+			pred(p.L)
+			pred(p.R)
+		}
+	}
+	var walk func(Expr)
+	walk = func(e Expr) {
+		switch e := e.(type) {
+		case Select:
+			if e.Pred != nil {
+				pred(e.Pred)
+			}
+		case Both:
+			walk(e.L)
+			walk(e.R)
+		case Either:
+			walk(e.L)
+			walk(e.R)
+		case Inter:
+			walk(e.L)
+			walk(e.R)
+		case Not:
+			walk(e.X)
+		case Child:
+			walk(e.Parent)
+			walk(e.Kid)
+		case Desc:
+			walk(e.Anc)
+			walk(e.Kid)
+		case After:
+			walk(e.Prev)
+			walk(e.Next)
+		case Count:
+			walk(e.X)
+		}
+	}
+	walk(e)
+	return out
+}
+
+// CheckColumn checks a table column: a field of a span (see Field).
+func CheckColumn(c string) error {
+	f, err := ParseField(c, KindSpan)
+	if err != nil {
+		return err
+	}
+	_, err = fieldInfo(f, KindSpan)
+	return err
 }

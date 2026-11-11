@@ -20,6 +20,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/render/stream"
 	"github.com/barry-hennessy/praytel/internal/render/tui"
 	"github.com/barry-hennessy/praytel/internal/stage"
+	"github.com/barry-hennessy/praytel/internal/table"
 	"github.com/barry-hennessy/praytel/internal/view"
 )
 
@@ -173,6 +174,12 @@ func (d *Driver) compile(o plan.Output, deps Deps) (*output, error) {
 			return nil, err
 		}
 		v = c
+	case plan.ViewTable:
+		tv, err := table.New(o.View.Select, o.View.Columns, deps.Format == string(check.NDJSON))
+		if err != nil {
+			return nil, err
+		}
+		v = tv
 	default:
 		return nil, fmt.Errorf("view %q is not run by the pipeline", o.View.Kind)
 	}

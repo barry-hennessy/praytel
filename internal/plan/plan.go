@@ -60,6 +60,9 @@ const (
 	ViewGraph = "graph"
 	// ViewCheck judges a statement about selections (see Check).
 	ViewCheck = "check"
+	// ViewTable writes one row per span that Select selects, with the
+	// fields of Columns.
+	ViewTable = "table"
 )
 
 // Check kinds; see design/PIPELINE.md, "Checks".
@@ -116,6 +119,9 @@ type View struct {
 	Logs bool `json:"logs,omitempty"`
 	// Check is the statement of a check view.
 	Check *Check `json:"check,omitempty"`
+	// Select and Columns are a table view's rows and columns.
+	Select  string   `json:"select,omitempty"`
+	Columns []string `json:"columns,omitempty"`
 }
 
 // Trigger tells a view when to send output.
@@ -189,6 +195,18 @@ func (o Output) validate() error {
 	case ViewCheck:
 		if err := o.View.Check.validate(); err != nil {
 			errs = append(errs, err)
+		}
+	case ViewTable:
+		if _, err := query.Parse(o.View.Select); err != nil {
+			errs = append(errs, fmt.Errorf("view table: select: %w", err))
+		}
+		if len(o.View.Columns) == 0 {
+			errs = append(errs, errors.New("view table needs columns"))
+		}
+		for _, c := range o.View.Columns {
+			if err := query.CheckColumn(c); err != nil {
+				errs = append(errs, fmt.Errorf("view table: %w", err))
+			}
 		}
 	case ViewStream, ViewTree, ViewGraph:
 		if len(o.View.Sections) > 0 {
@@ -307,7 +325,7 @@ func triggerFits(view string, t Trigger) bool {
 		return t == Each || t == Tick
 	case ViewTree, ViewGraph:
 		return t == Tick || t == Settled || t == Final
-	case ViewSnapshot, ViewCheck:
+	case ViewSnapshot, ViewCheck, ViewTable:
 		return t == Settled || t == Final
 	}
 	return true // an unknown view is reported on its own

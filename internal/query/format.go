@@ -3,6 +3,7 @@ package query
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Format is the canonical text of e. It parses back to the same tree, and
@@ -27,7 +28,7 @@ func precOf(e Expr) int {
 		return precEither
 	case Both:
 		return precBoth
-	case Child, Desc:
+	case Child, Desc, After:
 		return precChain
 	case Inter:
 		return precInter
@@ -66,6 +67,12 @@ func formatExpr(b *strings.Builder, e Expr, min int) {
 		binary(e.Parent, ">", e.Kid)
 	case Desc:
 		binary(e.Anc, ">>", e.Kid)
+	case After:
+		binary(e.Prev, "~>", e.Next)
+	case Count:
+		b.WriteString("count(")
+		formatExpr(b, e.X, 0)
+		b.WriteString(") " + e.Op.String() + " " + strconv.FormatInt(e.N, 10))
 	case Inter:
 		binary(e.L, "&", e.R)
 	case Not:
@@ -134,6 +141,33 @@ func FormatValue(v Value) string {
 		return strconv.FormatBool(v.B)
 	case Ident:
 		return v.S
+	case Duration:
+		return time.Duration(v.I).String()
+	case Arith:
+		return formatExpression(v.E, 0)
 	}
 	return strconv.Quote(v.S)
+}
+
+// formatExpression writes arithmetic with the parentheses that precedence
+// needs: + and - bind looser than * and /, and both are left-associative.
+func formatExpression(e *Expression, min int) string {
+	if e == nil {
+		return ""
+	}
+	switch {
+	case e.Var != "":
+		return "$" + e.Var
+	case e.Num != nil:
+		return FormatValue(*e.Num)
+	}
+	prec := 1
+	if e.Op == '*' || e.Op == '/' {
+		prec = 2
+	}
+	s := formatExpression(e.L, prec) + " " + string(e.Op) + " " + formatExpression(e.R, prec+1)
+	if prec < min {
+		return "(" + s + ")"
+	}
+	return s
 }

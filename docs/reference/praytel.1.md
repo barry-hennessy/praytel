@@ -33,7 +33,7 @@ trace/span tree instead.
 | `--snapshot-logs` | off | Include log lines (and captured stdout/stderr) in a snapshot. |
 | `-e`, `--execute=CODE\|FILE.star` | none | Declare the outputs in Starlark instead (see [Plans](#plans)). Repeatable; a value ending in `.star` is a file. Cannot be combined with `--tui` or `--snapshot`. |
 | `--print-plan` | off | Print the plan the other flags make, as JSON, and exit. Needs no command. |
-| `--format=text\|ndjson` | `text` | How [checks](#checks) report. |
+| `--format=text\|ndjson` | `text` | How [checks](#checks) and tables report. |
 
 ### Ingest and drain
 
@@ -151,7 +151,7 @@ starts; they cannot read files, the time or random values.
 
 | Part | Builtins |
 |---|---|
-| Views | `stream()`, `snapshot("tree", "graph", logs=False)`, `tree()`, `graph()` |
+| Views | `stream()`, `snapshot("tree", "graph", logs=False)`, `tree()`, `graph()`, `table(SELECTION, columns=[...])` (see [Checks](#checks)) |
 | Stages | `attrs("GLOBS")` (as `--snapshot-attrs`), `no_attrs()`, `where(SELECTION)` (see [Queries](#queries)) |
 | Triggers | `each` (per event: the stream), `tick` (TUI panes), `settled` (per trace, when it settles), `final` (once the run drains) |
 | Sinks | `stdout`, `stderr`, `file("PATH")`, `pane("NAME")`; add `exit` to let the output decide the exit code as `--snapshot` does |
@@ -221,13 +221,26 @@ expressions) and `*=` (contains). Types do not convert: `500` is not
 
 Between selections: `A && B` (the trace has both), `A || B` (either),
 `A & B` (items in both), `!A` (spans not in A), `A > B` (B whose parent is
-in A) and `A >> B` (B below A).
+in A), `A >> B` (B below A) and `A ~> B` (B with an earlier sibling in A).
+`count(A) >= N` keeps the items of `A` only if the trace has that many
+(`=`, `!=`, `<`, `<=`, `>`, `>=`).
+
+`span:duration` and `trace:duration` compare with durations: `200ms`,
+`1.5s`, `1h30m`. A variable `$x` binds to the value it first meets on the
+left of `>`, `>>` or `~>`, once per span there, and the right side can use
+it in arithmetic (`+ - * /`):
+
+```text
+span{ test.name = "TestDouble" && input = $x } >> span{ output = $x * 2 }
+```
 
 In `-e`, `where(...)` takes a query string or a selection built with
 `span(name=, service=, component=, kind=, status=, attrs={...})` and
-`log(body=, source=, severity=, attrs={...})`; a value is a literal or
-`match("RE")`, `glob("GLOB")` or `contains("TEXT")`. Selections join with
-`&`, `|`, `>>`, `~` and `b.child_of(a)`:
+`log(body=, source=, severity=, attrs={...})`; a value is a literal,
+`match("RE")`, `glob("GLOB")`, `contains("TEXT")`, `longer_than("200ms")` or
+`shorter_than("1s")` (for `duration=`), or a variable `var("x")` with
+arithmetic. Selections join with `&`, `|`, `>>`, `~`, `b.child_of(a)` and
+`b.after(a)`:
 
 ```sh
 praytel -e 'where(span(service = "checkout") >> span(status = "error")) | tree() | settled | stderr' -- ./server
@@ -277,6 +290,30 @@ Loops and functions make table tests:
 for x in [0, 1, 2]:
     every(span(attrs = {"test.name": "TestDouble", "input": x}),
           has = span(attrs = {"output": x * 2}))
+```
+
+A variable makes the same check for inputs not known before the run, each
+test with its own:
+
+```python
+x = var("x")
+every(span(attrs = {"test.name": "TestDouble", "input": x}),
+      has = span(attrs = {"output": x * 2}))
+```
+
+And a count bounds each anchor, such as an N+1 query:
+
+```python
+every(span(kind = "server"), has = at_most(10, span(attrs = {"db.system": "postgresql"})))
+```
+
+`table(SELECTION, columns = [...])` writes one row per selected span, with
+the fields of its columns (`span:name`, `span:duration`, `test.name`, …):
+tab-separated under a header, or JSON objects with `--format=ndjson`. Rows
+are sorted, so a table can be a golden:
+
+```sh
+praytel -e 'table(span(name = "test.TestDouble"), columns = ["input", "output"]) | final | file("testdata/double.tsv")' -- go test -count=1 .
 ```
 
 ## Exit status
