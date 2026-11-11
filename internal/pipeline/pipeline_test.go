@@ -161,8 +161,8 @@ func TestExitSink(t *testing.T) {
 func TestCompileRejects(t *testing.T) {
 	cases := map[string]plan.Plan{
 		"invalid plan": {},
-		"tui sink": {Outputs: []plan.Output{{View: plan.View{Kind: plan.ViewTree}, Emit: plan.Tick,
-			Sink: plan.Sink{Kind: plan.SinkTUI}}}},
+		"tick on a sink that is not a pane": {Outputs: []plan.Output{{View: plan.View{Kind: plan.ViewStream}, Emit: plan.Tick,
+			Sink: plan.Sink{Kind: plan.SinkStdout}}}},
 		"exit on a view that cannot report": {Outputs: []plan.Output{{View: plan.View{Kind: plan.ViewStream},
 			Emit: plan.Each, Sink: plan.Sink{Kind: plan.SinkStdout, Exit: true}}}},
 	}

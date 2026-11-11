@@ -173,3 +173,47 @@ To know:
 - The reference page (`docs/reference/praytel.1.md`) has a Plans section:
   the builtins and the `-e` form of each mode flag.
 - `print()` in a script writes to stderr.
+- Commit signing (1Password) failed for this phase's commit with "failed
+  to fill whole buffer". The work stays staged; see the note at the end
+  of this log.
+
+## Phase 5: The TUI as panes
+
+Branch `pipeline-phase5-panes`.
+
+Checks:
+- `go test ./...`: pass. New TUI tests: three panes cycle with ctrl+g in
+  plan order; a stream pane shows the stream's lines and the footer names
+  the pane; a pane's stages (`attrs("-secret")`) hide attributes in that
+  pane only and do not change the forest; the default panes are tree then
+  graph. New driver tests: TUI outputs compile into panes in plan order;
+  a plan with panes rejects stdout and stderr outputs; the TUI gets every
+  event while a file output runs beside it; a TUI that ends does not block
+  the driver.
+- The current TUI tests pass without change (ctrl+g still toggles tree and
+  graph with the default panes).
+- Pseudo-terminal smoke test of the built binary: three panes (`calls`,
+  `map`, `logs`) and a snapshot to a file; ctrl+g showed `map 2/3` then
+  `logs 3/3`; ctrl+q exited 0; the file held the child's span.
+- TUI benchmarks, 3 runs against the Phase 0 baseline: no significant
+  change (geomean −0.04 %; memory and allocations flat).
+- `golangci-lint run ./...`: 0 issues.
+
+Departures:
+- The TUI keeps its own projection and its interactive loop. The driver
+  passes it every event and runs every other output. The plan wanted the
+  driver to own one projection and render the panes each tick. That needs
+  either a lock on the TUI's hot path (Bubble Tea reads the model on its
+  own goroutine) or most of the 1,400-line TUI model rewritten; both put
+  the tuned search, scroll and graph layout at risk. Panes, their stages,
+  tabs and sharing a run work without it.
+- The search box is not a stage. Fuzzy search stays view state, so a query
+  change does not recompile the pane's plan. Phase 7 adds a query mode.
+- Panes cycle with ctrl+g; the footer shows `name i/n`. There is no tab bar.
+- A plan with panes can only send other outputs to files: the TUI owns the
+  terminal, and a stdout or stderr output would write over it.
+
+To know:
+- When the TUI quits early, the driver stops passing it events, so the
+  correlator never blocks. Before, nothing read the events after a quit.
+- `stream()` can now be a pane (`stream() | tick | pane("logs")`).

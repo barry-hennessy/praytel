@@ -77,7 +77,7 @@ and attributes; a single matching span surfaces its whole trace.
 | Backspace | Delete the character before the cursor. |
 | Esc | Clear the search. |
 | Tab | Switch between searching traces and searching log bodies. |
-| Ctrl-G | Switch between the tree view and the call graph view. |
+| Ctrl-G | Show the next pane: with `--tui`, switch between the tree view and the call graph view. |
 | ↑ / ↓ (or Ctrl-K / Ctrl-J) | Scroll one line. |
 | PgUp / PgDn | Scroll one page. |
 | ← / → (or Ctrl-B / Ctrl-F) | Move the cursor in the search; with no search, scroll horizontally. |
@@ -161,7 +161,16 @@ The mode flags as `-e`:
 | `--snapshot=tree` | `no_attrs() \| snapshot("tree") \| final \| stdout \| exit` |
 | `--snapshot="tree graph" --snapshot-attrs="G" --snapshot-logs` | `attrs("G") \| snapshot("tree", "graph", logs=True) \| final \| stdout \| exit` |
 
-TUI panes cannot yet share a run with other outputs.
+Outputs with `pane("NAME")` are the TUI's panes, in order: `tree()`,
+`graph()` or `stream()` with `tick`, and any stages. Ctrl-G moves to the next
+pane. Other outputs can run beside the TUI, but only to files, since the TUI
+owns the terminal:
+
+```sh
+praytel -e 'tree() | tick | pane("calls")' \
+        -e 'stream() | tick | pane("logs")' \
+        -e 'snapshot("tree") | final | file("trace.txt")' -- ./server
+```
 
 ## Exit status
 
