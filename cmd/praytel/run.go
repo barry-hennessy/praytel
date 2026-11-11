@@ -43,9 +43,6 @@ func run(
 	defer span.End()
 
 	interactive := pl.HasSink(plan.SinkTUI)
-	if interactive && len(pl.Outputs) != countSink(pl, plan.SinkTUI) {
-		return 1, errors.New("plan: TUI panes cannot share a run with other outputs yet")
-	}
 
 	pipe, err := ingest.New(ctx, lt, correlator.Drain{
 		Idle:    cfg.DrainIdle,
@@ -62,20 +59,17 @@ func run(
 	}
 	events, corr, rec := pipe.Events, pipe.Corr, pipe.Rec
 
-	// The pipeline driver runs every output except TUI panes, which the TUI
-	// runs on its own until it becomes a sink.
-	var view renderer
-	var drv *pipeline.Driver
+	// The pipeline driver runs the plan. TUI panes run in the TUI, on the
+	// events the driver passes on.
+	drv, err := pipeline.Compile(pl, pipeline.Deps{
+		LT: lt, Events: events, Stdout: stdout, Stderr: stderr,
+	})
+	if err != nil {
+		return 1, fmt.Errorf("plan: %w", err)
+	}
+	var screen renderer
 	if interactive {
-		view = tui.New(lt, events, stdin, stdout, nil)
-	} else {
-		drv, err = pipeline.Compile(pl, pipeline.Deps{
-			LT: lt, Events: events, Stdout: stdout, Stderr: stderr,
-		})
-		if err != nil {
-			return 1, fmt.Errorf("plan: %w", err)
-		}
-		view = drv
+		screen = tui.New(lt, drv.TUIEvents(), stdin, stdout, nil, drv.Panes())
 	}
 
 	outR, outW, err := os.Pipe()
@@ -108,8 +102,14 @@ func run(
 	defer stopRender()
 	var renderGroup errgroup.Group
 	renderGroup.Go(func() error {
-		return view.Run(renderCtx)
+		return drv.Run(renderCtx)
 	})
+	if screen != nil {
+		renderGroup.Go(func() error {
+			defer drv.TUIEnded()
+			return screen.Run(renderCtx)
+		})
+	}
 
 	var receiverGroup errgroup.Group
 	receiverGroup.Go(func() error {
@@ -198,9 +198,7 @@ func run(
 		log.Error("wait child", "err", err)
 	}
 
-	if drv != nil {
-		code = drv.Close(code)
-	}
+	code = drv.Close(code)
 
 	return code, nil
 }
@@ -291,12 +289,3 @@ func withOTelExporterEnv(base, extra []string) []string {
 	return append(out, extra...)
 }
 
-func countSink(p plan.Plan, kind string) int {
-	n := 0
-	for _, o := range p.Outputs {
-		if o.Sink.Kind == kind {
-			n++
-		}
-	}
-	return n
-}

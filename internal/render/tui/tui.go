@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"slices"
 	"sort"
@@ -16,6 +17,9 @@ import (
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
 	"github.com/barry-hennessy/praytel/internal/projection"
+	"github.com/barry-hennessy/praytel/internal/render/stream"
+	"github.com/barry-hennessy/praytel/internal/stage"
+	"github.com/barry-hennessy/praytel/internal/view"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -37,7 +41,46 @@ type viewMode uint8
 const (
 	viewTree viewMode = iota
 	viewGraph
+	viewStream
 )
+
+// Pane kinds.
+const (
+	PaneTree   = "tree"
+	PaneGraph  = "graph"
+	PaneStream = "stream"
+)
+
+// Pane is one pane of the TUI: an output of the plan with a TUI sink. The
+// TUI shows its panes as tabs, in order; ctrl+g moves to the next.
+type Pane struct {
+	Name   string
+	Kind   string
+	Stages []stage.Stage
+}
+
+// DefaultPanes are the panes of --tui: the tree, then the graph.
+func DefaultPanes() []Pane {
+	return []Pane{{Name: PaneTree, Kind: PaneTree}, {Name: PaneGraph, Kind: PaneGraph}}
+}
+
+// paneState is a pane and, for a stream pane, the lines it has made.
+type paneState struct {
+	Pane
+	stream *stream.View
+	lines  []string
+}
+
+func viewOf(kind string) viewMode {
+	switch kind {
+	case PaneGraph:
+		return viewGraph
+	case PaneStream:
+		return viewStream
+	default:
+		return viewTree
+	}
+}
 
 // componentPalette is handed out, in order and then round again, to each
 // component that calls another (see Model.colors). A component that calls
@@ -82,6 +125,10 @@ type Model struct {
 	// holds was built from what is here now.
 	forest *projection.Forest
 	cache  *viewCache
+
+	// panes are the plan's TUI outputs; pane is the one on show.
+	panes []*paneState
+	pane  int
 
 	// callers holds the selectionKey of every span named as another's
 	// parent, whether or not it has arrived yet. colors gives each component
@@ -128,6 +175,7 @@ func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
 		events:  events,
 		filt:    filt,
 		forest:  projection.New(),
+		panes:   panesOf(DefaultPanes()),
 		callers: make(map[string]bool),
 		colors:  make(map[string]int),
 		cache:   &viewCache{},
@@ -135,6 +183,38 @@ func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
 		height:  24,
 		now:     time.Now(),
 	}
+}
+
+func panesOf(ps []Pane) []*paneState {
+	out := make([]*paneState, 0, len(ps))
+	for _, p := range ps {
+		st := &paneState{Pane: p}
+		if p.Kind == PaneStream {
+			st.stream = stream.NewView(slog.New(slog.DiscardHandler), false, nil)
+		}
+		out = append(out, st)
+	}
+	return out
+}
+
+// WithPanes is m showing panes instead of the default tree and graph. The
+// first pane is on show.
+func (m Model) WithPanes(panes []Pane) Model {
+	if len(panes) == 0 {
+		panes = DefaultPanes()
+	}
+	m.panes = panesOf(panes)
+	m.pane = 0
+	m.view = viewOf(panes[0].Kind)
+	return m
+}
+
+// reader is what the pane on show reads: the forest through its stages.
+func (m Model) reader() projection.Reader {
+	if m.pane >= len(m.panes) {
+		return m.forest
+	}
+	return stage.LensAll(m.panes[m.pane].Stages, m.forest)
 }
 
 // Init begins waiting for telemetry and animation ticks.
@@ -221,10 +301,9 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			m.scroll = 0
 			m.hscroll = 0
 		case "ctrl+g":
-			if m.view == viewTree {
-				m.view = viewGraph
-			} else {
-				m.view = viewTree
+			if len(m.panes) > 0 {
+				m.pane = (m.pane + 1) % len(m.panes)
+				m.view = viewOf(m.panes[m.pane].Kind)
 			}
 			m.scroll = 0
 			m.hscroll = 0
@@ -313,6 +392,15 @@ func (m *Model) apply(ev domain.Event) {
 	}
 	m.forest.SetNow(m.now)
 	m.forest.Apply(ev)
+	for _, p := range m.panes {
+		if p.stream == nil {
+			continue
+		}
+		stage.Chain(p.Stages, ev, func(ev domain.Event) {
+			p.stream.Observe(ev, nil)
+		})
+		p.lines = append(p.lines, p.stream.Render(nil, view.Viewport{})...)
+	}
 	switch ev := ev.(type) {
 	case domain.SpanUpserted:
 		m.colorCallers(m.forest.Span(ev.TraceID, ev.SpanID))
@@ -393,13 +481,21 @@ func (m Model) View() string {
 	width := max(1, m.width)
 	m.clampScroll()
 	var visible []string
-	if m.view == viewGraph {
+	switch m.view {
+	case viewStream:
+		lines := m.streamLines()
+		from := min(m.scroll, len(lines))
+		visible = make([]string, 0, height)
+		for _, l := range lines[from:min(from+height, len(lines))] {
+			visible = append(visible, ansi.Cut(l, m.hscroll, m.hscroll+width))
+		}
+	case viewGraph:
 		// Every row of the graph is as wide as the graph, and it is cut to
 		// the screen as it is drawn.
 		graph := m.cachedGraph()
 		m.hscroll = max(0, min(m.hscroll, graph.columns()-width))
 		visible = graph.window(m.scroll, m.scroll+height, m.hscroll, width)
-	} else {
+	default:
 		visible = m.cachedTree().rows(m, m.scroll, m.scroll+height)
 		maxHScroll := 0
 		for _, l := range visible {
@@ -430,9 +526,12 @@ func (m Model) contentHeight() int {
 // back through before anything moves.
 func (m *Model) clampScroll() {
 	var lines int
-	if m.view == viewGraph {
+	switch m.view {
+	case viewGraph:
 		lines = m.cachedGraph().lineCount()
-	} else {
+	case viewStream:
+		lines = len(m.streamLines())
+	default:
 		lines = m.cachedTree().lines
 	}
 	m.scroll = max(0, min(m.scroll, lines-m.contentHeight()))
@@ -458,6 +557,7 @@ type viewCache struct {
 type panelKey struct {
 	mode       searchMode
 	view       viewMode
+	pane       int
 	query      string
 	cursorBack int
 	width      int
@@ -470,6 +570,7 @@ type cacheKey struct {
 	version int
 	query   string
 	mode    searchMode
+	pane    int
 }
 
 type cached[T any] struct {
@@ -483,7 +584,7 @@ type cached[T any] struct {
 }
 
 func (m Model) cacheKey() cacheKey {
-	return cacheKey{version: m.forest.Version(), query: m.query, mode: m.mode}
+	return cacheKey{version: m.forest.Version(), query: m.query, mode: m.mode, pane: m.pane}
 }
 
 // slowBuild is how long a build has to take before the result is reused
@@ -584,12 +685,13 @@ func (m Model) filteredForest() (
 ) {
 	children = make(map[string][]*spanView)
 	inScope = make(map[string]*spanView)
-	for sp := range m.forest.Spans() {
+	r := m.reader()
+	for sp := range r.Spans() {
 		if !m.filt.InFocus(sp.ID) {
 			continue
 		}
 		inScope[selectionKey(sp.TraceID, sp.ID)] = sp
-		parent := m.forest.Span(sp.TraceID, sp.ParentID)
+		parent := r.Span(sp.TraceID, sp.ParentID)
 		if sp.ParentID != "" && parent != nil && m.filt.InFocus(parent.ID) {
 			children[selectionKey(sp.TraceID, sp.ParentID)] = append(children[selectionKey(sp.TraceID, sp.ParentID)], sp)
 		} else {
@@ -673,7 +775,7 @@ func (m Model) layoutTree() *treeLayout {
 		}
 		s := treeSpan{sp: sp, ancestors: ancestors, line: t.lines}
 		for _, id := range sp.Logs {
-			log := m.forest.Log(id)
+			log := m.reader().Log(id)
 			if log == nil || (m.mode == searchLogs && m.query != "" && !logMatches[id]) {
 				continue
 			}
@@ -950,7 +1052,7 @@ func (m Model) matchingTraces() map[string]bool {
 	if m.query == "" {
 		return out
 	}
-	for sp := range m.forest.Spans() {
+	for sp := range m.reader().Spans() {
 		if ok, _ := matchSpan(m.query, sp); ok {
 			out[sp.TraceID] = true
 		}
@@ -1007,7 +1109,7 @@ func (m Model) spanHighlights() map[string]spanHighlight {
 	if m.query == "" || m.mode != searchTraces {
 		return out
 	}
-	for sp := range m.forest.Spans() {
+	for sp := range m.reader().Spans() {
 		if ok, h := matchSpan(m.query, sp); ok {
 			out[selectionKey(sp.TraceID, sp.ID)] = h
 		}
@@ -1020,7 +1122,7 @@ func (m Model) matchingLogs() map[string]bool {
 	if m.query == "" {
 		return out
 	}
-	for log := range m.forest.Logs() {
+	for log := range m.reader().Logs() {
 		if fuzzy(m.query, log.Body) {
 			out[log.ID] = true
 		}
@@ -1154,7 +1256,7 @@ func clean(s string) string {
 // changed.
 func (m Model) panel() string {
 	key := panelKey{
-		mode: m.mode, view: m.view, query: m.query, cursorBack: m.cursorBack,
+		mode: m.mode, view: m.view, pane: m.pane, query: m.query, cursorBack: m.cursorBack,
 		width: m.width, hscroll: m.hscroll, done: m.done, warning: m.warning,
 	}
 	c := m.cache
@@ -1177,6 +1279,11 @@ func (m Model) renderPanel() string {
 	if m.view == viewGraph {
 		viewLabel = "graph"
 	}
+	if m.pane < len(m.panes) && len(m.panes) > 1 {
+		viewLabel = fmt.Sprintf("%s %d/%d", m.panes[m.pane].Name, m.pane+1, len(m.panes))
+	} else if m.pane < len(m.panes) {
+		viewLabel = m.panes[m.pane].Name
+	}
 	viewStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("135")).Bold(true)
 	state := "running"
 	if m.done {
@@ -1194,7 +1301,7 @@ func (m Model) renderPanel() string {
 		arrows = "←/→ cursor, ⇧ pan"
 	}
 	help := fmt.Sprintf(
-		" tab mode • ctrl+g graph • ↑/↓ scroll • %s • esc clear • ctrl+q quit • %s",
+		" tab mode • ctrl+g next pane • ↑/↓ scroll • %s • esc clear • ctrl+q quit • %s",
 		arrows,
 		state,
 	)
@@ -1234,20 +1341,23 @@ type TUI struct {
 	filt   *filter.Filter
 	in     io.Reader
 	out    io.Writer
+	panes  []Pane
 }
 
-// New constructs a TUI over the event stream. A nil filt shows everything.
+// New constructs a TUI over the event stream. A nil filt shows everything;
+// nil panes show the tree and the graph.
 func New(
 	lt observability.LoggingTracer,
 	events <-chan domain.Event,
 	in io.Reader,
 	out io.Writer,
 	filt *filter.Filter,
+	panes []Pane,
 ) TUI {
 	_, _, span := lt.Name("tui.New").Start(context.Background())
 	defer span.End()
 
-	return TUI{lt: lt, events: events, filt: filt, in: in, out: out}
+	return TUI{lt: lt, events: events, filt: filt, in: in, out: out, panes: panes}
 }
 
 func (t TUI) Run(ctx context.Context) error {
@@ -1258,7 +1368,7 @@ func (t TUI) Run(ctx context.Context) error {
 	}
 
 	p := tea.NewProgram(
-		NewModel(t.events, t.filt),
+		NewModel(t.events, t.filt).WithPanes(t.panes),
 		tea.WithContext(ctx),
 		tea.WithInput(t.in),
 		tea.WithOutput(t.out),
@@ -1269,4 +1379,12 @@ func (t TUI) Run(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// streamLines is what the stream pane on show has made.
+func (m Model) streamLines() []string {
+	if m.pane >= len(m.panes) {
+		return nil
+	}
+	return m.panes[m.pane].lines
 }

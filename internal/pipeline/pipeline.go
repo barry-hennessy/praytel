@@ -6,8 +6,10 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
@@ -42,6 +44,14 @@ type Driver struct {
 	events  <-chan domain.Event
 	forest  *projection.Forest
 	outputs []*output
+
+	// panes are the plan's TUI outputs. The TUI runs them on its own
+	// goroutine with its own projection; the driver passes it every event
+	// on tui until the TUI ends (tuiDone).
+	panes    []tui.Pane
+	tui      chan domain.Event
+	tuiDone  chan struct{}
+	tuiEnded sync.Once
 }
 
 // Compile builds a driver for p. It does not start it.
@@ -50,7 +60,24 @@ func Compile(p plan.Plan, deps Deps) (*Driver, error) {
 		return nil, err
 	}
 	d := &Driver{lt: deps.LT, events: deps.Events, forest: projection.New()}
+	if p.HasSink(plan.SinkTUI) {
+		for _, o := range p.Outputs {
+			if o.Sink.Kind == plan.SinkStdout || o.Sink.Kind == plan.SinkStderr {
+				return nil, errors.New("the TUI owns the terminal: send the other outputs to files")
+			}
+		}
+		d.tui = make(chan domain.Event, 64)
+		d.tuiDone = make(chan struct{})
+	}
 	for i, o := range p.Outputs {
+		if o.Sink.Kind == plan.SinkTUI {
+			pane, err := compilePane(o)
+			if err != nil {
+				return nil, fmt.Errorf("output %d: %w", i+1, err)
+			}
+			d.panes = append(d.panes, pane)
+			continue
+		}
 		out, err := d.compile(o, deps)
 		if err != nil {
 			d.Close(0)
@@ -103,6 +130,44 @@ func (d *Driver) compile(o plan.Output, deps Deps) (*output, error) {
 	}, nil
 }
 
+func compilePane(o plan.Output) (tui.Pane, error) {
+	stages, err := stage.BuildAll(o.Stages)
+	if err != nil {
+		return tui.Pane{}, err
+	}
+	var kind string
+	switch o.View.Kind {
+	case plan.ViewTree:
+		kind = tui.PaneTree
+	case plan.ViewGraph:
+		kind = tui.PaneGraph
+	case plan.ViewStream:
+		kind = tui.PaneStream
+	default:
+		return tui.Pane{}, fmt.Errorf("view %q cannot be a TUI pane", o.View.Kind)
+	}
+	name := o.Sink.Pane
+	if name == "" {
+		name = o.View.Kind
+	}
+	return tui.Pane{Name: name, Kind: kind, Stages: stages}, nil
+}
+
+// Panes are the plan's TUI panes, in order; none if the plan has no TUI.
+func (d *Driver) Panes() []tui.Pane { return d.panes }
+
+// TUIEvents is every event, for the TUI to run its panes on. It closes
+// when the driver's events end.
+func (d *Driver) TUIEvents() <-chan domain.Event { return d.tui }
+
+// TUIEnded tells the driver the TUI has stopped reading, so it stops
+// passing events on.
+func (d *Driver) TUIEnded() {
+	if d.tuiDone != nil {
+		d.tuiEnded.Do(func() { close(d.tuiDone) })
+	}
+}
+
 // Run reads events until the channel closes, then fires the "final"
 // triggers. If ctx ends first, views that care are told the run was cut
 // short, and Run keeps reading so the producer never blocks.
@@ -116,6 +181,9 @@ func (d *Driver) Run(ctx context.Context) error {
 		case ev, ok := <-d.events:
 			if !ok {
 				d.fire(plan.Final, log.Error)
+				if d.tui != nil {
+					close(d.tui)
+				}
 				return nil
 			}
 			d.apply(ev, log.Error)
@@ -131,6 +199,12 @@ func (d *Driver) Run(ctx context.Context) error {
 }
 
 func (d *Driver) apply(ev domain.Event, logErr func(string, ...any)) {
+	if d.tui != nil {
+		select {
+		case d.tui <- ev:
+		case <-d.tuiDone:
+		}
+	}
 	d.forest.Apply(ev)
 	for _, o := range d.outputs {
 		stage.Chain(o.stages, ev, func(ev domain.Event) {
