@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -33,6 +34,13 @@ const (
 	tRe
 	tNRe
 	tContains
+	tVar      // $name; text is the name
+	tDuration // 200ms
+	tAfter    // ~>
+	tPlus
+	tMinus
+	tStar
+	tSlash
 )
 
 type token struct {
@@ -84,7 +92,32 @@ func lex(src string) ([]token, error) {
 				}
 				j++
 			}
-			toks = append(toks, token{kind: tNumber, text: src[i:j], pos: i})
+			kind := tNumber
+			// A unit right after the number makes a duration: 200ms, 1h30m.
+			if k := j; k < len(src) && unicode.IsLetter(rune(src[k])) || strings.HasPrefix(src[j:], "µ") {
+				for k < len(src) && (strings.ContainsRune("0123456789.", rune(src[k])) || unicode.IsLetter(rune(src[k])) || strings.HasPrefix(src[k:], "µ")) {
+					if strings.HasPrefix(src[k:], "µ") {
+						k += len("µ")
+						continue
+					}
+					k++
+				}
+				if _, err := time.ParseDuration(src[i:k]); err == nil {
+					kind, j = tDuration, k
+				}
+			}
+			toks = append(toks, token{kind: kind, text: src[i:j], pos: i})
+			i = j
+			continue
+		case r == '$':
+			j := i + 1
+			for j < len(src) && (src[j] == '_' || unicode.IsLetter(rune(src[j])) || unicode.IsDigit(rune(src[j]))) {
+				j++
+			}
+			if j == i+1 {
+				return nil, errAt(src, i, "a variable needs a name after $")
+			}
+			toks = append(toks, token{kind: tVar, text: src[i+1 : j], pos: i})
 			i = j
 			continue
 		case unicode.IsLetter(r) || r == '_':
@@ -125,6 +158,8 @@ func lex(src string) ([]token, error) {
 			kind, n = tNRe, 2
 		case "*=":
 			kind, n = tContains, 2
+		case "~>":
+			kind, n = tAfter, 2
 		}
 		if n == 0 {
 			n = 1
@@ -147,6 +182,14 @@ func lex(src string) ([]token, error) {
 				kind = tLt
 			case '=':
 				kind = tEq
+			case '+':
+				kind = tPlus
+			case '-':
+				kind = tMinus
+			case '*':
+				kind = tStar
+			case '/':
+				kind = tSlash
 			default:
 				return nil, errAt(src, i, "unexpected %q", r)
 			}

@@ -248,6 +248,8 @@ func FuzzParse(f *testing.F) {
 	for _, s := range []string{
 		`span{}`, `span{ a = 1 } >> log{ log:body *= "x" }`, `!(span{a=1} & span{b="2"}) || log{}`,
 		`span{ (a = 1 || b = 2) && !exists(c) }`, `span{ x =~ "a|b" } > span{ y = 1.5e3 }`,
+		`span{ input = $x } >> span{ output = ($x + 1) * 2 - $y / 3 }`, `count(log{}) >= 2 ~> span{}`,
+		`span{ span:duration > 1h2m3.5s && trace:duration < 200µs }`,
 	} {
 		f.Add(s)
 	}

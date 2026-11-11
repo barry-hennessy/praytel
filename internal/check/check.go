@@ -141,18 +141,27 @@ func (v *View) judge(r projection.Reader, id string, t *query.Trace) {
 	res := query.Eval(v.sel, t)
 	j.items = items(v.sel, res)
 
+	// definite is a failure that no missing data could undo.
+	definite := false
 	switch v.spec.Kind {
 	case plan.CheckNever:
 		if !res.Empty() {
 			// A bad item is bad whatever else is missing.
-			j.outcome, j.evidence = Fail, keys(id, res)
+			j.outcome, j.evidence, definite = Fail, keys(id, res), true
 			for _, sp := range slices.Sorted(maps.Keys(res.Spans)) {
 				j.shown = append(j.shown, shown(t, sp))
 			}
 		}
 	case plan.CheckEvery:
+		perAnchor := len(query.Vars(v.sel)) > 0
 		for a := range query.Eval(v.anchor, t).Spans {
-			n := below(t, a, res, v.sel)
+			has := res
+			if perAnchor {
+				// The anchor binds the variables that has uses.
+				env, _ := query.BindSpan(v.anchor, t.Span(a), t, nil)
+				has = query.EvalEnv(v.sel, t, env)
+			}
+			n := below(t, a, has, v.sel)
 			ok := n > 0
 			if v.spec.Count != nil {
 				ok = v.spec.Count.Accepts(n)
@@ -161,13 +170,17 @@ func (v *View) judge(r projection.Reader, id string, t *query.Trace) {
 				j.outcome = Fail
 				j.evidence = append(j.evidence, id+"/"+a)
 				j.shown = append(j.shown, fmt.Sprintf("%s has %d", shown(t, a), n))
+				if c := v.spec.Count; c != nil && c.Op != "at_least" && n > c.N {
+					// Too many: data that is missing can only add more.
+					definite = true
+				}
 			}
 		}
 		slices.Sort(j.evidence)
 		slices.Sort(j.shown)
 	}
-	if len(j.reasons) > 0 && (j.outcome == Pass || v.spec.Kind == plan.CheckEvery) {
-		// Missing data could hide a failure, or a span that would pass.
+	if len(j.reasons) > 0 && (j.outcome == Pass || (j.outcome == Fail && !definite)) {
+		// Missing data could hide a failure, or the item that would pass.
 		j.outcome = Incomplete
 	}
 	v.traces[id] = j

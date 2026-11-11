@@ -117,6 +117,7 @@ var predeclared = sl.StringDict{
 	"tree":     builtin("tree", viewFn(plan.ViewTree)),
 	"graph":    builtin("graph", viewFn(plan.ViewGraph)),
 	"snapshot": builtin("snapshot", snapshotFn),
+	"table":    builtin("table", tableFn),
 
 	// Stages.
 	"attrs":    builtin("attrs", attrsFn),
@@ -124,11 +125,14 @@ var predeclared = sl.StringDict{
 	"where":    builtin("where", whereFn),
 
 	// Selections.
-	"span":     builtin("span", selectorFn(query.KindSpan, spanFields)),
-	"log":      builtin("log", selectorFn(query.KindLog, logFields)),
-	"match":    builtin("match", matchFn),
-	"glob":     builtin("glob", globFn),
-	"contains": builtin("contains", containsFn),
+	"span":         builtin("span", selectorFn(query.KindSpan, spanFields)),
+	"log":          builtin("log", selectorFn(query.KindLog, logFields)),
+	"match":        builtin("match", matchFn),
+	"glob":         builtin("glob", globFn),
+	"contains":     builtin("contains", containsFn),
+	"longer_than":  builtin("longer_than", durationFn(query.Gt)),
+	"shorter_than": builtin("shorter_than", durationFn(query.Lt)),
+	"var":          builtin("var", varFn),
 
 	// Triggers.
 	"each":    &part{emit: plan.Each, desc: []string{"each"}},

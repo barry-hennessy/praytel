@@ -54,8 +54,20 @@ type (
 	// Desc is Anc >> Kid: the items of Kid whose span has an ancestor in
 	// Anc.
 	Desc struct{ Anc, Kid Expr }
+	// After is Prev ~> Next: the items of Next whose span has an earlier
+	// sibling (same parent, earlier start) in Prev.
+	After struct{ Prev, Next Expr }
+	// Count is count(X) Op N: the items of X if the trace has a number of
+	// them that the comparison accepts; otherwise none.
+	Count struct {
+		X  Expr
+		Op Op
+		N  int64
+	}
 )
 
+func (After) expr()  {}
+func (Count) expr()  {}
 func (Select) expr() {}
 func (Both) expr()   {}
 func (Either) expr() {}
@@ -144,6 +156,12 @@ const (
 	// error), span:kind (unspecified, internal, server, client, producer,
 	// consumer) and log:source (stdout, stderr, otlp).
 	Ident
+	// Duration is a Go duration such as 200ms (I holds nanoseconds), for
+	// span:duration and trace:duration.
+	Duration
+	// Arith is arithmetic over variables and numbers (E), such as $x * 2.
+	// A bare $x that is not bound yet binds to the value it meets: see Env.
+	Arith
 )
 
 // Value is a literal.
@@ -153,4 +171,14 @@ type Value struct {
 	I    int64
 	F    float64
 	B    bool
+	E    *Expression
+}
+
+// Expression is arithmetic: a variable, a number, or Op ('+', '-', '*',
+// '/') of two expressions.
+type Expression struct {
+	Var  string // a variable, without its $
+	Num  *Value // an Int, Float or Duration
+	Op   byte
+	L, R *Expression
 }

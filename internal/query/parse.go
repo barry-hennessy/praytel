@@ -3,6 +3,7 @@ package query
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Parse reads a query and checks it (see Check).
@@ -10,15 +11,19 @@ import (
 //	expr    = either
 //	either  = both { "||" both }
 //	both    = chain { "&&" chain }
-//	chain   = inter { (">" | ">>") inter }
+//	chain   = inter { (">" | ">>" | "~>") inter }
 //	inter   = unary { "&" unary }
 //	unary   = "!" unary | "(" expr ")" | ("span" | "log") "{" [ pred ] "}"
+//	        | "count" "(" expr ")" op integer
 //	pred    = por
 //	por     = pand { "||" pand }
 //	pand    = pun { "&&" pun }
 //	pun     = "!" pun | "(" pred ")" | "exists" "(" field ")" | field op value
 //	op      = "=" | "!=" | ">" | ">=" | "<" | "<=" | "=~" | "!~" | "*="
-//	value   = string | number | "true" | "false" | word
+//	value   = string | number | duration | "true" | "false" | word | arith
+//	arith   = term { ("+" | "-") term }
+//	term    = factor { ("*" | "/") factor }
+//	factor  = "$" name | number | duration | "(" arith ")"
 func Parse(src string) (Expr, error) {
 	toks, err := lex(src)
 	if err != nil {
@@ -90,14 +95,17 @@ func (p *parser) both() (Expr, error) {
 
 func (p *parser) chain() (Expr, error) {
 	l, err := p.inter()
-	for err == nil && (p.peek().kind == tGt || p.peek().kind == tGtGt) {
+	for err == nil && (p.peek().kind == tGt || p.peek().kind == tGtGt || p.peek().kind == tAfter) {
 		op := p.next().kind
 		var r Expr
 		if r, err = p.inter(); err == nil {
-			if op == tGt {
+			switch op {
+			case tGt:
 				l = Child{l, r}
-			} else {
+			case tGtGt:
 				l = Desc{l, r}
+			default:
+				l = After{l, r}
 			}
 		}
 	}
@@ -134,6 +142,26 @@ func (p *parser) unary() (Expr, error) {
 			return nil, err
 		}
 		return e, nil
+	case t.kind == tIdent && t.text == "count" && p.peek().kind == tLParen:
+		p.next()
+		x, err := p.either()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tRParen, `")"`); err != nil {
+			return nil, err
+		}
+		opTok := p.next()
+		op, ok := cmpOps[opTok.kind]
+		if !ok || op == Re || op == NRe || op == Contains {
+			return nil, p.unexpected(opTok, "a comparison of the count")
+		}
+		nTok := p.next()
+		n, err := strconv.ParseInt(nTok.text, 10, 64)
+		if nTok.kind != tNumber || err != nil || n < 0 {
+			return nil, p.unexpected(nTok, "a whole number")
+		}
+		return Count{X: x, Op: op, N: n}, nil
 	case t.kind == tIdent && (t.text == "span" || t.text == "log"):
 		p.kind = KindSpan
 		if t.text == "log" {
@@ -258,20 +286,23 @@ func ParseField(s string, k Kind) (Field, error) {
 }
 
 func (p *parser) value() (Value, error) {
+	if p.startsArith() {
+		e, err := p.arith()
+		if err != nil {
+			return Value{}, err
+		}
+		if e.Num != nil {
+			return *e.Num, nil // a plain number after all
+		}
+		return Value{Kind: Arith, E: e}, nil
+	}
 	t := p.next()
 	switch t.kind {
 	case tString:
 		return Value{Kind: String, S: t.text}, nil
-	case tNumber:
-		text := strings.ReplaceAll(t.text, "_", "")
-		if i, err := strconv.ParseInt(text, 10, 64); err == nil {
-			return Value{Kind: Int, I: i}, nil
-		}
-		f, err := strconv.ParseFloat(text, 64)
-		if err != nil {
-			return Value{}, errAt(p.src, t.pos, "bad number %q", t.text)
-		}
-		return Value{Kind: Float, F: f}, nil
+	case tNumber, tDuration:
+		p.i--
+		return p.literal()
 	case tIdent:
 		switch t.text {
 		case "true", "false":
@@ -280,4 +311,89 @@ func (p *parser) value() (Value, error) {
 		return Value{Kind: Ident, S: t.text}, nil
 	}
 	return Value{}, p.unexpected(t, "a value")
+}
+
+// startsArith reports whether the value ahead is arithmetic: a variable, a
+// parenthesis, or a number or duration followed by an operator.
+func (p *parser) startsArith() bool {
+	switch p.peek().kind {
+	case tVar, tLParen:
+		return true
+	case tNumber, tDuration:
+		switch p.toks[p.i+1].kind {
+		case tPlus, tMinus, tStar, tSlash:
+			return true
+		}
+	}
+	return false
+}
+
+func (p *parser) arith() (*Expression, error) {
+	l, err := p.term()
+	for err == nil && (p.peek().kind == tPlus || p.peek().kind == tMinus) {
+		op := p.next().text[0]
+		var r *Expression
+		if r, err = p.term(); err == nil {
+			l = &Expression{Op: op, L: l, R: r}
+		}
+	}
+	return l, err
+}
+
+func (p *parser) term() (*Expression, error) {
+	l, err := p.factor()
+	for err == nil && (p.peek().kind == tStar || p.peek().kind == tSlash) {
+		op := p.next().text[0]
+		var r *Expression
+		if r, err = p.factor(); err == nil {
+			l = &Expression{Op: op, L: l, R: r}
+		}
+	}
+	return l, err
+}
+
+func (p *parser) factor() (*Expression, error) {
+	t := p.next()
+	switch t.kind {
+	case tVar:
+		return &Expression{Var: t.text}, nil
+	case tLParen:
+		e, err := p.arith()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(tRParen, `")"`); err != nil {
+			return nil, err
+		}
+		return e, nil
+	case tNumber, tDuration:
+		p.i--
+		v, err := p.literal()
+		if err != nil {
+			return nil, err
+		}
+		return &Expression{Num: &v}, nil
+	}
+	return nil, p.unexpected(t, "a variable or a number")
+}
+
+// literal reads a number or a duration.
+func (p *parser) literal() (Value, error) {
+	t := p.next()
+	if t.kind == tDuration {
+		d, err := time.ParseDuration(t.text)
+		if err != nil {
+			return Value{}, errAt(p.src, t.pos, "bad duration %q", t.text)
+		}
+		return Value{Kind: Duration, I: int64(d)}, nil
+	}
+	text := strings.ReplaceAll(t.text, "_", "")
+	if i, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return Value{Kind: Int, I: i}, nil
+	}
+	f, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		return Value{}, errAt(p.src, t.pos, "bad number %q", t.text)
+	}
+	return Value{Kind: Float, F: f}, nil
 }

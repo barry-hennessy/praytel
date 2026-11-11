@@ -378,3 +378,64 @@ To know:
 - Common real-world traces are incomplete: a span whose parent lives in a
   service that does not export to praytel gives `unknown_parent`, and the
   check reports `incomplete` (exit 3) for that trace.
+
+## Phase 9: Variables, counts, order, duration, table
+
+Branch `pipeline-phase9-expressions`.
+
+Checks:
+- `go test ./...`: pass. New query tests: parse and format of variables,
+  arithmetic with precedence, `count(…)`, `~>`, durations (11 cases, each
+  round-trips); errors (9 cases); evaluation (13 queries): a variable bound
+  per test and used below it (two right, one wrong), arithmetic, span and
+  trace durations, counts in a trace and under an anchor, sibling order;
+  `BindSpan` and `Vars`.
+- `go test -fuzz FuzzParse` with the new syntax in the seeds: 6.5 M inputs,
+  no round-trip failure. (A first run seemed to stall; it was the fuzzer
+  minimizing new inputs: with `-fuzzminimizetime 0` it runs steadily.)
+- `internal/check`: a property over unknown inputs (`every` with `$x`)
+  passes when every output is double its input and fails on exactly the
+  wrong test; the N+1 check (`at_most(3, …)` under a server span) fails
+  with "GET /orders (r) has 4".
+- `internal/table`: TSV with a header, sorted rows, missing fields empty,
+  tabs replaced; NDJSON; a bad column is rejected.
+- `internal/plan/starlark`: 6 expression builders equal their query text
+  (`longer_than`, `shorter_than`, `after`, `var` with arithmetic and unary
+  minus); builder errors; a property check and a table in one script.
+- `cmd/praytel` with the built binary: `table(…) | final | stdout` writes
+  the header and the child's span.
+- Filter benchmarks against the Phase 0 baseline: still −13.6 % time
+  (the evaluator rewrite did not change it).
+- `scripts/golden`: no golden changed.
+- `golangci-lint run ./...`: 0 issues.
+
+Departures:
+- A count in query text is `count(X) OP N`: it keeps the items of X when
+  the trace has that many. The `at_least` / `at_most` / `exactly` checks
+  stay as they were (Phase 8); they do not compile to `count(…)`.
+- Sibling order is `A ~> B` (B with an earlier sibling in A) in text and
+  `b.after(a)` in Starlark. TraceQL's `~` (any sibling) is not added.
+- Variables bind on the left of `>`, `>>` and `~>`, and in the anchor of
+  `every`; elsewhere an unbound `$x` matches any value and binds nothing.
+- The table's columns are span fields, not variables: a row is one span.
+  To see an input and an output side by side, select the spans that hold
+  both, or use a check with a variable.
+- Durations are Go durations (`1h30m` formats as `1h30m0s`).
+
+To know:
+- An `every` with a count fails even on an incomplete trace when the count
+  is over its upper bound: missing data can only add items. A count under
+  its bound on an incomplete trace is `incomplete`, as before.
+- Arithmetic on two integers stays an integer, except `/`; anything else
+  is float64.
+
+## Commits
+
+Phases 1, 2 and 3 are commits on their branches, pushed. From Phase 4 on,
+commit signing (1Password) failed with "failed to fill whole buffer" on
+every try; praytel's signing was not bypassed. The work is kept as
+cumulative patches in `.pipeline-patches/` (not committed):
+`phase4.patch` (also staged), and `through-phaseN.patch` for N = 5 to 9,
+each against the Phase 3 commit. `.pipeline-patches/commit-phases.sh`
+makes one signed commit per phase on its own branch and pushes it, once
+signing works.
