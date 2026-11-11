@@ -30,13 +30,13 @@ func (m Model) buildGraph() *graph.Graph {
 		if !m.fuzzyVisible(sp, traceMatches, logBranches) {
 			continue
 		}
-		fact := graph.SpanFact{Component: sp.component, Name: sp.name, Order: sp.order, Color: m.colors[spanLabel(sp)]}
-		if sp.parentID != "" {
-			if parent, ok := inScope[selectionKey(sp.traceID, sp.parentID)]; ok && m.fuzzyVisible(parent, traceMatches, logBranches) {
+		fact := graph.SpanFact{Component: sp.Component, Name: sp.Name, Order: sp.Order, Color: m.colors[spanLabel(sp)]}
+		if sp.ParentID != "" {
+			if parent, ok := inScope[selectionKey(sp.TraceID, sp.ParentID)]; ok && m.fuzzyVisible(parent, traceMatches, logBranches) {
 				fact.HasParent = true
-				fact.ParentComponent = parent.component
-				fact.ParentName = parent.name
-				fact.ParentOrder = parent.order
+				fact.ParentComponent = parent.Component
+				fact.ParentName = parent.Name
+				fact.ParentOrder = parent.Order
 			}
 		}
 		facts = append(facts, fact)

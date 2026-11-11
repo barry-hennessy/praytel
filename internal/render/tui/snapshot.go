@@ -88,7 +88,7 @@ func Snapshot(events <-chan domain.Event, opts SnapshotOptions) SnapshotResult {
 		problems = append(problems, "telemetry was shed under memory pressure")
 	}
 	problems = append(problems, m.canonicalise(opts)...)
-	if len(m.spans) == 0 {
+	if m.forest.Len() == 0 {
 		problems = append(problems, "no spans arrived (uninstrumented code, a cached run, or spans never flushed)")
 	}
 	sort.Strings(problems)
@@ -158,32 +158,32 @@ func rankGraph(g *graph.Graph) {
 	}
 }
 
-// canonicalise rewrites the settled model so that rendering it does not
-// depend on arrival order: it drops what a snapshot never shows, filters and
-// sorts attributes, and renumbers span.order to the canonical pre-order. It
-// returns the reasons the settled model is incomplete.
+// canonicalise replaces the model's forest with a copy rewritten so that
+// rendering it does not depend on arrival order: it drops what a snapshot
+// never shows, filters and sorts attributes, and renumbers span.Order to the
+// canonical pre-order. The forest it was given does not change. It returns
+// the reasons the settled model is incomplete.
 func (m *Model) canonicalise(opts SnapshotOptions) []string {
 	var problems []string
 
-	for key, sp := range m.spans {
-		if sp.synthetic && !opts.Logs {
-			delete(m.spans, key)
-			continue
-		}
-		if !opts.Logs {
-			sp.logs = nil
+	m.forest = m.forest.Clone(func(sp *spanView) bool {
+		return opts.Logs || !sp.Synthetic
+	})
+	if !opts.Logs {
+		for sp := range m.forest.Spans() {
+			sp.Logs = nil
 		}
 	}
 
 	var declared, unclosed, orphaned int
-	for _, sp := range m.spans {
+	for sp := range m.forest.Spans() {
 		switch {
-		case sp.declared:
+		case sp.Declared:
 			declared++
-		case !sp.closed && !sp.synthetic:
+		case !sp.Closed && !sp.Synthetic:
 			unclosed++
 		}
-		if sp.parentID != "" && m.spans[selectionKey(sp.traceID, sp.parentID)] == nil {
+		if sp.ParentID != "" && m.forest.Span(sp.TraceID, sp.ParentID) == nil {
 			orphaned++
 		}
 	}
@@ -197,35 +197,35 @@ func (m *Model) canonicalise(opts SnapshotOptions) []string {
 		problems = append(problems, fmt.Sprintf("%d span(s) name a parent that never arrived", orphaned))
 	}
 
-	for _, sp := range m.spans {
-		if sp.declared {
-			sp.name, sp.component = missingSpan, ""
+	for sp := range m.forest.Spans() {
+		if sp.Declared {
+			sp.Name, sp.Component = missingSpan, ""
 		}
-		sp.attributes = m.snapshotAttrs(sp.attributes, opts.Attrs)
-		sort.SliceStable(sp.logs, func(i, j int) bool {
-			return m.logBody(sp.logs[i]) < m.logBody(sp.logs[j])
+		sp.Attributes = m.snapshotAttrs(sp.Attributes, opts.Attrs)
+		sort.SliceStable(sp.Logs, func(i, j int) bool {
+			return m.logBody(sp.Logs[i]) < m.logBody(sp.Logs[j])
 		})
 	}
 
 	children := make(map[string][]*spanView)
 	var roots []*spanView
-	for _, sp := range m.spans {
-		if sp.parentID != "" && m.spans[selectionKey(sp.traceID, sp.parentID)] != nil {
-			pk := selectionKey(sp.traceID, sp.parentID)
+	for sp := range m.forest.Spans() {
+		if sp.ParentID != "" && m.forest.Span(sp.TraceID, sp.ParentID) != nil {
+			pk := selectionKey(sp.TraceID, sp.ParentID)
 			children[pk] = append(children[pk], sp)
 		} else {
 			roots = append(roots, sp)
 		}
 	}
 
-	keys := make(map[*spanView]string, len(m.spans))
+	keys := make(map[*spanView]string, m.forest.Len())
 	var keyOf func(sp *spanView) string
 	keyOf = func(sp *spanView) string {
 		if k, ok := keys[sp]; ok {
 			return k
 		}
 		keys[sp] = "" // a cycle terminates here; see unreachable below
-		kids := children[selectionKey(sp.traceID, sp.id)]
+		kids := children[selectionKey(sp.TraceID, sp.ID)]
 		kidKeys := make([]string, len(kids))
 		for i, c := range kids {
 			kidKeys[i] = keyOf(c)
@@ -233,15 +233,15 @@ func (m *Model) canonicalise(opts SnapshotOptions) []string {
 		sort.Strings(kidKeys)
 
 		var b strings.Builder
-		for _, f := range []string{sp.component, sp.name, strconv.Itoa(int(sp.status)), sp.statusMsg} {
+		for _, f := range []string{sp.Component, sp.Name, strconv.Itoa(int(sp.Status)), clean(sp.StatusMsg)} {
 			b.WriteString(strconv.Quote(f))
 			b.WriteByte(',')
 		}
-		for _, a := range sp.attributes {
+		for _, a := range sp.Attributes {
 			b.WriteString(strconv.Quote(a.Key + "=" + a.Value.String()))
 			b.WriteByte(',')
 		}
-		for _, id := range sp.logs {
+		for _, id := range sp.Logs {
 			b.WriteString(strconv.Quote("log:" + m.logBody(id)))
 			b.WriteByte(',')
 		}
@@ -268,24 +268,24 @@ func (m *Model) canonicalise(opts SnapshotOptions) []string {
 	var number func(sp *spanView)
 	number = func(sp *spanView) {
 		next++
-		sp.order = next
-		for _, c := range children[selectionKey(sp.traceID, sp.id)] {
+		sp.Order = next
+		for _, c := range children[selectionKey(sp.TraceID, sp.ID)] {
 			number(c)
 		}
 	}
 	for _, r := range roots {
 		number(r)
 	}
-	if next < len(m.spans) {
-		problems = append(problems, fmt.Sprintf("%d span(s) are unreachable from any root (parent cycle)", len(m.spans)-next))
+	if next < m.forest.Len() {
+		problems = append(problems, fmt.Sprintf("%d span(s) are unreachable from any root (parent cycle)", m.forest.Len()-next))
 	}
 
 	return problems
 }
 
 func (m *Model) logBody(id string) string {
-	if l := m.logs[id]; l != nil {
-		return l.body
+	if l := m.forest.Log(id); l != nil {
+		return l.Body
 	}
 	return ""
 }

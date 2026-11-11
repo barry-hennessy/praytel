@@ -14,6 +14,7 @@ import (
 	"github.com/barry-hennessy/bones/observability"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
+	"github.com/barry-hennessy/praytel/internal/projection"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -50,31 +51,12 @@ var componentPalette = []lipgloss.Color{
 
 var neutralColor = lipgloss.Color("240")
 
-type spanView struct {
-	id         string
-	traceID    string
-	parentID   string
-	name       string
-	component  string
-	statusMsg  string
-	declared   bool
-	synthetic  bool
-	start      time.Time
-	end        time.Time
-	observed   time.Time
-	status     domain.SpanStatus
-	closed     bool
-	order      int
-	attributes []domain.Attr
-	logs       []string
-}
-
-type logView struct {
-	id      string
-	body    string
-	traceID string
-	spanID  string
-}
+// spanView and logView are the projection's spans and logs as this view
+// reads them.
+type (
+	spanView = projection.Span
+	logView  = projection.Log
+)
 
 // eventMsg carries every event that was waiting when the model last asked
 // for one, so a burst costs one update and one redraw rather than one per
@@ -95,14 +77,10 @@ type Model struct {
 	events <-chan domain.Event
 	filt   *filter.Filter
 
-	spans     map[string]*spanView
-	logs      map[string]*logView
-	nextOrder int
-
-	// version counts changes to the telemetry above, so cache can tell
-	// whether what it holds was built from what is here now.
-	version int
-	cache   *viewCache
+	// forest holds the telemetry. Its Version tells cache whether what it
+	// holds was built from what is here now.
+	forest *projection.Forest
+	cache  *viewCache
 
 	// callers holds the selectionKey of every span named as another's
 	// parent, whether or not it has arrived yet. colors gives each component
@@ -148,8 +126,7 @@ func NewModel(events <-chan domain.Event, filt *filter.Filter) Model {
 	return Model{
 		events:  events,
 		filt:    filt,
-		spans:   make(map[string]*spanView),
-		logs:    make(map[string]*logView),
+		forest:  projection.New(),
 		callers: make(map[string]bool),
 		colors:  make(map[string]int),
 		cache:   &viewCache{},
@@ -323,64 +300,26 @@ func (m Model) splitQuery() (before, after []rune) {
 }
 
 func (m *Model) apply(ev domain.Event) {
-	m.version++
 	m.filt.Observe(ev)
-	switch ev := ev.(type) {
-	case domain.SpanUpserted:
-		sp := m.ensureSpan(ev.TraceID, ev.SpanID)
-		sp.traceID = ev.TraceID
-		sp.name = ev.Name
-		sp.component = ev.Component
-		sp.declared = false
-		sp.synthetic = ev.Synthetic
-		sp.start = ev.StartTime
-		sp.end = ev.EndTime
-		sp.status = ev.Status
-		sp.statusMsg = statusMessage(ev)
-		sp.attributes = ev.Attributes
-		m.colorCallers(sp)
-	case domain.SpanParentLinked:
-		sp := m.ensureSpan(ev.TraceID, ev.SpanID)
-		sp.parentID = ev.ParentSpanID
-		m.colorCallers(sp)
-	case domain.SpanClosed:
-		m.ensureSpan(ev.TraceID, ev.SpanID).closed = true
-	case domain.LogReceived:
-		m.nextOrder++
-		spanID := ev.SpanID
-		if spanID == "" {
-			spanID = ev.DeclaredSpanID
-		}
-		traceID := ev.TraceID
-		if traceID == "" {
-			traceID = ev.DeclaredTraceID
-		}
-		m.logs[ev.ID] = &logView{id: ev.ID, body: ev.Body, traceID: traceID, spanID: spanID}
-		if ev.SpanID == "" && ev.DeclaredSpanID != "" {
-			sp := m.ensureSpan(ev.DeclaredTraceID, ev.DeclaredSpanID)
-			sp.traceID = ev.DeclaredTraceID
-			sp.component = ev.Component
-			sp.name = "span/" + shortID(ev.DeclaredSpanID)
-			sp.declared = true
-		}
-		m.attachLog(ev.ID, "", "", traceID, spanID)
-	case domain.LogAssigned:
-		log := m.logs[ev.ID]
-		if log != nil {
-			oldTrace, old := log.traceID, log.spanID
-			log.traceID = ev.TraceID
-			log.spanID = ev.SpanID
-			m.attachLog(ev.ID, oldTrace, old, ev.TraceID, ev.SpanID)
-			sp := m.spans[selectionKey(oldTrace, old)]
-			if (oldTrace != ev.TraceID || old != ev.SpanID) && sp != nil &&
-				sp.declared && len(sp.logs) == 0 {
-				delete(m.spans, selectionKey(oldTrace, old))
+	if ev, ok := ev.(domain.ForestEvicted); ok {
+		// callers is keyed like the spans the eviction removes: drop those
+		// keys while the forest still holds the trace.
+		for sp := range m.forest.Spans() {
+			if sp.TraceID == ev.TraceID {
+				delete(m.callers, selectionKey(sp.TraceID, sp.ID))
 			}
 		}
+	}
+	m.forest.SetNow(m.now)
+	m.forest.Apply(ev)
+	switch ev := ev.(type) {
+	case domain.SpanUpserted:
+		m.colorCallers(m.forest.Span(ev.TraceID, ev.SpanID))
+	case domain.SpanParentLinked:
+		m.colorCallers(m.forest.Span(ev.TraceID, ev.SpanID))
 	case domain.DrainComplete:
 		m.done = true
 	case domain.ForestEvicted:
-		m.removeTrace(ev.TraceID)
 		m.warning = "data pressure: evicted the oldest completed trace"
 	case domain.ForestShed:
 		m.warning = "data pressure: newest telemetry was dropped"
@@ -393,20 +332,19 @@ func (m *Model) apply(ev domain.Event) {
 // name, so the placeholder name doesn't use up a color.
 func (m *Model) colorCallers(sp *spanView) {
 	assign := func(caller *spanView) {
-		if caller == nil || caller.declared {
+		if caller == nil || caller.Declared {
 			return
 		}
 		if label := spanLabel(caller); m.colors[label] == 0 {
 			m.colors[label] = len(m.colors)%len(componentPalette) + 1
 		}
 	}
-	if m.callers[selectionKey(sp.traceID, sp.id)] {
+	if m.callers[selectionKey(sp.TraceID, sp.ID)] {
 		assign(sp)
 	}
-	if sp.parentID != "" {
-		parentKey := selectionKey(sp.traceID, sp.parentID)
-		m.callers[parentKey] = true
-		assign(m.spans[parentKey])
+	if sp.ParentID != "" {
+		m.callers[selectionKey(sp.TraceID, sp.ParentID)] = true
+		assign(m.forest.Span(sp.TraceID, sp.ParentID))
 	}
 }
 
@@ -417,54 +355,6 @@ func (m Model) componentColor(sp *spanView) lipgloss.Color {
 		return componentPalette[(i-1)%len(componentPalette)]
 	}
 	return neutralColor
-}
-
-func (m *Model) ensureSpan(traceID, id string) *spanView {
-	key := selectionKey(traceID, id)
-	if sp := m.spans[key]; sp != nil {
-		return sp
-	}
-	m.nextOrder++
-	sp := &spanView{id: id, traceID: traceID, observed: m.now, order: m.nextOrder}
-	m.spans[key] = sp
-	return sp
-}
-
-func (m *Model) attachLog(id, oldTraceID, oldSpanID, traceID, spanID string) {
-	if oldSpanID != "" && (oldTraceID != traceID || oldSpanID != spanID) {
-		old := m.spans[selectionKey(oldTraceID, oldSpanID)]
-		if old != nil {
-			for i, logID := range old.logs {
-				if logID == id {
-					old.logs = append(old.logs[:i], old.logs[i+1:]...)
-					break
-				}
-			}
-		}
-	}
-	if spanID == "" {
-		return
-	}
-	sp := m.ensureSpan(traceID, spanID)
-	for _, logID := range sp.logs {
-		if logID == id {
-			return
-		}
-	}
-	sp.logs = append(sp.logs, id)
-}
-
-func (m *Model) removeTrace(traceID string) {
-	for id, sp := range m.spans {
-		if sp.traceID != traceID {
-			continue
-		}
-		for _, logID := range sp.logs {
-			delete(m.logs, logID)
-		}
-		delete(m.spans, id)
-		delete(m.callers, id)
-	}
 }
 
 // View renders the current tree and interaction panel.
@@ -570,7 +460,7 @@ type cached[T any] struct {
 }
 
 func (m Model) cacheKey() cacheKey {
-	return cacheKey{version: m.version, query: m.query, mode: m.mode}
+	return cacheKey{version: m.forest.Version(), query: m.query, mode: m.mode}
 }
 
 // slowBuild is how long a build has to take before the result is reused
@@ -671,21 +561,21 @@ func (m Model) filteredForest() (
 ) {
 	children = make(map[string][]*spanView)
 	inScope = make(map[string]*spanView)
-	for _, sp := range m.spans {
-		if !m.filt.InFocus(sp.id) {
+	for sp := range m.forest.Spans() {
+		if !m.filt.InFocus(sp.ID) {
 			continue
 		}
-		inScope[selectionKey(sp.traceID, sp.id)] = sp
-		parent := m.spans[selectionKey(sp.traceID, sp.parentID)]
-		if sp.parentID != "" && parent != nil && m.filt.InFocus(parent.id) {
-			children[selectionKey(sp.traceID, sp.parentID)] = append(children[selectionKey(sp.traceID, sp.parentID)], sp)
+		inScope[selectionKey(sp.TraceID, sp.ID)] = sp
+		parent := m.forest.Span(sp.TraceID, sp.ParentID)
+		if sp.ParentID != "" && parent != nil && m.filt.InFocus(parent.ID) {
+			children[selectionKey(sp.TraceID, sp.ParentID)] = append(children[selectionKey(sp.TraceID, sp.ParentID)], sp)
 		} else {
 			roots = append(roots, sp)
 		}
 	}
 	byOrder := func(s []*spanView) {
 		sort.SliceStable(s, func(i, j int) bool {
-			return s[i].order < s[j].order
+			return s[i].Order < s[j].Order
 		})
 	}
 	byOrder(roots)
@@ -706,9 +596,9 @@ func (m Model) fuzzyVisible(sp *spanView, traceMatches, logBranches map[string]b
 	}
 	switch m.mode {
 	case searchTraces:
-		return traceMatches[sp.traceID]
+		return traceMatches[sp.TraceID]
 	case searchLogs:
-		return logBranches[selectionKey(sp.traceID, sp.id)]
+		return logBranches[selectionKey(sp.TraceID, sp.ID)]
 	}
 	return true
 }
@@ -733,8 +623,8 @@ type treeSpan struct {
 // height is how many lines s takes up: its header, status message, one per
 // attribute, its logs and the rule under it.
 func (s treeSpan) height() int {
-	n := 2 + len(s.sp.attributes) + len(s.logs)
-	if s.sp.statusMsg != "" {
+	n := 2 + len(s.sp.Attributes) + len(s.logs)
+	if clean(s.sp.StatusMsg) != "" {
 		n++
 	}
 	return n
@@ -750,7 +640,7 @@ func (m Model) layoutTree() *treeLayout {
 	visited := make(map[string]bool)
 	var walk func(sp *spanView, ancestors []lipgloss.Color)
 	walk = func(sp *spanView, ancestors []lipgloss.Color) {
-		key := selectionKey(sp.traceID, sp.id)
+		key := selectionKey(sp.TraceID, sp.ID)
 		if visited[key] {
 			return
 		}
@@ -759,8 +649,8 @@ func (m Model) layoutTree() *treeLayout {
 			return
 		}
 		s := treeSpan{sp: sp, ancestors: ancestors, line: t.lines}
-		for _, id := range sp.logs {
-			log := m.logs[id]
+		for _, id := range sp.Logs {
+			log := m.forest.Log(id)
 			if log == nil || (m.mode == searchLogs && m.query != "" && !logMatches[id]) {
 				continue
 			}
@@ -800,7 +690,7 @@ func (t *treeLayout) rows(m Model, from, to int) []string {
 	out := make([]string, 0, to-from)
 	for ; i < len(t.spans) && t.spans[i].line < to; i++ {
 		s := t.spans[i]
-		lines := m.renderSpan(s, t.highlights[selectionKey(s.sp.traceID, s.sp.id)])
+		lines := m.renderSpan(s, t.highlights[selectionKey(s.sp.TraceID, s.sp.ID)])
 		out = append(out, lines[max(0, from-s.line):min(len(lines), to-s.line)]...)
 	}
 	return out
@@ -827,7 +717,7 @@ func selectionKey(traceID, spanID string) string { return traceID + "\x00" + spa
 func (m Model) renderSpan(s treeSpan, h spanHighlight) []string {
 	sp, ancestors := s.sp, s.ancestors
 	trail := append(ancestors[:len(ancestors):len(ancestors)], m.componentColor(sp))
-	prefix := bars(trail, sp.closed)
+	prefix := bars(trail, sp.Closed)
 	// The status symbol takes the span's own column on its header row: the
 	// top cell of its bar, or the cell left blank for a span with no bar.
 	symbol, style := m.state(sp)
@@ -842,25 +732,25 @@ func (m Model) renderSpan(s treeSpan, h spanHighlight) []string {
 	}
 	lines := make([]string, 0, s.height())
 	lines = append(lines, header)
-	if sp.statusMsg != "" {
+	if msg := clean(sp.StatusMsg); msg != "" {
 		style := okStyle
-		if sp.status == domain.SpanStatusError {
+		if sp.Status == domain.SpanStatusError {
 			style = errorStyle
 		}
-		lines = append(lines, prefix+detailIndent+style.Render(sp.statusMsg))
+		lines = append(lines, prefix+detailIndent+style.Render(msg))
 	}
-	for _, row := range attributeRows(sp.attributes, h.attrs) {
+	for _, row := range attributeRows(sp.Attributes, h.attrs) {
 		lines = append(lines, prefix+detailIndent+row)
 	}
 	for _, log := range s.logs {
-		body := clean(log.body)
+		body := clean(log.Body)
 		line := prefix + detailIndent +
 			lipgloss.NewStyle().
 				Foreground(lipgloss.Color("252")).
 				Render(body)
 		lines = append(lines, line)
 	}
-	return append(lines, m.spanRule(trail, sp.closed))
+	return append(lines, m.spanRule(trail, sp.Closed))
 }
 
 // detailIndent sets a span's attributes and logs one stop in from its
@@ -964,33 +854,9 @@ var (
 	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 )
 
-// statusMessage is the span's status message. For a span in error with
-// none, it falls back to the message of the last exception recorded on it,
-// which is where many SDKs put the error and leave the status message
-// empty.
-func statusMessage(ev domain.SpanUpserted) string {
-	if ev.StatusMessage != "" {
-		return clean(ev.StatusMessage)
-	}
-	if ev.Status != domain.SpanStatusError {
-		return ""
-	}
-	for i := len(ev.Events) - 1; i >= 0; i-- {
-		if ev.Events[i].Name != "exception" {
-			continue
-		}
-		for _, a := range ev.Events[i].Attributes {
-			if a.Key == "exception.message" {
-				return clean(a.Value.String())
-			}
-		}
-	}
-	return ""
-}
-
 func (m Model) state(sp *spanView) (string, lipgloss.Style) {
-	if sp.closed {
-		if sp.status == domain.SpanStatusError {
+	if sp.Closed {
+		if sp.Status == domain.SpanStatusError {
 			return "×", errorStyle.Bold(true)
 		}
 		return "●", okStyle.Bold(true)
@@ -1004,14 +870,14 @@ func (m Model) state(sp *spanView) (string, lipgloss.Style) {
 
 func (m Model) duration(sp *spanView) string {
 	var d time.Duration
-	if !sp.start.IsZero() {
-		end := sp.end
+	if !sp.Start.IsZero() {
+		end := sp.End
 		if end.IsZero() {
 			end = m.now
 		}
-		d = end.Sub(sp.start)
-	} else if !sp.closed {
-		d = m.now.Sub(sp.observed)
+		d = end.Sub(sp.Start)
+	} else if !sp.Closed {
+		d = m.now.Sub(sp.Observed)
 		return "~" + formatDuration(d)
 	} else {
 		return "?"
@@ -1038,20 +904,13 @@ func formatDuration(d time.Duration) string {
 }
 
 func spanLabel(sp *spanView) string {
-	if sp.component == "" || strings.HasPrefix(sp.name, sp.component+".") {
-		return sp.name
+	if sp.Component == "" || strings.HasPrefix(sp.Name, sp.Component+".") {
+		return sp.Name
 	}
-	if sp.name == "" {
-		return sp.component
+	if sp.Name == "" {
+		return sp.Component
 	}
-	return sp.component + "." + sp.name
-}
-
-func shortID(id string) string {
-	if len(id) <= 8 {
-		return id
-	}
-	return id[:8]
+	return sp.Component + "." + sp.Name
 }
 
 // matchingTraces returns the set of trace IDs to keep when searching in
@@ -1068,9 +927,9 @@ func (m Model) matchingTraces() map[string]bool {
 	if m.query == "" {
 		return out
 	}
-	for _, sp := range m.spans {
+	for sp := range m.forest.Spans() {
 		if ok, _ := matchSpan(m.query, sp); ok {
-			out[sp.traceID] = true
+			out[sp.TraceID] = true
 		}
 	}
 	return out
@@ -1090,9 +949,9 @@ type spanHighlight struct {
 // trace — and, when it does, which runes of the label and of each attribute
 // were part of the match.
 func matchSpan(query string, sp *spanView) (bool, spanHighlight) {
-	segments := make([]string, 0, len(sp.attributes)+2)
-	segments = append(segments, sp.traceID, spanLabel(sp))
-	for _, a := range sp.attributes {
+	segments := make([]string, 0, len(sp.Attributes)+2)
+	segments = append(segments, sp.TraceID, spanLabel(sp))
+	for _, a := range sp.Attributes {
 		segments = append(segments, a.Key+"="+a.Value.String())
 	}
 	ok, mask := fuzzyMatch(query, strings.Join(segments, " "))
@@ -1125,9 +984,9 @@ func (m Model) spanHighlights() map[string]spanHighlight {
 	if m.query == "" || m.mode != searchTraces {
 		return out
 	}
-	for id, sp := range m.spans {
+	for sp := range m.forest.Spans() {
 		if ok, h := matchSpan(m.query, sp); ok {
-			out[id] = h
+			out[selectionKey(sp.TraceID, sp.ID)] = h
 		}
 	}
 	return out
@@ -1138,9 +997,9 @@ func (m Model) matchingLogs() map[string]bool {
 	if m.query == "" {
 		return out
 	}
-	for id, log := range m.logs {
-		if fuzzy(m.query, log.body) {
-			out[id] = true
+	for log := range m.forest.Logs() {
+		if fuzzy(m.query, log.Body) {
+			out[log.ID] = true
 		}
 	}
 	return out
@@ -1160,12 +1019,12 @@ func (m Model) logBranches(
 	seen := make(map[string]bool)
 	var has func(sp *spanView) bool
 	has = func(sp *spanView) bool {
-		key := selectionKey(sp.traceID, sp.id)
+		key := selectionKey(sp.TraceID, sp.ID)
 		if seen[key] {
 			return out[key]
 		}
 		seen[key] = true
-		for _, id := range sp.logs {
+		for _, id := range sp.Logs {
 			if logMatches[id] {
 				out[key] = true
 			}
