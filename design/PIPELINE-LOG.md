@@ -325,3 +325,56 @@ To know:
   named that never arrived) cannot be selected.
 - An integer attribute and a number literal compare as float64, so values
   above 2^53 can compare equal when they are not.
+
+## Phase 8: Checks and the exit sink
+
+Branch `pipeline-phase8-checks`.
+
+Checks:
+- `go test ./...`: pass. New tests in `internal/check` on hand-built
+  traces: `never` (pass, fail, with structure), `every` (pass, an anchor
+  without an item, `at_most`, `at_least`), `some`, a count on its own,
+  the anchor rule ("check never exercised", for `never` and `every`), an
+  incomplete trace that never passes, a late span that turns a failure
+  into a pass at a new revision, a judgement kept after its trace is
+  evicted, NDJSON records.
+- `internal/plan/starlark`: `testdata/checks.star` (the design document's
+  checks and its table test) compiles to its golden: 8 checks, the
+  `at_most` inside `every` taken over and not declared twice.
+- `cmd/praytel` with the built binary: `some` passes (exit 0); `never`
+  fails (exit 4); an anchor that never matched fails; a named count;
+  `--format=ndjson`; a failed child's code (7) wins over a failing check.
+- The demo shop, for real (`demo/checks/shop.star`, 5 checks over the
+  shop's traces and logs): all pass, exit 0. With a sixth check for a
+  span the shop never makes (`Orders.Ship`): exit 4, and the report names
+  each `Orders.Create` span without one.
+- `scripts/golden`: no golden changed.
+- `golangci-lint run ./...`: 0 issues.
+
+Departures:
+- Every check uses the trigger `settled`: it judges each trace as it
+  settles and reports once, at the end. `never` on a single record does
+  not fail at the moment the bad record arrives; the exit code comes at
+  the end either way.
+- The plan's `Check` holds `kind`, `select`, `anchor`, `count` and `name`;
+  the anchors are found when the check is compiled, not stored.
+- Starlark counts declare themselves when they are made; `every(has =
+  count)` takes the count back. This is how `at_most(...)` works both on
+  its own and inside `every`.
+- `never` fails on an incomplete trace when it finds a bad item (the item
+  is there whatever else is missing); every other check gives
+  `incomplete` for an incomplete trace.
+- No check pane in the TUI. The TUI runs its panes on its own projection
+  (Phase 5); a check pane would judge the whole run on every tick.
+- No tests added inside `demo/workloads/shop`: it is a program, not a
+  test package. `demo/checks/shop.star` checks it from outside instead,
+  as a user would.
+
+To know:
+- Exit codes: a failed child's code, else 4 for a failed check, 3 for an
+  incomplete one (or an incomplete snapshot), else 0.
+- `Plan.Explain` no longer escapes `<`, `>` and `&`, so queries read as
+  written in `--print-plan` and the plan goldens.
+- Common real-world traces are incomplete: a span whose parent lives in a
+  service that does not export to praytel gives `unknown_parent`, and the
+  check reports `incomplete` (exit 3) for that trace.

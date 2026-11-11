@@ -1,0 +1,145 @@
+{
+  "outputs": [
+    {
+      "name": "never(span{ resource.service.name = \"checkout\" } >> span{ span.db.statement =~ \".*DROP.*\" })",
+      "view": {
+        "kind": "check",
+        "check": {
+          "kind": "never",
+          "select": "span{ resource.service.name = \"checkout\" } >> span{ span.db.statement =~ \".*DROP.*\" }",
+          "name": "never(span{ resource.service.name = \"checkout\" } >> span{ span.db.statement =~ \".*DROP.*\" })"
+        }
+      },
+      "emit": "settled",
+      "sink": {
+        "kind": "stderr",
+        "exit": true
+      }
+    },
+    {
+      "name": "every(span{ span:kind = server }, has = span{ span:name = \"auth\" })",
+      "view": {
+        "kind": "check",
+        "check": {
+          "kind": "every",
+          "select": "span{ span:name = \"auth\" }",
+          "anchor": "span{ span:kind = server }",
+          "name": "every(span{ span:kind = server }, has = span{ span:name = \"auth\" })"
+        }
+      },
+      "emit": "settled",
+      "sink": {
+        "kind": "stderr",
+        "exit": true
+      }
+    },
+    {
+      "name": "every(span{ span:kind = server }, has = at_most(3, span{ span:name = \"retry\" }))",
+      "view": {
+        "kind": "check",
+        "check": {
+          "kind": "every",
+          "select": "span{ span:name = \"retry\" }",
+          "anchor": "span{ span:kind = server }",
+          "count": {
+            "op": "at_most",
+            "n": 3
+          },
+          "name": "every(span{ span:kind = server }, has = at_most(3, span{ span:name = \"retry\" }))"
+        }
+      },
+      "emit": "settled",
+      "sink": {
+        "kind": "stderr",
+        "exit": true
+      }
+    },
+    {
+      "name": "one migration",
+      "view": {
+        "kind": "check",
+        "check": {
+          "kind": "count",
+          "select": "span{ span:name = \"migrate\" }",
+          "count": {
+            "op": "exactly",
+            "n": 1
+          },
+          "name": "one migration"
+        }
+      },
+      "emit": "settled",
+      "sink": {
+        "kind": "stderr",
+        "exit": true
+      }
+    },
+    {
+      "name": "some(log{ log:source = stderr })",
+      "view": {
+        "kind": "check",
+        "check": {
+          "kind": "some",
+          "select": "log{ log:source = stderr }",
+          "name": "some(log{ log:source = stderr })"
+        }
+      },
+      "emit": "settled",
+      "sink": {
+        "kind": "stderr",
+        "exit": true
+      }
+    },
+    {
+      "name": "every(span{ span.test.name = \"TestDouble\" && span.input = 0 }, has = span{ span.output = 0 })",
+      "view": {
+        "kind": "check",
+        "check": {
+          "kind": "every",
+          "select": "span{ span.output = 0 }",
+          "anchor": "span{ span.test.name = \"TestDouble\" && span.input = 0 }",
+          "name": "every(span{ span.test.name = \"TestDouble\" && span.input = 0 }, has = span{ span.output = 0 })"
+        }
+      },
+      "emit": "settled",
+      "sink": {
+        "kind": "stderr",
+        "exit": true
+      }
+    },
+    {
+      "name": "every(span{ span.test.name = \"TestDouble\" && span.input = 1 }, has = span{ span.output = 2 })",
+      "view": {
+        "kind": "check",
+        "check": {
+          "kind": "every",
+          "select": "span{ span.output = 2 }",
+          "anchor": "span{ span.test.name = \"TestDouble\" && span.input = 1 }",
+          "name": "every(span{ span.test.name = \"TestDouble\" && span.input = 1 }, has = span{ span.output = 2 })"
+        }
+      },
+      "emit": "settled",
+      "sink": {
+        "kind": "stderr",
+        "exit": true
+      }
+    },
+    {
+      "name": "every(span{ span.test.name = \"TestDouble\" && span.input = 2 }, has = span{ span.output = 4 })",
+      "view": {
+        "kind": "check",
+        "check": {
+          "kind": "every",
+          "select": "span{ span.output = 4 }",
+          "anchor": "span{ span.test.name = \"TestDouble\" && span.input = 2 }",
+          "name": "every(span{ span.test.name = \"TestDouble\" && span.input = 2 }, has = span{ span.output = 4 })"
+        }
+      },
+      "emit": "settled",
+      "sink": {
+        "kind": "stderr",
+        "exit": true
+      }
+    }
+  ]
+}

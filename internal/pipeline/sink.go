@@ -106,6 +106,9 @@ func buildSink(o plan.Output, v view.View, deps Deps) (Sink, error) {
 	if !o.Sink.Exit {
 		return inner, nil
 	}
+	if v, ok := v.(view.Verdict); ok {
+		return &verdictSink{inner: inner, verdict: v}, nil
+	}
 	rep, ok := v.(view.Reporter)
 	if !ok {
 		_ = inner.Close(0)
@@ -116,4 +119,26 @@ func buildSink(o plan.Output, v view.View, deps Deps) (Sink, error) {
 		name = o.View.Kind
 	}
 	return &exitSink{inner: inner, name: name, report: rep, stderr: deps.Stderr}, nil
+}
+
+// verdictSink holds its output until the end, then writes it and returns the
+// exit code its view decided; a failed child's code still wins.
+type verdictSink struct {
+	inner   Sink
+	verdict view.Verdict
+	held    []string
+}
+
+func (s *verdictSink) Write(lines []string) error {
+	s.held = append(s.held, lines...)
+	return nil
+}
+
+func (s *verdictSink) Close(childCode int) int {
+	defer s.inner.Close(childCode)
+	_ = s.inner.Write(s.held)
+	if childCode != 0 {
+		return childCode
+	}
+	return s.verdict.ExitCode()
 }

@@ -68,6 +68,9 @@ func TracesOf(r projection.Reader) map[string]*Trace {
 	return out
 }
 
+// Logs are the trace's logs.
+func (t *Trace) Logs() []*projection.Log { return t.logs }
+
 // Span is the selectable span with this ID, or nil.
 func (t *Trace) Span(id string) *projection.Span { return t.spans[id] }
 

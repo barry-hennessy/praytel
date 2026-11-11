@@ -52,12 +52,14 @@ func Compile(values []string, dir string, w io.Writer) (plan.Plan, error) {
 type located struct {
 	out plan.Output
 	pos syntax.Position
+	// taken is a count that every() took over: not an output of its own.
+	taken bool
 }
 
 type compiler struct {
 	dir     string
 	print   io.Writer
-	outputs []located
+	outputs []*located
 	modules map[string]*module
 }
 
@@ -135,14 +137,15 @@ func (c *compiler) load(_ *sl.Thread, name string) (sl.StringDict, error) {
 
 func (c *compiler) addValue(v sl.Value, pos syntax.Position) error {
 	switch v := v.(type) {
-	case sl.NoneType:
+	case sl.NoneType, *count:
+		// A count declared itself when it was made.
 		return nil
 	case *part:
 		o, err := v.output()
 		if err != nil {
 			return fmt.Errorf("%s: %w", pos, err)
 		}
-		c.outputs = append(c.outputs, located{out: o, pos: pos})
+		c.outputs = append(c.outputs, &located{out: o, pos: pos})
 		return nil
 	case *sl.List:
 		for e := range v.Elements() {
@@ -160,6 +163,9 @@ func (c *compiler) finish() (plan.Plan, error) {
 	var p plan.Plan
 	var errs []error
 	for _, l := range c.outputs {
+		if l.taken {
+			continue
+		}
 		if err := (plan.Plan{Outputs: []plan.Output{l.out}}).Validate(); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %s", l.pos, strings.TrimPrefix(err.Error(), "output 1: ")))
 			continue

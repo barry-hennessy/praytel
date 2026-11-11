@@ -28,6 +28,8 @@ type Config struct {
 	// SettleAfter is how long a trace with every real span ended must go
 	// without an event before outputs with the trigger "settled" send it.
 	SettleAfter time.Duration
+	// Format is how checks report: "text" or "ndjson".
+	Format      string
 	MaxSpans    int
 	MaxLogLines int
 	TUI         bool
@@ -132,6 +134,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	drainIdle := fs.Duration("drain-idle", 250*time.Millisecond, "idle time with no OTLP after child exit before drain completes")
 	drainTimeout := fs.Duration("drain-timeout", 2*time.Second, "hard cap on drain after child exit")
 	settleAfter := fs.Duration("settle-after", 500*time.Millisecond, "quiet time before a finished trace counts as settled")
+	format := fs.String("format", "text", `how checks report: "text" or "ndjson"`)
 	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
 	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
 	tuiMode := fs.Bool("tui", false, "render an interactive live trace tree")
@@ -180,6 +183,11 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		return Config{}, ErrUsage
 	}
 
+	if *format != "text" && *format != "ndjson" {
+		fmt.Fprintf(errOut, "--format is \"text\" or \"ndjson\", not %q\n", *format)
+		return Config{}, ErrUsage
+	}
+
 	idle := max(0, *drainIdle)
 	hard := max(0, *drainTimeout)
 
@@ -190,6 +198,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		DrainIdle:    idle,
 		DrainTimeout: hard,
 		SettleAfter:  max(0, *settleAfter),
+		Format:       *format,
 		MaxSpans:     *maxSpans,
 		MaxLogLines:  *maxLogLines,
 		TUI:          *tuiMode,

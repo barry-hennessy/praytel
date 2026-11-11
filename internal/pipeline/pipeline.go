@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/barry-hennessy/bones/observability"
+	"github.com/barry-hennessy/praytel/internal/check"
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/plan"
 	"github.com/barry-hennessy/praytel/internal/projection"
@@ -41,6 +42,8 @@ type Deps struct {
 	// Tick wakes the driver to settle traces; nil means a ticker of its
 	// own, started only if an output has the trigger settled.
 	Tick <-chan time.Time
+	// Format is how checks report: "text" (or empty) or "ndjson".
+	Format string
 }
 
 type output struct {
@@ -160,6 +163,16 @@ func (d *Driver) compile(o plan.Output, deps Deps) (*output, error) {
 		v = tui.NewSnapshotView(tui.SnapshotOptions{Tree: true})
 	case plan.ViewGraph:
 		v = tui.NewSnapshotView(tui.SnapshotOptions{Graph: true})
+	case plan.ViewCheck:
+		format := check.Text
+		if deps.Format == string(check.NDJSON) {
+			format = check.NDJSON
+		}
+		c, err := check.New(*o.View.Check, format)
+		if err != nil {
+			return nil, err
+		}
+		v = c
 	default:
 		return nil, fmt.Errorf("view %q is not run by the pipeline", o.View.Kind)
 	}
@@ -302,6 +315,13 @@ func (d *Driver) finish(logErr func(string, ...any)) {
 		case o.trigger == plan.Final:
 			d.send(o, logErr)
 		}
+		if f, ok := o.view.(view.Finisher); ok {
+			if lines := f.Finish(o.reader); len(lines) > 0 {
+				if err := o.sink.Write(lines); err != nil {
+					logErr("write output", "output", o.name, "err", err)
+				}
+			}
+		}
 	}
 }
 
@@ -323,6 +343,9 @@ func (d *Driver) sendTrace(o *output, id string, logErr func(string, ...any)) {
 	rev := d.forest.Revision(id)
 	o.emitted[id] = rev
 	lines := o.view.Render(r, view.Viewport{})
+	if len(lines) == 0 {
+		return
+	}
 	if ts, ok := o.sink.(traceSink); ok {
 		if err := ts.WriteTrace(r, id, lines); err != nil {
 			logErr("write output", "output", o.name, "trace", id, "err", err)
