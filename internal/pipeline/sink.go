@@ -92,6 +92,9 @@ func buildSink(o plan.Output, v view.View, deps Deps) (Sink, error) {
 	case plan.SinkStderr:
 		inner = writerSink{w: deps.Stderr}
 	case plan.SinkFile:
+		if o.Sink.Templated() {
+			return fileTemplateSink{pattern: o.Sink.Path}, nil
+		}
 		f, err := os.Create(o.Sink.Path)
 		if err != nil {
 			return nil, fmt.Errorf("sink file: %w", err)

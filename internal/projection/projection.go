@@ -57,9 +57,12 @@ type Forest struct {
 	spans     map[domain.SpanKey]*Span
 	logs      map[string]*Log
 	revisions map[string]int
+	traces    map[string]*traceInfo
 	nextOrder int
 	version   int
 	now       time.Time
+	shed      bool
+	final     bool
 }
 
 // New returns an empty forest.
@@ -68,6 +71,7 @@ func New() *Forest {
 		spans:     make(map[domain.SpanKey]*Span),
 		logs:      make(map[string]*Log),
 		revisions: make(map[string]int),
+		traces:    make(map[string]*traceInfo),
 	}
 }
 
@@ -123,9 +127,16 @@ func (f *Forest) Clone(keep func(*Span) bool) *Forest {
 		spans:     make(map[domain.SpanKey]*Span, len(f.spans)),
 		logs:      make(map[string]*Log, len(f.logs)),
 		revisions: make(map[string]int, len(f.revisions)),
+		traces:    make(map[string]*traceInfo, len(f.traces)),
 		nextOrder: f.nextOrder,
 		version:   f.version,
 		now:       f.now,
+		shed:      f.shed,
+		final:     f.final,
+	}
+	for id, t := range f.traces {
+		cp := *t
+		c.traces[id] = &cp
 	}
 	for k, sp := range f.spans {
 		if keep != nil && !keep(sp) {
@@ -206,12 +217,25 @@ func (f *Forest) Apply(ev domain.Event) {
 		}
 	case domain.ForestEvicted:
 		f.removeTrace(ev.TraceID)
+	case domain.ForestShed:
+		f.shed = true
 	}
 }
 
+// touch counts a change to the trace and makes a settled trace live again.
 func (f *Forest) touch(traceID string) {
-	if traceID != "" {
-		f.revisions[traceID]++
+	if traceID == "" {
+		return
+	}
+	f.revisions[traceID]++
+	t := f.traces[traceID]
+	if t == nil {
+		t = &traceInfo{}
+		f.traces[traceID] = t
+	}
+	t.touched = f.now
+	if t.state == Settled {
+		t.state = Live
 	}
 }
 
@@ -255,6 +279,7 @@ func (f *Forest) removeTrace(traceID string) {
 		delete(f.spans, key)
 	}
 	delete(f.revisions, traceID)
+	delete(f.traces, traceID)
 }
 
 // statusMessage is the span's status message. For a span in error with

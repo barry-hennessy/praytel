@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/barry-hennessy/praytel/internal/attrspec"
 )
@@ -154,8 +155,14 @@ func (o Output) validate() error {
 	default:
 		errs = append(errs, fmt.Errorf("unknown trigger %q", o.Emit))
 	}
-	if o.View.Kind == ViewSnapshot && o.Emit != Final {
-		errs = append(errs, errors.New("view snapshot needs the trigger final"))
+	if !triggerFits(o.View.Kind, o.Emit) {
+		errs = append(errs, fmt.Errorf("view %s cannot have the trigger %s", o.View.Kind, o.Emit))
+	}
+	if o.Emit == Tick && o.Sink.Kind != SinkTUI {
+		errs = append(errs, errors.New("the trigger tick is for TUI panes"))
+	}
+	if o.Sink.Exit && (o.Emit != Final || o.Sink.Templated()) {
+		errs = append(errs, errors.New("an exit sink needs the trigger final and one output file"))
 	}
 
 	switch o.Sink.Kind {
@@ -163,6 +170,9 @@ func (o Output) validate() error {
 	case SinkFile:
 		if o.Sink.Path == "" {
 			errs = append(errs, errors.New("sink file needs a path"))
+		}
+		if o.Sink.Templated() && o.Emit != Final && o.Emit != Settled {
+			errs = append(errs, errors.New("a file path with {placeholders} needs the trigger final or settled"))
 		}
 	case SinkTUI:
 		if o.Emit != Tick {
@@ -176,6 +186,29 @@ func (o Output) validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// triggerFits reports whether a view can run with a trigger. The stream
+// makes lines per event (each, or a pane's tick); the tree and graph render
+// the projection (a pane's tick, or a trace or the run when it is settled or
+// final); the snapshot renders once a trace or the run is done.
+func triggerFits(view string, t Trigger) bool {
+	switch view {
+	case ViewStream:
+		return t == Each || t == Tick
+	case ViewTree, ViewGraph:
+		return t == Tick || t == Settled || t == Final
+	case ViewSnapshot:
+		return t == Settled || t == Final
+	}
+	return true // an unknown view is reported on its own
+}
+
+// Templated reports whether the sink's file path names the trace it holds:
+// {trace_id}, {name} (the root span's name) or {<attribute key>} of the root
+// span. Such a sink writes one file per trace.
+func (s Sink) Templated() bool {
+	return s.Kind == SinkFile && strings.Contains(s.Path, "{")
 }
 
 // Explain is the plan as stable, indented JSON.

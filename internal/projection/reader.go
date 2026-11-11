@@ -18,6 +18,9 @@ type Reader interface {
 	Len() int
 	Version() int
 	Revision(traceID string) int
+	TraceIDs() iter.Seq[string]
+	State(traceID string) TraceState
+	Incomplete(traceID string) []string
 }
 
 var _ Reader = (*Forest)(nil)
@@ -38,6 +41,7 @@ func Copy(r Reader) *Forest {
 		c.nextOrder = max(c.nextOrder, sp.Order)
 		if _, ok := c.revisions[sp.TraceID]; !ok {
 			c.revisions[sp.TraceID] = r.Revision(sp.TraceID)
+			c.traces[sp.TraceID] = &traceInfo{state: r.State(sp.TraceID)}
 		}
 	}
 	for l := range r.Logs() {

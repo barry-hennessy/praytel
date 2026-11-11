@@ -25,9 +25,12 @@ type Config struct {
 	HTTPPort     int
 	DrainIdle    time.Duration
 	DrainTimeout time.Duration
-	MaxSpans     int
-	MaxLogLines  int
-	TUI          bool
+	// SettleAfter is how long a trace with every real span ended must go
+	// without an event before outputs with the trigger "settled" send it.
+	SettleAfter time.Duration
+	MaxSpans    int
+	MaxLogLines int
+	TUI         bool
 
 	// Snapshot selects the one-shot, deterministic output mode; the views
 	// say what it prints.
@@ -128,6 +131,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	httpPort := fs.Int("http-port", receiver.DefaultHTTPPort, "OTLP HTTP listen port")
 	drainIdle := fs.Duration("drain-idle", 250*time.Millisecond, "idle time with no OTLP after child exit before drain completes")
 	drainTimeout := fs.Duration("drain-timeout", 2*time.Second, "hard cap on drain after child exit")
+	settleAfter := fs.Duration("settle-after", 500*time.Millisecond, "quiet time before a finished trace counts as settled")
 	maxSpans := fs.Int("max-spans", correlator.DefaultMaxSpans, "max correlator-retained spans including pending and orphans")
 	maxLogLines := fs.Int("max-log-lines", correlator.DefaultMaxLogLines, "max correlator-retained log lines including pending and orphans")
 	tuiMode := fs.Bool("tui", false, "render an interactive live trace tree")
@@ -185,6 +189,7 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		HTTPPort:     *httpPort,
 		DrainIdle:    idle,
 		DrainTimeout: hard,
+		SettleAfter:  max(0, *settleAfter),
 		MaxSpans:     *maxSpans,
 		MaxLogLines:  *maxLogLines,
 		TUI:          *tuiMode,

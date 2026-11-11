@@ -63,6 +63,7 @@ func run(
 	// events the driver passes on.
 	drv, err := pipeline.Compile(pl, pipeline.Deps{
 		LT: lt, Events: events, Stdout: stdout, Stderr: stderr,
+		SettleAfter: cfg.SettleAfter,
 	})
 	if err != nil {
 		return 1, fmt.Errorf("plan: %w", err)
@@ -288,4 +289,3 @@ func withOTelExporterEnv(base, extra []string) []string {
 
 	return append(out, extra...)
 }
-

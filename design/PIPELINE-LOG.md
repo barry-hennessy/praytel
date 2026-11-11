@@ -197,6 +197,7 @@ Checks:
   `logs 3/3`; ctrl+q exited 0; the file held the child's span.
 - TUI benchmarks, 3 runs against the Phase 0 baseline: no significant
   change (geomean −0.04 %; memory and allocations flat).
+- `scripts/golden`: no golden changed.
 - `golangci-lint run ./...`: 0 issues.
 
 Departures:
@@ -217,3 +218,51 @@ To know:
 - When the TUI quits early, the driver stops passing it events, so the
   correlator never blocks. Before, nothing read the events after a quit.
 - `stream()` can now be a pane (`stream() | tick | pane("logs")`).
+
+## Phase 6: Trace state (live, settled, final)
+
+Branch `pipeline-phase6-settle`.
+
+Checks:
+- `go test ./...`: pass. New projection tests (a fake clock through
+  `SetNow`): settled, live again on a late span with a higher revision,
+  settled again; an open real span keeps a trace live while synthetic and
+  declared spans do not; an evicted trace is forgotten; a drain finalizes
+  everything; the incomplete reasons; the one-trace lens.
+- New driver tests (an injected clock and tick channel, no sleeps): a
+  settled output sends a trace once it settles, again with a new revision
+  after a late span, and a still-open trace as `final` at the drain; an
+  evicted trace is never sent; a file per trace from `{test.name}`, with an
+  attribute of `../escape` kept inside the directory and no file for a
+  trace without the attribute.
+- `go test -race -count=5 ./internal/pipeline/`: pass.
+- `cmd/praytel` with the built binary: `tree() | settled | stderr` with
+  `--settle-after=50ms` sends the trace once; `file("out/{name}.txt")`
+  writes the trace's file.
+- `scripts/golden`: no golden changed.
+- `golangci-lint run ./...`: 0 issues.
+
+Departures:
+- The revision is the count of events that touched the trace (it was
+  already in the projection). It only grows, so `(trace, revision)` stays
+  unique; it does not count "settles".
+- `drain_timeout` is not an incomplete reason. No event says the drain hit
+  its hard cap; the reasons are `missing_span`, `unknown_parent`,
+  `open_span` (only once final) and `shed`.
+- Away from the TUI, `tree()` and `graph()` print as the snapshot does
+  (plain, order-independent). Their header is the snapshot header.
+- A per-trace output sent to stdout, stderr or one file gets a line
+  `# trace ID revision N STATE` before each trace. A file per trace gets
+  no header, so it can be a golden.
+- An exit sink needs the trigger `final` and one file: the exit code is a
+  decision about the whole run.
+- `scripts/golden` is unchanged, as the plan says. It could now stamp a
+  package's goldens in one praytel run with
+  `file("testdata/{test.name}.golden")`; that change is for later.
+
+To know:
+- Per-trace files are written with mode 0600 in directories of 0750
+  (gosec). Git keeps only the executable bit.
+- A placeholder value is one path element: `/`, `\` and NUL become `_`,
+  control characters go, and a leading `.` gets a `_` in front. The traced
+  program sets these values, so it must not choose where praytel writes.

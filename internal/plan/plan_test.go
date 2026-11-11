@@ -28,7 +28,7 @@ func TestValidate(t *testing.T) {
 		"tui without tick":  {func(o *plan.Output) { o.Sink.Kind = plan.SinkTUI }, "needs the trigger tick"},
 		"snapshot each": {func(o *plan.Output) {
 			o.View = plan.View{Kind: plan.ViewSnapshot, Sections: []string{plan.SectionTree}}
-		}, "needs the trigger final"},
+		}, "view snapshot cannot have the trigger each"},
 		"snapshot no sections": {func(o *plan.Output) {
 			o.View = plan.View{Kind: plan.ViewSnapshot}
 			o.Emit = plan.Final
