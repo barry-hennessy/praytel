@@ -8,8 +8,10 @@ import (
 
 	"github.com/barry-hennessy/praytel/internal/attrspec"
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/projection"
 	"github.com/barry-hennessy/praytel/internal/render/tui/internal/graph"
 	"github.com/barry-hennessy/praytel/internal/stage"
+	"github.com/barry-hennessy/praytel/internal/view"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
@@ -34,10 +36,7 @@ type SnapshotOptions struct {
 }
 
 // CapturedLine is one line the child wrote to stdout or stderr.
-type CapturedLine struct {
-	Source domain.Source
-	Body   string
-}
+type CapturedLine = view.Captured
 
 // SnapshotResult is what Snapshot made of an event stream.
 type SnapshotResult struct {
@@ -54,41 +53,101 @@ type SnapshotResult struct {
 // graph. It does no I/O: events in, text out. The output depends only on the
 // final set of spans, never on the order they arrived in.
 func Snapshot(events <-chan domain.Event, opts SnapshotOptions) SnapshotResult {
-	m := NewModel(events, nil)
-	m.plain = true
-	m.width = snapshotWidth
-
+	f := projection.New()
+	v := NewSnapshotView(opts)
 	// Attribute selection is a stage, so the view sees only what it shows.
 	stages := []stage.Stage{stage.Attrs(opts.Attrs)}
-
-	var (
-		res                   SnapshotResult
-		drained, evicted, shd bool
-	)
 	for ev := range events {
-		switch ev := ev.(type) {
-		case domain.DrainComplete:
-			drained = true
-		case domain.ForestEvicted:
-			evicted = true
-		case domain.ForestShed:
-			shd = true
-		case domain.LogReceived:
-			if ev.Source == domain.SourceStdout || ev.Source == domain.SourceStderr {
-				res.Captured = append(res.Captured, CapturedLine{Source: ev.Source, Body: ev.Body})
-			}
-		}
-		stage.Chain(stages, ev, m.apply)
+		stage.Chain(stages, ev, func(ev domain.Event) {
+			f.Apply(ev)
+			v.Observe(ev, f)
+		})
 	}
+	v.Render(f, view.Viewport{})
+	return v.Result()
+}
 
+// SnapshotView is the snapshot as a pipeline view. It renders once, with
+// the trigger "final". Its attributes come from the output's stages, so it
+// ignores SnapshotOptions.Attrs.
+type SnapshotView struct {
+	opts                         SnapshotOptions
+	drained, evicted, shed, intr bool
+	captured                     []CapturedLine
+	res                          SnapshotResult
+}
+
+var (
+	_ view.View        = (*SnapshotView)(nil)
+	_ view.Reporter    = (*SnapshotView)(nil)
+	_ view.Interrupter = (*SnapshotView)(nil)
+)
+
+// NewSnapshotView makes a snapshot view.
+func NewSnapshotView(opts SnapshotOptions) *SnapshotView {
+	return &SnapshotView{opts: opts}
+}
+
+// Observe records completeness and the child's captured output.
+func (v *SnapshotView) Observe(ev domain.Event, _ projection.Reader) {
+	switch ev := ev.(type) {
+	case domain.DrainComplete:
+		v.drained = true
+	case domain.ForestEvicted:
+		v.evicted = true
+	case domain.ForestShed:
+		v.shed = true
+	case domain.LogReceived:
+		if ev.Source == domain.SourceStdout || ev.Source == domain.SourceStderr {
+			v.captured = append(v.captured, CapturedLine{Source: ev.Source, Body: ev.Body})
+		}
+	}
+}
+
+// Interrupt marks the run as cut short: the snapshot has nothing to show.
+func (v *SnapshotView) Interrupt() { v.intr = true }
+
+// Render makes the snapshot from r. The lines are only meant to be shown if
+// Problems is empty.
+func (v *SnapshotView) Render(r projection.Reader, _ view.Viewport) []string {
+	v.res = v.result(r)
+	if v.res.Text == "" {
+		return nil
+	}
+	return strings.Split(strings.TrimSuffix(v.res.Text, "\n"), "\n")
+}
+
+// Result is the last snapshot Render made.
+func (v *SnapshotView) Result() SnapshotResult { return v.res }
+
+// Problems lists why the last snapshot cannot be trusted to be complete.
+func (v *SnapshotView) Problems() []string { return v.res.Problems }
+
+// Captured is the child's stdout and stderr, in arrival order.
+func (v *SnapshotView) Captured() []CapturedLine { return v.res.Captured }
+
+func (v *SnapshotView) result(r projection.Reader) SnapshotResult {
+	if v.intr {
+		// The producer was torn down; there is nothing worth printing.
+		return SnapshotResult{Problems: []string{"interrupted before the run finished"}}
+	}
+	opts := v.opts
+
+	m := NewModel(nil, nil)
+	m.plain = true
+	m.width = snapshotWidth
+	m.forest = projection.Copy(r)
+	m.recolor()
+
+	res := SnapshotResult{Captured: v.captured}
 	var problems []string
-	if !drained {
+	if !v.drained {
 		problems = append(problems, "the drain never completed")
 	}
-	if evicted {
+	if v.evicted {
 		problems = append(problems, "a trace was evicted under memory pressure")
 	}
-	if shd {
+	if v.shed {
 		problems = append(problems, "telemetry was shed under memory pressure")
 	}
 	problems = append(problems, m.canonicalise(opts)...)

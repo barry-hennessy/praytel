@@ -1,6 +1,11 @@
 package projection
 
-import "iter"
+import (
+	"iter"
+	"slices"
+
+	"github.com/barry-hennessy/praytel/internal/domain"
+)
 
 // Reader is the read-only face of a Forest. Stages wrap a Reader to change
 // what a view sees without changing the forest (see design/PIPELINE.md,
@@ -16,3 +21,28 @@ type Reader interface {
 }
 
 var _ Reader = (*Forest)(nil)
+
+// Copy makes a Forest that holds what r shows. The owner of the copy may
+// change it; r does not see the changes.
+func Copy(r Reader) *Forest {
+	if f, ok := r.(*Forest); ok {
+		return f.Clone(nil)
+	}
+	c := New()
+	c.version = r.Version()
+	for sp := range r.Spans() {
+		cp := *sp
+		cp.Attributes = slices.Clone(sp.Attributes)
+		cp.Logs = slices.Clone(sp.Logs)
+		c.spans[domain.SpanKey{TraceID: sp.TraceID, SpanID: sp.ID}] = &cp
+		c.nextOrder = max(c.nextOrder, sp.Order)
+		if _, ok := c.revisions[sp.TraceID]; !ok {
+			c.revisions[sp.TraceID] = r.Revision(sp.TraceID)
+		}
+	}
+	for l := range r.Logs() {
+		cp := *l
+		c.logs[l.ID] = &cp
+	}
+	return c
+}
