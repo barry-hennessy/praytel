@@ -36,13 +36,22 @@ type Config struct {
 	SnapshotGraph bool
 	SnapshotAttrs attrspec.Spec
 	SnapshotLogs  bool
+
+	// snapshotGlobs is --snapshot-attrs as given, for the plan; nil when
+	// the flag is absent.
+	snapshotGlobs *string
+
+	// PrintPlan prints the plan the other flags make, as JSON, and exits.
+	// It does not need a command.
+	PrintPlan bool
 }
 
 // attrsFlag is --snapshot-attrs. It is a boolean flag so that the bare form
 // means "all attributes"; a selection must therefore be given with "=".
 type attrsFlag struct {
-	set  bool
-	spec attrspec.Spec
+	set   bool
+	spec  attrspec.Spec
+	globs string
 }
 
 func (f *attrsFlag) IsBoolFlag() bool { return true }
@@ -53,8 +62,10 @@ func (f *attrsFlag) Set(s string) error {
 	f.set = true
 	if s == "true" {
 		f.spec = attrspec.All()
+		f.globs = ""
 		return nil
 	}
+	f.globs = s
 	spec, err := attrspec.Parse(s)
 	if err != nil {
 		return err
@@ -89,11 +100,8 @@ func parseViews(s string) (tree, graph bool, err error) {
 func Parse(args []string, errOut io.Writer) (Config, error) {
 	flags, command, ok := splitDashDash(args)
 	if !ok {
-		return Config{}, ErrUsage
-	}
-
-	if len(command) == 0 || strings.TrimSpace(command[0]) == "" {
-		return Config{}, ErrUsage
+		// Only --print-plan runs without a command; checked after parsing.
+		flags, command = args, nil
 	}
 
 	fs := flag.NewFlagSet("praytel", flag.ContinueOnError)
@@ -114,12 +122,17 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 	var attrs attrsFlag
 	fs.Var(&attrs, "snapshot-attrs", `span attributes to show in a snapshot: key globs, "-" excludes; bare means all (give a value as =GLOBS)`)
 	snapshotLogs := fs.Bool("snapshot-logs", false, "include log lines in a snapshot")
+	printPlan := fs.Bool("print-plan", false, "print the plan the other flags make, as JSON, and exit")
 
 	if err := fs.Parse(flags); err != nil {
 		return Config{}, err
 	}
 
 	if fs.NArg() != 0 {
+		return Config{}, ErrUsage
+	}
+
+	if !*printPlan && (len(command) == 0 || strings.TrimSpace(command[0]) == "") {
 		return Config{}, ErrUsage
 	}
 
@@ -159,6 +172,9 @@ func Parse(args []string, errOut io.Writer) (Config, error) {
 		SnapshotGraph: snapGraph,
 		SnapshotAttrs: attrs.spec,
 		SnapshotLogs:  *snapshotLogs,
+		snapshotGlobs: globsOf(attrs),
+
+		PrintPlan: *printPlan,
 	}, nil
 }
 
@@ -170,4 +186,12 @@ func splitDashDash(args []string) (flags, command []string, ok bool) {
 	}
 
 	return nil, nil, false
+}
+
+func globsOf(f attrsFlag) *string {
+	if !f.set {
+		return nil
+	}
+	g := f.globs
+	return &g
 }

@@ -1,0 +1,14 @@
+{
+  "outputs": [
+    {
+      "name": "stream",
+      "view": {
+        "kind": "stream"
+      },
+      "emit": "each",
+      "sink": {
+        "kind": "stdout"
+      }
+    }
+  ]
+}
