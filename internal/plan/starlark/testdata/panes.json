@@ -1,0 +1,26 @@
+{
+  "outputs": [
+    {
+      "name": "tree",
+      "view": {
+        "kind": "tree"
+      },
+      "emit": "tick",
+      "sink": {
+        "kind": "tui",
+        "pane": "tree"
+      }
+    },
+    {
+      "name": "graph",
+      "view": {
+        "kind": "graph"
+      },
+      "emit": "tick",
+      "sink": {
+        "kind": "tui",
+        "pane": "graph"
+      }
+    }
+  ]
+}

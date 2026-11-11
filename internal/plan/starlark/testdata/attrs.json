@@ -1,0 +1,25 @@
+{
+  "outputs": [
+    {
+      "name": "snapshot",
+      "stages": [
+        {
+          "kind": "attrs",
+          "globs": "http.* -http.port"
+        }
+      ],
+      "view": {
+        "kind": "snapshot",
+        "sections": [
+          "tree"
+        ],
+        "logs": true
+      },
+      "emit": "final",
+      "sink": {
+        "kind": "stdout",
+        "exit": true
+      }
+    }
+  ]
+}

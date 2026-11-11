@@ -31,6 +31,8 @@ trace/span tree instead.
 | `--snapshot="tree graph"` | off | Print one deterministic plain-text snapshot of the trace tree and/or component graph (see [Snapshots](#snapshots)). No default: give at least one view, with `=`. Cannot be combined with `--tui`. |
 | `--snapshot-attrs="GLOBS"` | none | Span attributes to show in a snapshot: whitespace-separated key globs, `-` excludes (excludes win). Bare `--snapshot-attrs` shows all; `"-c"` shows all but `c`. Always give a selection with `=`. |
 | `--snapshot-logs` | off | Include log lines (and captured stdout/stderr) in a snapshot. |
+| `-e`, `--execute=CODE\|FILE.star` | none | Declare the outputs in Starlark instead (see [Plans](#plans)). Repeatable; a value ending in `.star` is a file. Cannot be combined with `--tui` or `--snapshot`. |
+| `--print-plan` | off | Print the plan the other flags make, as JSON, and exit. Needs no command. |
 
 ### Ingest and drain
 
@@ -124,6 +126,42 @@ For a test suite, praytel cannot do these for you:
 - Wrap each test in a root span carrying `test.name`, or tests cannot be told
   apart in one golden.
 - Produce one golden per package, from the package directory.
+
+## Plans
+
+Every run follows a plan: a list of outputs, each made of stages, one view,
+one trigger and one sink. The mode flags are shorthand for plans;
+`--print-plan` shows the plan as JSON. `-e` declares outputs in
+[Starlark](https://github.com/google/starlark-go/blob/master/doc/spec.md),
+joining the parts of an output with `|`:
+
+```sh
+praytel -e 'snapshot("tree") | final | file("tree.txt") | exit' \
+        -e 'stream() | each | stdout' -- go test -count=1 .
+```
+
+A snippet is an expression (an output, or a list of outputs) or statements
+that call `output(...)`. A `.star` file is statements, and may `load()` other
+`.star` files below the current directory. Scripts run once, before the child
+starts; they cannot read files, the time or random values.
+
+| Part | Builtins |
+|---|---|
+| Views | `stream()`, `snapshot("tree", "graph", logs=False)`, `tree()`, `graph()` |
+| Stages | `attrs("GLOBS")` (as `--snapshot-attrs`), `no_attrs()` |
+| Triggers | `each`, `tick`, `final` |
+| Sinks | `stdout`, `stderr`, `file("PATH")`, `pane("NAME")`; add `exit` to let the output decide the exit code as `--snapshot` does |
+
+The mode flags as `-e`:
+
+| Flags | `-e` |
+|---|---|
+| (none) | `stream() \| each \| stdout` |
+| `--tui` | `tree() \| tick \| pane("tree")` and `graph() \| tick \| pane("graph")` |
+| `--snapshot=tree` | `no_attrs() \| snapshot("tree") \| final \| stdout \| exit` |
+| `--snapshot="tree graph" --snapshot-attrs="G" --snapshot-logs` | `attrs("G") \| snapshot("tree", "graph", logs=True) \| final \| stdout \| exit` |
+
+TUI panes cannot yet share a run with other outputs.
 
 ## Exit status
 

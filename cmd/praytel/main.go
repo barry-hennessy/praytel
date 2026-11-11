@@ -67,17 +67,21 @@ func runProcess(ctx context.Context, lt observability.LoggingTracer, mapErr bone
 		return mapErr(err)
 	}
 
+	// A plan error names a script's file, line and column; print it as is.
+	pl, err := cfg.Plan()
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "praytel: plan: %v\n", err)
+
+		return 1
+	}
+
 	if cfg.PrintPlan {
-		pl := cfg.Plan()
-		if err := pl.Validate(); err != nil {
-			return mapErr(fmt.Errorf("plan: %w", err))
-		}
 		_, _ = stdout.Write(pl.Explain())
 
 		return 0
 	}
 
-	code, err := run(ctx, lt, cfg, stdin, stdout, stderr)
+	code, err := run(ctx, lt, cfg, pl, stdin, stdout, stderr)
 	if err != nil {
 		return mapErr(err)
 	}
