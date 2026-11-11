@@ -13,6 +13,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/plan"
 	"github.com/barry-hennessy/praytel/internal/projection"
+	"github.com/barry-hennessy/praytel/internal/query"
 )
 
 // Stage is one compiled stage.
@@ -34,6 +35,12 @@ func Build(s plan.Stage) (Stage, error) {
 		return Attrs(spec), nil
 	case plan.StageNoAttrs:
 		return Attrs(attrspec.Spec{}), nil
+	case plan.StageWhere:
+		e, err := query.Parse(s.Query)
+		if err != nil {
+			return nil, fmt.Errorf("stage where: %w", err)
+		}
+		return Where(e), nil
 	default:
 		return nil, fmt.Errorf("unknown stage %q", s.Kind)
 	}

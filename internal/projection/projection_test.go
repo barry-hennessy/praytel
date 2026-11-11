@@ -121,13 +121,17 @@ func TestLogs(t *testing.T) {
 	sweet.Run(t, "a log attaches to its span", forest, func(t *testing.T, f *projection.Forest) {
 		apply(f,
 			domain.SpanUpserted{TraceID: "t", SpanID: "s"},
-			domain.LogReceived{ID: "l", TraceID: "t", SpanID: "s", Body: "hello"},
+			domain.LogReceived{ID: "l", TraceID: "t", SpanID: "s", Body: "hello",
+				Source: domain.SourceOTLP, SeverityNumber: 17, SeverityText: "ERROR",
+				Attributes: []domain.Attr{{Key: "k", Value: domain.StringValue("v")}}},
 		)
 		if got := mustSpan(t, f, "t", "s").Logs; !slices.Equal(got, []string{"l"}) {
 			t.Fatalf("Logs = %v", got)
 		}
-		want := projection.Log{ID: "l", Body: "hello", TraceID: "t", SpanID: "s"}
-		if got := f.Log("l"); got == nil || *got != want {
+		want := projection.Log{ID: "l", Body: "hello", TraceID: "t", SpanID: "s",
+			Source: domain.SourceOTLP, SeverityNumber: 17, SeverityText: "ERROR",
+			Attributes: []domain.Attr{{Key: "k", Value: domain.StringValue("v")}}}
+		if got := f.Log("l"); got == nil || !reflect.DeepEqual(*got, want) {
 			t.Fatalf("Log = %+v, want %+v", got, want)
 		}
 	})

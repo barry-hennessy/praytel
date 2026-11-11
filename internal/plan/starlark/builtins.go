@@ -10,6 +10,7 @@ import (
 	"go.starlark.net/syntax"
 
 	"github.com/barry-hennessy/praytel/internal/plan"
+	"github.com/barry-hennessy/praytel/internal/query"
 )
 
 // part is an output or a piece of one. The | operator joins parts; an
@@ -120,6 +121,14 @@ var predeclared = sl.StringDict{
 	// Stages.
 	"attrs":    builtin("attrs", attrsFn),
 	"no_attrs": builtin("no_attrs", noAttrsFn),
+	"where":    builtin("where", whereFn),
+
+	// Selections.
+	"span":     builtin("span", selectorFn(query.KindSpan, spanFields)),
+	"log":      builtin("log", selectorFn(query.KindLog, logFields)),
+	"match":    builtin("match", matchFn),
+	"glob":     builtin("glob", globFn),
+	"contains": builtin("contains", containsFn),
 
 	// Triggers.
 	"each":    &part{emit: plan.Each, desc: []string{"each"}},

@@ -23,7 +23,7 @@ type clock struct {
 	t  time.Time
 }
 
-func (c *clock) now() time.Time { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
+func (c *clock) now() time.Time  { c.mu.Lock(); defer c.mu.Unlock(); return c.t }
 func (c *clock) set(t time.Time) { c.mu.Lock(); c.t = t; c.mu.Unlock() }
 
 // syncBuffer is a buffer the driver writes and the test reads.
@@ -32,8 +32,12 @@ type syncBuffer struct {
 	b  bytes.Buffer
 }
 
-func (s *syncBuffer) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
-func (s *syncBuffer) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
 
 // rig runs a driver on unbuffered channels, so each send returns once the
 // driver has taken the event or tick; a second tick shows the first one was

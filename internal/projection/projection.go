@@ -40,6 +40,9 @@ type Span struct {
 	// Order is the arrival order of the span among spans and logs.
 	Order      int
 	Attributes []domain.Attr
+	// Kind and Resource are kept for queries; views do not show them.
+	Kind     domain.SpanKind
+	Resource []domain.Attr
 	// Logs are the IDs of the logs assigned to the span, in arrival order.
 	Logs []string
 }
@@ -50,6 +53,11 @@ type Log struct {
 	Body    string
 	TraceID string
 	SpanID  string
+	// Source, severity and attributes are kept for queries.
+	Source         domain.Source
+	SeverityNumber int32
+	SeverityText   string
+	Attributes     []domain.Attr
 }
 
 // Forest is the projection of one run.
@@ -172,6 +180,8 @@ func (f *Forest) Apply(ev domain.Event) {
 		sp.Status = ev.Status
 		sp.StatusMsg = statusMessage(ev)
 		sp.Attributes = ev.Attributes
+		sp.Kind = ev.Kind
+		sp.Resource = ev.Resource.Attributes
 	case domain.SpanParentLinked:
 		f.touch(ev.TraceID)
 		f.ensureSpan(ev.TraceID, ev.SpanID).ParentID = ev.ParentSpanID
@@ -189,7 +199,11 @@ func (f *Forest) Apply(ev domain.Event) {
 			traceID = ev.DeclaredTraceID
 		}
 		f.touch(traceID)
-		f.logs[ev.ID] = &Log{ID: ev.ID, Body: ev.Body, TraceID: traceID, SpanID: spanID}
+		f.logs[ev.ID] = &Log{
+			ID: ev.ID, Body: ev.Body, TraceID: traceID, SpanID: spanID,
+			Source: ev.Source, SeverityNumber: ev.SeverityNumber, SeverityText: ev.SeverityText,
+			Attributes: ev.Attributes,
+		}
 		if ev.SpanID == "" && ev.DeclaredSpanID != "" {
 			sp := f.ensureSpan(ev.DeclaredTraceID, ev.DeclaredSpanID)
 			sp.TraceID = ev.DeclaredTraceID

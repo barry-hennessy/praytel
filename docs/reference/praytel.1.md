@@ -70,7 +70,9 @@ the caller's environment are replaced.
 ## TUI keys
 
 Typing edits the search. Trace search is a subsequence match over span names
-and attributes; a single matching span surfaces its whole trace.
+and attributes; a single matching span surfaces its whole trace. A search
+that starts with `/` is a [query](#queries) instead: the tree and graph show
+what it selects, in place, and the footer shows a query that does not parse.
 
 | Key | Action |
 |---|---|
@@ -149,7 +151,7 @@ starts; they cannot read files, the time or random values.
 | Part | Builtins |
 |---|---|
 | Views | `stream()`, `snapshot("tree", "graph", logs=False)`, `tree()`, `graph()` |
-| Stages | `attrs("GLOBS")` (as `--snapshot-attrs`), `no_attrs()` |
+| Stages | `attrs("GLOBS")` (as `--snapshot-attrs`), `no_attrs()`, `where(SELECTION)` (see [Queries](#queries)) |
 | Triggers | `each` (per event: the stream), `tick` (TUI panes), `settled` (per trace, when it settles), `final` (once the run drains) |
 | Sinks | `stdout`, `stderr`, `file("PATH")`, `pane("NAME")`; add `exit` to let the output decide the exit code as `--snapshot` does |
 
@@ -195,6 +197,45 @@ praytel -e 'tree() | tick | pane("calls")' \
         -e 'stream() | tick | pane("logs")' \
         -e 'snapshot("tree") | final | file("trace.txt")' -- ./server
 ```
+
+## Queries
+
+A query selects spans and logs within one trace at a time:
+
+```text
+span{ resource.service.name = "checkout" && span:status = error }
+log{ log:body *= "connection refused" && log:severity >= 17 }
+span{ span:component = "frontend" } >> span{ span:status = error }
+```
+
+Inside `{}`, conditions on one record join with `&&`, `||`, `!` and
+parentheses. Fields are `span:name`, `span:status` (`unset`, `ok`,
+`error`), `span:kind` (`server`, `client`, …), `span:component`, `span:id`,
+`span:parent_id`, `trace:id`, `log:body`, `log:source` (`stdout`, `stderr`,
+`otlp`), `log:severity`, `log:severity_text`; and attributes as `span.KEY`,
+`log.KEY`, `resource.KEY` or a bare `KEY` of the record. Comparisons are
+`=`, `!=`, `<`, `<=`, `>`, `>=`, `=~` / `!~` (anchored regular
+expressions) and `*=` (contains). Types do not convert: `500` is not
+`"500"`. `exists(FIELD)` tests for a field.
+
+Between selections: `A && B` (the trace has both), `A || B` (either),
+`A & B` (items in both), `!A` (spans not in A), `A > B` (B whose parent is
+in A) and `A >> B` (B below A).
+
+In `-e`, `where(...)` takes a query string or a selection built with
+`span(name=, service=, component=, kind=, status=, attrs={...})` and
+`log(body=, source=, severity=, attrs={...})`; a value is a literal or
+`match("RE")`, `glob("GLOB")` or `contains("TEXT")`. Selections join with
+`&`, `|`, `>>`, `~` and `b.child_of(a)`:
+
+```sh
+praytel -e 'where(span(service = "checkout") >> span(status = "error")) | tree() | settled | stderr' -- ./server
+```
+
+`where` shows each selected span in place: with its ancestors and
+descendants and their logs (a log query keeps only the selected logs). On
+the stream, which prints each line as it comes, `where` takes only a query
+that one log decides, such as `log(source = "stderr")`.
 
 ## Exit status
 

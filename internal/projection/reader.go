@@ -48,5 +48,9 @@ func Copy(r Reader) *Forest {
 		cp := *l
 		c.logs[l.ID] = &cp
 	}
+	// A lens may hide logs that its spans still list.
+	for _, sp := range c.spans {
+		sp.Logs = slices.DeleteFunc(sp.Logs, func(id string) bool { return c.logs[id] == nil })
+	}
 	return c
 }
