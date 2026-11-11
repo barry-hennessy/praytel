@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/barry-hennessy/praytel/internal/attrspec"
+	"github.com/barry-hennessy/praytel/internal/query"
 )
 
 // Plan is a list of outputs.
@@ -34,12 +35,15 @@ const (
 	StageAttrs = "attrs"
 	// StageNoAttrs hides every attribute.
 	StageNoAttrs = "no_attrs"
+	// StageWhere keeps what Query selects (see internal/query).
+	StageWhere = "where"
 )
 
 // Stage is a record-local filter or change.
 type Stage struct {
 	Kind  string `json:"kind"`
 	Globs string `json:"globs,omitempty"`
+	Query string `json:"query,omitempty"`
 }
 
 // View kinds.
@@ -127,6 +131,10 @@ func (o Output) validate() error {
 				errs = append(errs, fmt.Errorf("stage attrs: %w", err))
 			}
 		case StageNoAttrs:
+		case StageWhere:
+			if err := o.validateWhere(s.Query); err != nil {
+				errs = append(errs, fmt.Errorf("stage where: %w", err))
+			}
 		default:
 			errs = append(errs, fmt.Errorf("unknown stage %q", s.Kind))
 		}
@@ -186,6 +194,23 @@ func (o Output) validate() error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// validateWhere checks a where query. The stream writes each line as its
+// event comes and never takes one back, so on a stream a query must be one
+// that a single log decides (design/PIPELINE.md, rule 4). Every other view
+// reads the projection, where any query works.
+func (o Output) validateWhere(src string) error {
+	e, err := query.Parse(src)
+	if err != nil {
+		return err
+	}
+	if o.View.Kind == ViewStream {
+		if k, local := query.RecordLocal(e); !local || k != query.KindLog {
+			return fmt.Errorf("the stream can only keep logs one at a time: %s needs a log{…} query of single logs, or a view that reads the trace", query.Format(e))
+		}
+	}
+	return nil
 }
 
 // triggerFits reports whether a view can run with a trigger. The stream

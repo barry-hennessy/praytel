@@ -840,9 +840,9 @@ func (m Model) layoutGraphView() *graphLayout {
 func (m Model) graphToLayOut() (*graph.Graph, map[string]graphNodeHighlight) {
 	g := m.buildGraph()
 	highlights := map[string]graphNodeHighlight{}
-	if m.query != "" && m.mode == searchTraces {
+	if m.fuzzyQuery() != "" && m.mode == searchTraces {
 		for key, n := range g.Nodes {
-			if ok, h := matchGraphNode(m.query, n); ok {
+			if ok, h := matchGraphNode(m.fuzzyQuery(), n); ok {
 				highlights[key] = h
 			}
 		}

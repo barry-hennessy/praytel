@@ -17,6 +17,7 @@ import (
 	"github.com/barry-hennessy/praytel/internal/domain"
 	"github.com/barry-hennessy/praytel/internal/filter"
 	"github.com/barry-hennessy/praytel/internal/projection"
+	"github.com/barry-hennessy/praytel/internal/query"
 	"github.com/barry-hennessy/praytel/internal/render/stream"
 	"github.com/barry-hennessy/praytel/internal/stage"
 	"github.com/barry-hennessy/praytel/internal/view"
@@ -209,12 +210,48 @@ func (m Model) WithPanes(panes []Pane) Model {
 	return m
 }
 
-// reader is what the pane on show reads: the forest through its stages.
+// reader is what the pane on show reads: the forest through its stages
+// and, in query mode, through the query (see structuredQuery).
 func (m Model) reader() projection.Reader {
-	if m.pane >= len(m.panes) {
-		return m.forest
+	var r projection.Reader = m.forest
+	if m.pane < len(m.panes) {
+		r = stage.LensAll(m.panes[m.pane].Stages, m.forest)
 	}
-	return stage.LensAll(m.panes[m.pane].Stages, m.forest)
+	e, err, ok := m.structuredQuery()
+	if !ok || err != nil {
+		return r
+	}
+	if m.cache == nil {
+		return stage.Where(e).Lens(r)
+	}
+	key := whereKey{query: m.query, pane: m.pane}
+	if m.cache.whereKey != key || m.cache.whereLens == nil {
+		m.cache.whereKey, m.cache.whereLens = key, stage.Where(e).Lens(r)
+	}
+	return m.cache.whereLens
+}
+
+// structuredQuery is the search as a query, when it starts with "/": the
+// tree and graph then show what it selects in place (the path view), and
+// fuzzy search is off. ok is false for a fuzzy search.
+func (m Model) structuredQuery() (e query.Expr, err error, ok bool) {
+	text, ok := strings.CutPrefix(m.query, "/")
+	if !ok {
+		return nil, nil, false
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, nil, false
+	}
+	e, err = query.Parse(text)
+	return e, err, true
+}
+
+// fuzzyQuery is the search for fuzzy matching: empty in query mode.
+func (m Model) fuzzyQuery() string {
+	if strings.HasPrefix(m.query, "/") {
+		return ""
+	}
+	return m.query
 }
 
 // Init begins waiting for telemetry and animation ticks.
@@ -546,11 +583,21 @@ type viewCache struct {
 	tree  cached[*treeLayout]
 	graph cached[*graphLayout]
 
+	// whereLens is the reader of the query in the search box, for the pane
+	// it was made for; it follows the forest by itself.
+	whereKey  whereKey
+	whereLens projection.Reader
+
 	// panel is the footer as last rendered, which changes far less often
 	// than the frames it is drawn on.
 	panel    string
 	panelKey panelKey
 	panelOK  bool
+}
+
+type whereKey struct {
+	query string
+	pane  int
 }
 
 // panelKey is everything the footer is rendered from.
@@ -716,7 +763,7 @@ func (m Model) filteredForest() (
 // a descendant has a matching log; see logBranches). Always true when there
 // is no live query.
 func (m Model) fuzzyVisible(sp *spanView, traceMatches, logBranches map[string]bool) bool {
-	if m.query == "" {
+	if m.fuzzyQuery() == "" {
 		return true
 	}
 	switch m.mode {
@@ -776,7 +823,7 @@ func (m Model) layoutTree() *treeLayout {
 		s := treeSpan{sp: sp, ancestors: ancestors, line: t.lines}
 		for _, id := range sp.Logs {
 			log := m.reader().Log(id)
-			if log == nil || (m.mode == searchLogs && m.query != "" && !logMatches[id]) {
+			if log == nil || (m.mode == searchLogs && m.fuzzyQuery() != "" && !logMatches[id]) {
 				continue
 			}
 			s.logs = append(s.logs, log)
@@ -1049,11 +1096,12 @@ func spanLabel(sp *spanView) string {
 // picked out visually.
 func (m Model) matchingTraces() map[string]bool {
 	out := make(map[string]bool)
-	if m.query == "" {
+	q := m.fuzzyQuery()
+	if q == "" {
 		return out
 	}
 	for sp := range m.reader().Spans() {
-		if ok, _ := matchSpan(m.query, sp); ok {
+		if ok, _ := matchSpan(q, sp); ok {
 			out[sp.TraceID] = true
 		}
 	}
@@ -1106,11 +1154,12 @@ func matchSpan(query string, sp *spanView) (bool, spanHighlight) {
 // highlight.
 func (m Model) spanHighlights() map[string]spanHighlight {
 	out := make(map[string]spanHighlight)
-	if m.query == "" || m.mode != searchTraces {
+	q := m.fuzzyQuery()
+	if q == "" || m.mode != searchTraces {
 		return out
 	}
 	for sp := range m.reader().Spans() {
-		if ok, h := matchSpan(m.query, sp); ok {
+		if ok, h := matchSpan(q, sp); ok {
 			out[selectionKey(sp.TraceID, sp.ID)] = h
 		}
 	}
@@ -1119,11 +1168,12 @@ func (m Model) spanHighlights() map[string]spanHighlight {
 
 func (m Model) matchingLogs() map[string]bool {
 	out := make(map[string]bool)
-	if m.query == "" {
+	q := m.fuzzyQuery()
+	if q == "" {
 		return out
 	}
 	for log := range m.reader().Logs() {
-		if fuzzy(m.query, log.Body) {
+		if fuzzy(q, log.Body) {
 			out[log.ID] = true
 		}
 	}
@@ -1137,7 +1187,7 @@ func (m Model) logBranches(
 	inScope map[string]*spanView,
 	logMatches map[string]bool,
 ) map[string]bool {
-	if m.query == "" || m.mode != searchLogs {
+	if m.fuzzyQuery() == "" || m.mode != searchLogs {
 		return nil
 	}
 	out := make(map[string]bool)
@@ -1309,7 +1359,10 @@ func (m Model) renderPanel() string {
 		help = fmt.Sprintf(" ◂ panned %d cols • home reset • %s", m.hscroll, help)
 	}
 	helpColor := lipgloss.Color("241")
-	if m.warning != "" {
+	if _, err, ok := m.structuredQuery(); ok && err != nil {
+		help = " " + err.Error()
+		helpColor = lipgloss.Color("203")
+	} else if m.warning != "" {
 		help = " " + m.warning + " • " + state
 		helpColor = lipgloss.Color("214")
 	}

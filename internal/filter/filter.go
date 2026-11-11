@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/barry-hennessy/praytel/internal/domain"
+	"github.com/barry-hennessy/praytel/internal/projection"
+	"github.com/barry-hennessy/praytel/internal/query"
 )
 
 // Query is the v1 compiled-flag surface: glob focus (union) and exclude.
@@ -27,6 +30,12 @@ type Query struct {
 type Filter struct {
 	focus   []string
 	exclude []string
+
+	// The globs compiled to queries (see query.NameOrComponent): spans whose
+	// name or component matches, and log components that match. nil for no
+	// globs.
+	focusSpan, excludeSpan query.Expr
+	focusComp, excludeComp query.Expr
 
 	spans  map[string]*spanNode
 	logs   map[string]*logRec
@@ -72,13 +81,49 @@ func New(q Query) (*Filter, error) {
 		return nil, err
 	}
 
-	return &Filter{
+	f := &Filter{
 		focus:   append([]string(nil), q.Focus...),
 		exclude: append([]string(nil), q.Exclude...),
 		spans:   make(map[string]*spanNode),
 		logs:    make(map[string]*logRec),
 		held:    make(map[string]map[*logRec]struct{}),
-	}, nil
+	}
+	var err error
+	if f.focusSpan, err = query.NameOrComponent(q.Focus); err != nil {
+		return nil, err
+	}
+	if f.excludeSpan, err = query.NameOrComponent(q.Exclude); err != nil {
+		return nil, err
+	}
+	if f.focusComp, err = componentQuery(q.Focus); err != nil {
+		return nil, err
+	}
+	if f.excludeComp, err = componentQuery(q.Exclude); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+// componentQuery is spans whose component matches one of the globs.
+func componentQuery(globs []string) (query.Expr, error) {
+	var parts []string
+	for _, g := range globs {
+		re, err := query.GlobRegexp(g)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, "span:component =~ "+strconv.Quote(re))
+	}
+	if len(parts) == 0 {
+		return nil, nil
+	}
+	return query.Parse("span{ " + strings.Join(parts, " || ") + " }")
+}
+
+// matches reports whether q (nil for no globs) selects a span with this
+// name and component.
+func matches(q query.Expr, name, component string) bool {
+	return q != nil && query.Matches(q, &projection.Span{Name: name, Component: component})
 }
 
 func validateGlobs(kind string, patterns []string) error {
@@ -332,40 +377,11 @@ func (f *Filter) addAbove(n *spanNode, delta int) {
 }
 
 func (f *Filter) matchesFocus(n *spanNode) bool {
-	for _, g := range f.focus {
-		if nameMatches(g, n.name) || nameMatches(g, n.component) {
-			return true
-		}
-	}
-
-	return false
+	return matches(f.focusSpan, n.name, n.component)
 }
 
 func (f *Filter) excluded(n *spanNode) bool {
-	for _, g := range f.exclude {
-		if nameMatches(g, n.name) || nameMatches(g, n.component) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func nameMatches(glob, name string) bool {
-	if matchOne(glob, name) {
-		return true
-	}
-
-	return matchOne(strings.ReplaceAll(glob, "/", "\x1f"), strings.ReplaceAll(name, "/", "\x1f"))
-}
-
-func matchOne(glob, name string) bool {
-	ok, err := path.Match(glob, name)
-	if err != nil {
-		return false
-	}
-
-	return ok
+	return matches(f.excludeSpan, n.name, n.component)
 }
 
 // collectNewAdmits admits every held log that the event just applied let
@@ -407,7 +423,7 @@ func (f *Filter) shouldAdmit(rec *logRec) bool {
 		return true
 	}
 
-	if rec.component != "" && f.matchesAny(f.focus, rec.component) && !f.matchesAny(f.exclude, rec.component) {
+	if rec.component != "" && matches(f.focusComp, "", rec.component) && !matches(f.excludeComp, "", rec.component) {
 		return true
 	}
 
@@ -416,18 +432,4 @@ func (f *Filter) shouldAdmit(rec *logRec) bool {
 	}
 
 	return f.InFocus(rec.spanID)
-}
-
-func (f *Filter) matchesAny(globs []string, name string) bool {
-	if len(globs) == 0 || name == "" {
-		return false
-	}
-
-	for _, g := range globs {
-		if nameMatches(g, name) {
-			return true
-		}
-	}
-
-	return false
 }

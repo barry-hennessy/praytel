@@ -266,3 +266,62 @@ To know:
 - A placeholder value is one path element: `/`, `\` and NUL become `_`,
   control characters go, and a leading `.` gets a `_` in front. The traced
   program sets these values, so it must not choose where praytel writes.
+
+## Phase 7: Query language and the `where` stage
+
+Branch `pipeline-phase7-query`.
+
+Checks:
+- `go test ./...`: pass. New tests in `internal/query`: parse and format
+  (17 cases, each round-trips), parse and type errors (18 cases, with the
+  column), evaluation on an asymmetric trace (32 queries: intrinsics,
+  attributes, resource, types that do not convert, missing fields, `>`
+  against `>>`, a log selector inside structure, `&&` across records,
+  `&`, `||`, `!`), log evidence, the path view, record-local
+  classification, glob to regexp.
+- `go test -fuzz FuzzParse -fuzztime 30s`: 2.9 M inputs; every query that
+  parses formats to text that parses back to the same text.
+- `internal/filter` now matches with compiled queries; its randomised
+  reference test (the old `path.Match` rules, 7 queries × 25 seeds × 300
+  events) and its other tests pass unchanged.
+- Filter benchmarks, 3 runs before and after: time −14 % (geomean; one
+  regexp instead of up to two `path.Match` calls), memory +2.5 %,
+  allocations +2.6 %.
+- `internal/stage`: the `where` lens is the path view; it follows the
+  forest as it changes; on events it keeps only the selected logs and
+  passes everything else.
+- `internal/plan/starlark`: 14 builders each equal their query string;
+  builder errors; piping a selection into an output asks for `where()`;
+  the stream accepts only a single-log query.
+- TUI: a `/` search shows the path of the query and replaces an older
+  query; a bad query shows its error in the footer and hides nothing;
+  fuzzy search is unchanged.
+- `cmd/praytel` with the built binary: `where(span(name = …))` keeps the
+  span; a query string that selects nothing drops it.
+- TUI benchmarks (tree and graph), 3 runs against the Phase 0 baseline:
+  no significant change (geomean −1.3 %).
+- `scripts/golden`: no golden changed.
+- `golangci-lint run ./...`: 0 issues.
+
+Departures:
+- `internal/filter` keeps its incremental engine (live admission with
+  counts above and below each span). It compiles its globs to queries and
+  matches with them; its own glob matcher is gone. Replacing the engine
+  with whole-trace evaluation would lose live admission and its
+  performance work.
+- Query syntax beyond `design/IDEAS.md`: `&` (items in both) and `!` on a
+  selection (spans not in it), so the Starlark operators `&` and `~` have
+  a text form. Single-quoted strings work too, for shell quoting.
+- The search box is not a stage: `/` turns on query mode in the TUI's own
+  search, as Phase 5 noted.
+- `span:duration` and `trace:duration` wait for Phase 9; `query check`,
+  `fmt` and `explain` subcommands and NDJSON output are not part of this
+  plan.
+
+To know:
+- The projection now keeps a span's kind and resource attributes, and a
+  log's source, severity and attributes, for queries.
+- Synthetic spans (praytel's orphan holders) and placeholders (spans logs
+  named that never arrived) cannot be selected.
+- An integer attribute and a number literal compare as float64, so values
+  above 2^53 can compare equal when they are not.

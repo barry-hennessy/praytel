@@ -73,6 +73,23 @@ func TestFilePerTraceFromTheCLI(t *testing.T) {
 	})
 }
 
+func TestWhereKeepsTheSelection(t *testing.T) {
+	sweet.Run(t, "where() keeps the selected spans and drops the rest", wrapFactory, func(t *testing.T, d wrapDeps) {
+		keep := runPraytel(t, d.dir,
+			"-e", `where(span(name = "child-work")) | snapshot("tree") | final | stdout | exit`,
+			"--", childBin, "-export-grpc-span", "-span-name", "child-work")
+		if keep.exit != 0 || !strings.Contains(keep.stdout, "child-work") {
+			t.Fatalf("exit=%d stdout=%q stderr=%q", keep.exit, keep.stdout, keep.stderr)
+		}
+		drop := runPraytel(t, d.dir,
+			"-e", `where("span{ span:name = 'other' }") | snapshot("tree") | final | stdout`,
+			"--", childBin, "-export-grpc-span", "-span-name", "child-work")
+		if drop.exit != 0 || strings.Contains(drop.stdout, "child-work") {
+			t.Fatalf("exit=%d stdout=%q stderr=%q", drop.exit, drop.stdout, drop.stderr)
+		}
+	})
+}
+
 func TestExecuteErrorNamesThePosition(t *testing.T) {
 	sweet.Run(t, "a bad snippet fails before the child runs", wrapFactory, func(t *testing.T, d wrapDeps) {
 		marker := filepath.Join(d.dir, "ran")
