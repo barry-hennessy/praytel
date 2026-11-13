@@ -1,6 +1,6 @@
 ---
 title: Starlark queries
-summary: A proposed alternative to the query text of Phases 7 to 9. Starlark builders are the only query language. Go keeps the query tree and evaluates it. Cases, properties with rapid, and a TUI prompt use the same language.
+summary: A proposed alternative to the query text of Phases 7 to 9. Starlark builders are the only query language. Go keeps the query tree and evaluates it. Cases, properties with an own shrinking engine, and a TUI prompt use the same language.
 weight: 83
 ---
 
@@ -30,8 +30,9 @@ The same language then does these jobs:
 2. A golden file of part of a run, between two spans.
 3. A property test with generated inputs.
 4. A table test.
-5. A property test that shrinks its input to a minimal example, with
-   [rapid](https://pkg.go.dev/pgregory.net/rapid).
+5. A property test that shrinks its input to a minimal example. Praytel
+   has its own small engine for this. The design compares it with
+   [rapid](https://pkg.go.dev/pgregory.net/rapid) and gopter.
 6. A prompt in the TUI, as a REPL.
 
 ## Terms
@@ -50,6 +51,7 @@ adds these terms.
 | Example | One call of a property function and the case that the call makes. |
 | Generator | A Starlark value that describes a set of values, for example `gen.ints(1, 50)`. |
 | Draw | The selection of one value from a generator, for one example. |
+| Choice sequence | The list of integer choices that the draws of one example made. Replay of the list gives the same example. |
 | Shrink | The search for a smaller example that fails the same check. |
 | Minimal example | The smallest failing example that shrinking found. |
 | Verdict | The result of one case: pass, fail or incomplete, with the checks that failed. |
@@ -67,8 +69,8 @@ adds these terms.
 3. Praytel stores each selection in a plan as canonical text. Evaluation of
    the canonical text must give the same query tree.
 4. A case has one command, one projection and its own checks.
-5. Generators get their values from rapid only. A script has no other source
-   of random values.
+5. Generators get their values from the choice sequence only. A script has
+   no other source of random values.
 6. A property must not run a command for a case that is in the verdict
    cache.
 7. Shrinking must keep the target check. A smaller example that fails a
@@ -106,7 +108,7 @@ they need fewer quotes. One language also gives these results:
 | `internal/stage/where.go` | Path view only | Adds the context setting |
 | TUI `/` search | Query text | Starlark expression. The `:` prompt is added |
 | `internal/check` | Pass, fail, incomplete | Adds near misses |
-| New: `internal/testrun` | None | Cases, properties, rapid |
+| New: `internal/testrun` | None | Cases, properties, the shrinking engine |
 
 The query text is on unmerged branches only. Thus no user has scripts in the
 old syntax, and praytel needs no migration path.
@@ -386,105 +388,117 @@ ROWS)` uses the same runner, without shrinking. The view `table()` (Phase 9)
 writes TSV. It is a different function. Thus "table test" is a pattern, not
 a builtin.
 
-## Scenario 5: shrinking with rapid
+## Scenario 5: shrinking
 
-### Why rapid
+Praytel has its own small engine for generation and shrinking. The engine
+uses a choice sequence, as Hypothesis (Python) does. The section
+"Alternatives considered" compares it with rapid, gopter and other options.
 
-[rapid](https://pkg.go.dev/pgregory.net/rapid) is a Go library for property
-tests. It has these properties:
+### Why an own engine
 
-- It shrinks on the stream of choices that the generators made. Thus a
-  composite generator shrinks without code for each type. Hypothesis
-  (Python) uses the same method.
-- `rapid.Check` accepts a `rapid.TB` interface, not only `*testing.T`. Thus
-  praytel can run it outside `go test`.
-- Each draw has a label. Praytel uses the parameter name as the label.
-- It has tagged releases (v1.3.0). `go.starlark.net` has none.
+A praytel example is a process run and a drain. It takes 0.5 s to 2 s.
+Libraries for property tests expect calls that take microseconds, in
+`go test`. Thus praytel needs an engine with these properties:
+
+- It makes few calls during shrinking.
+- It asks praytel if a candidate fails the target check. It does not
+  compare Go tracebacks or error text.
+- It stops at praytel's time budget.
+- It has no global settings and needs no `testing` package.
+- It shrinks through `gen.map`, `gen.filter` and nested generators.
+
+The engine is small, because the generators are a closed set that praytel
+defines.
+
+### Choice sequence
+
+Each draw makes one or more choices. A choice is an integer from 0 to a
+maximum. The engine records each choice and its maximum. The list of
+choices is the choice sequence of the example.
+
+- To generate, the engine gets each choice from a random source
+  (`math/rand/v2`, PCG, with the seed).
+- To replay, the engine gets each choice from a recorded sequence. If a
+  generator asks for more choices than the sequence has, the engine gives 0.
+  If a choice is more than its new maximum, the engine gives the maximum.
+- Each generator call marks its span: the first and the last choice that it
+  made. The shrinker uses the spans to delete list elements.
+
+Choice 0 is the simplest value of each generator. Thus a smaller sequence
+gives a simpler example.
+
+### Generators
+
+| Starlark | Choices | Choice 0 gives |
+|---|---|---|
+| `gen.ints(min, max)` | One choice. The value is the choice in zigzag order from the value nearest to 0 in the range | The value nearest to 0 |
+| `gen.bools()` | One choice, 0 or 1 | `False` |
+| `gen.one_of(values)` | One choice: the index | The first value |
+| `gen.just(v)` | None | `v` |
+| `gen.strings(alphabet =, min_len =, max_len =)` | A list of `one_of(alphabet)` | The shortest string of the first character |
+| `gen.lists(g, min_len =, max_len =)` | After `min_len` elements, one choice before each element: 0 stops the list | The shortest list |
+| `gen.permutations(values)` | One index choice for each position | The values in their order |
+| `gen.choice(g1, g2, ...)` | One choice for the generator, then its choices | A value of `g1` |
+| `gen.map(g, fn)` | The choices of `g`. `fn` is Starlark | `fn` of the simplest value of `g` |
+| `gen.filter(g, fn)` | The choices of `g`, a maximum of 100 tries | The simplest value that `fn` accepts |
+
+`gen.map` and `gen.filter` call Starlark when the engine draws a value. They
+do not see events. Rule 2 stays true. A filter that rejects 100 tries makes
+the example invalid. Invalid examples do not count.
+
+Later: `gen.floats` and `gen.strings(regex)`.
 
 ### Data flow
 
 1. The script calls `property(name, fn, examples =, seed =, budget =,
-   confirm =, **generators)`. Praytel stores the generators as values. Each
-   generator is a tree of `gen.*` calls.
-2. Praytel compiles each generator tree to a `rapid.Generator[starlark.Value]`.
-3. Praytel calls `rapid.Check` with a praytel `TB` and a property function.
-4. For each call, the property function:
-   1. Draws one value for each parameter of `fn`, in parameter order. The
-      label is the parameter name.
+   confirm =, **generators)`. Praytel stores the generators as values.
+2. For each example, the engine:
+   1. Draws one value for each parameter of `fn`, in parameter order.
    2. Calls `fn` on a new Starlark thread with the step cap.
    3. Gets the case and its checks. It writes the canonical text of the case.
    4. Finds the verdict in the verdict cache. If the verdict is not there,
       it runs the case and adds the verdict to the cache.
-   5. Tells rapid the result. Refer to "Target check".
-5. rapid finds a failing example, then shrinks it.
-6. The last call of the property function is the minimal example. Praytel
-   keeps the drawn values and the case of each call. Thus it does not parse
-   the log text of rapid.
-7. Praytel writes the report and the repro file.
+3. The first failing example sets the target check. The engine then shrinks.
+4. The engine keeps the drawn values, the case and the choice sequence of
+   the minimal example.
+5. Praytel writes the report and the repro file.
 
-### Generators
+### Shrink passes
 
-| Starlark | rapid |
-|---|---|
-| `gen.ints(min, max)` | `Int64Range` |
-| `gen.floats(min, max)` | `Float64Range` |
-| `gen.bools()` | `Bool` |
-| `gen.one_of(values)` | `SampledFrom` |
-| `gen.just(v)` | `Just` |
-| `gen.strings(regex)` | `StringMatching` |
-| `gen.strings(min_len =, max_len =)` | `StringN` |
-| `gen.lists(g, min_len =, max_len =)` | `SliceOfN` |
-| `gen.distinct_lists(g, min_len =, max_len =)` | `SliceOfNDistinct`, with the canonical text as the key |
-| `gen.permutations(values)` | `Permutation` |
-| `gen.choice(g1, g2, ...)` | `OneOf` |
-| `gen.map(g, fn)` | `Map`. `fn` is Starlark. It runs when praytel draws a value |
-| `gen.filter(g, fn)` | `Filter` |
+A candidate is a changed choice sequence. The engine accepts a candidate
+only if both of these are true:
 
-The values are Starlark values. `gen.map` and `gen.filter` call Starlark
-when praytel draws a value. They do not see events. Rule 2 stays true.
+- The candidate is smaller in shortlex order: a shorter sequence, or a
+  sequence of the same length with a lower first different choice.
+- The case of the candidate fails the target check.
+
+Each accepted candidate is smaller. Thus shrinking always stops.
+
+The engine applies these passes in this order. It repeats them until no pass
+finds a smaller candidate, or until the budget is used:
+
+1. Delete spans. Delete the span of each list element, the largest first.
+2. Set to zero. Set each choice to 0.
+3. Lower. Find the lowest failing value of each choice with a binary search.
+
+The Hypothesis reducer has more passes, for example "sort" and
+"redistribute" (MacIver and Donaldson, "Test-case reduction via test-case
+generation", ECOOP 2020). Add a pass only if a real property needs it.
 
 ### Verdict cache
 
-rapid shrinks on bit blocks, not on values. It calls the property function
-many times for each drawn value. Many calls make the same values. Thus
-praytel must not run a command for each call.
-
-The key of the verdict cache is the canonical text of the case: the command,
-the environment and the checks. Two draws that make the same case share a
+Different candidates can make the same case. Example: a choice that is more
+than its new maximum. The engine must not run the same case two times. The
+key of the cache is the canonical text of the case: the command, the
+environment and the checks. Two candidates that make the same case share a
 verdict. This is possible only because a case is data.
-
-Evidence. A probe with rapid v1.3.0 used a property that fails when
-`card == "gift"` and `qty > 3`. Each new example slept 20 ms, as a model of
-a run. The probe used 30 examples and the seed 7.
-
-| Setup | Property calls | Runs | Minimal example | Time |
-|---|---|---|---|---|
-| No cost for a run, no cache, random seed | 1 735 | 1 735 | `gift`, `4` | 4 ms |
-| 20 ms for each run, no cache, `rapid.shrinktime` 200 ms or 2 s | 201 | 201 | `gift`, `50` (not shrunk) | 4.2 s |
-| 20 ms for each run, verdict cache | 1 735 | 12 | `gift`, `4` | 0.27 s |
-
-Without the cache, rapid used all of its time on the first block, and the
-time limit did not stop it at the limit. With the cache, 12 runs gave the
-minimal example. A real run takes 0.5 s to 2 s. Thus the cache is
-necessary.
 
 ### Target check
 
-rapid compares the Go traceback of a failure to find "the same failure".
-Its shrinker compares the traceback only. Praytel reports each failure from
-one Go call site. Thus, to rapid, all checks are the same failure. Shrinking
-can then go from a failure of check A to a failure of check B.
-
-Praytel prevents this:
-
-1. The first failing example sets the target check. If many checks fail, the
-   target is the first in file order.
-2. After this, the property function tells rapid "fail" only if the target
-   check fails. It tells rapid "pass" for other failures.
-3. The failure message is the canonical text of the target check. It does
-   not contain the drawn values. The reproduction step of rapid also
-   compares the message text (`sameError`). A message with values gives a
-   false "flaky test".
+The first failing example sets the target check. If many checks fail, the
+target is the first in file order. During shrinking, a candidate that fails
+a different check is not accepted. Thus shrinking cannot go from a failure
+of check A to a failure of check B.
 
 The report shows the other failed checks of the minimal example also.
 
@@ -492,29 +506,21 @@ The report shows the other failed checks of the minimal example also.
 
 A run of an external process can fail for a cause that is not the input.
 
-- A new failing case runs `confirm` times (default 2). Praytel records a
-  failure only if all runs fail the target check. If not, praytel records
-  "flaky", tells rapid "pass" and continues. The report shows the number of
+- A new failing case runs `confirm` times (default 2). The engine records a
+  failure only if all runs fail the target check. If not, the engine records
+  "flaky", and the candidate is not accepted. The report shows the number of
   flaky examples.
-- An incomplete case (refer to [Pipeline](PIPELINE.md#trace-state)) tells
-  rapid "pass". Thus shrinking does not go to a case with a slow drain. The
+- An incomplete case (refer to [Pipeline](PIPELINE.md#trace-state)) is not
+  a failure. Thus shrinking does not go to a case with a slow drain. The
   report shows the number of incomplete examples. If no example was
   complete, the property result is incomplete (exit 3).
-- rapid also runs its first failure again to reproduce it. That run gets the
-  verdict from the cache. Praytel's `confirm` step does this work.
 
 ### Budget
 
-rapid gets a deadline from `*testing.T` only (`checkDeadline`). With a
-praytel `TB`, its deadline is 24 hours. Thus praytel enforces its own time
-budget:
-
-1. `budget` (default `5m`) covers generation and shrinking of one property.
-2. Praytel sets `rapid.shrinktime` to the remaining budget before shrinking.
-3. When the budget is used, the property function runs no new case. It tells
-   rapid "pass" for each case that is not in the cache. rapid then cannot
-   find a smaller example, and it stops.
-4. The report says that the example is possibly not minimal.
+`budget` (default `5m`) covers generation and shrinking of one property. The
+engine examines the budget before each run. When the budget is used, the
+engine stops and keeps the smallest failing example. The report then says
+that the example is possibly not minimal.
 
 ### Report and repro file
 
@@ -534,6 +540,7 @@ test file. It needs no generator and no `load`:
 ```python
 # praytel test format v0
 # Shrunk from property "orders" (orders.praytest.star:21), seed 7, after 12 runs.
+# choices: [2, 3]
 case(name = "orders card=gift qty=4",
      command = ["shop", "-pace", "0s", "-card", "gift", "-qty", "4"])
 every(span(name = "Orders.Place"), has = exactly(1, span(name = "Gateway.Charge")))
@@ -543,32 +550,96 @@ some(span(name = "Gateway.Charge", status = "error"))
 some(log(body = contains("authorization refused")))
 ```
 
+The `choices` comment keeps the choice sequence. A later version can use it
+to shrink again after a change to the property.
+
 Praytel writes the file only with `--repro-dir=DIR`. It does not overwrite a
 file.
 
 ### Seeds
 
-`seed = 0` (the default) tells rapid to use a random seed. The report shows
-the seed. `praytel test --seed=N` and `property(..., seed = N)` use a fixed
-seed. The same seed gives the same examples. The same results also need a
-program that does not change its behaviour from run to run.
+`seed = 0` (the default) tells the engine to use a random seed. The report
+shows the seed. `praytel test --seed=N` and `property(..., seed = N)` use a
+fixed seed. The same seed and the same script give the same examples. The
+same results also need a program that does not change its behaviour from run
+to run.
 
-### Constraints of rapid
+## Alternatives considered
 
-A probe with rapid v1.3.0 found these constraints. Each item has a decision.
+### Evidence
 
-| # | Constraint | Decision |
-|---|---|---|
-| C1 | `rapid.Check` calls `testing.Short()`. Outside a test binary, this panics: `testing: Short called before Init`. | Praytel calls `testing.Init()` and `flag.CommandLine.Parse(nil)` one time. Praytel parses its own flags with a separate `FlagSet` (`args.go`). Thus there is no conflict. |
-| C2 | The settings are global flags on `flag.CommandLine`: `rapid.checks`, `rapid.seed`, `rapid.shrinktime`, `rapid.nofailfile`. | Praytel sets each flag with `flag.Set` before each property. Properties run one at a time. This is a non-goal of trace-based testing (no parallel runs). |
-| C3 | The environment variables `RAPID_*` change the defaults. | Praytel sets each flag. Thus the environment does not change a run. |
-| C4 | The deadline comes from `*testing.T` only. | Refer to "Budget". |
-| C5 | Shrinking makes many calls for each value. | Refer to "Verdict cache". |
-| C6 | The shrinker compares tracebacks only. | Refer to "Target check". |
-| C7 | rapid writes fail files to `testdata/rapid/NAME/*.fail`. The files are binary and are for one rapid version. | Praytel sets `rapid.nofailfile`. It writes a repro file in canonical text. |
-| C8 | `-test.short` divides the number of checks by 5. | Praytel does not set `test.short`. |
-| C9 | rapid imports `testing`. The praytel binary then contains it. | Measure the size of the binary in Phase S6. |
-| C10 | The licence of rapid is MPL-2.0. | Open question Q4. |
+Probes compared the engines on one property. The property fails when
+`card == "gift"` and `qty > 3`, with `card` from three values and `qty` from
+1 to 50. Each engine used the seed 7 and 30 examples. A "run" is a call with
+new values. Each run is a process run in praytel.
+
+| Engine | Calls | Runs | First example | Minimal example |
+|---|---|---|---|---|
+| rapid v1.3.0 | 1 735 | 12 (with a verdict cache) | `gift`, `50` | `gift`, `4` |
+| rapid v1.3.0, 20 ms for each call, no cache | 201 | 201 | `gift`, `50` | `gift`, `50` (not shrunk) |
+| gopter v0.2.11 | 9 | 7 | `gift`, `21` | `gift`, `4` |
+| Choice-sequence prototype (about 100 lines, passes 2 and 3 only) | 16 | 12 | `gift`, `14` | `gift`, `4` |
+
+A property with one generator for each parameter is easy for each engine.
+The table does not measure lists, nested generators or `gen.map`.
+
+### Comparison
+
+| | Own engine | rapid v1.3.0 | gopter v0.2.11 | `testing/quick` | Go fuzzing (`testing.F`) |
+|---|---|---|---|---|---|
+| Shrinking | Choice sequence | Choice sequence, as bit blocks | A shrinker for each value type | None | Byte minimisation |
+| Shrinks through `map` and nested generators | Yes | Yes | No: `Map`, `FlatMap` and `CombineGens` drop the shrinker | No | Not applicable |
+| Calls in the probe | 16 | 1 735 | 9 | Not applicable | Not applicable |
+| Runs outside `go test` | Yes | Only after `testing.Init()` and `flag.CommandLine.Parse(nil)` | Yes: `Properties.Run(reporter)` | Yes | No |
+| Settings | Arguments | Global flags and `RAPID_*` variables | A `TestParameters` value for each run | Arguments | Flags of `go test` |
+| Identity of a failure | The target check | The Go traceback and the error text | A boolean result | A boolean result | A crash |
+| Time budget | Before each run | `rapid.shrinktime`; the deadline comes from `*testing.T` only | `MaxShrinkCount` only | Not applicable | `-fuzztime` |
+| Saved failures | Repro file in canonical text | Binary fail files for one rapid version | None | None | Corpus files |
+| Last release | Not applicable | 2026-03-30 | 2024-04-03 (module `go 1.12`) | Frozen (standard library) | Standard library |
+| Licence | Praytel | MPL-2.0 | MIT | BSD | BSD |
+| Cost to praytel | An engine (estimate: 500 to 800 lines with tests) | About 200 lines of adapter code, and the workarounds in "Why not rapid" | An adapter, and no shrinking through `gen.map` | No shrinking | Wrong model |
+
+### Why not rapid
+
+rapid is a good library for `go test`. Its design does not fit a slow,
+external, flaky example:
+
+- `rapid.Check` calls `testing.Short()`. Outside a test binary, this panics:
+  `testing: Short called before Init`.
+- The settings are global flags on `flag.CommandLine` and `RAPID_*`
+  environment variables.
+- The deadline comes from `*testing.T` only. With another `TB`, it is 24
+  hours.
+- It shrinks bit blocks. It makes many calls for each value: 1 735 calls in
+  the probe. With 20 ms for each call and no cache, it did not shrink. A
+  time limit of 200 ms or 2 s gave the same 201 calls and 4.2 s.
+- Its shrinker identifies a failure by the Go traceback. Praytel reports each
+  failure from one Go call site. Thus shrinking can go from check A to check
+  B. Its reproduction step also compares the error text.
+- It writes binary fail files to `testdata/rapid/`.
+
+Each item has a workaround. Together, the workarounds are larger than the
+part of rapid that praytel uses.
+
+### Why not gopter
+
+gopter runs outside `go test` and has a settings value for each run. Its
+problems:
+
+- `Map`, `FlatMap` and `CombineGens` drop the shrinker. A user makes most
+  composite inputs with `gen.map`. Thus most composite inputs do not shrink.
+- It shrinks each argument separately. It cannot delete one element from a
+  structure that another generator made.
+- The API uses reflection and `interface{}`.
+- The last release is from April 2024.
+
+### Later: reduction of recorded inputs
+
+Shrinking needs generators. A recorded failure with a large input file has
+none. Delta debugging (`ddmin`, Zeller and Hildebrandt, 2002) can reduce the
+lines of such a file or the arguments of a command. It uses the same target
+check, verdict cache and budget. This is a possible later function, for
+example `praytel test --reduce=FILE`.
 
 ## Scenario 6: the TUI as a REPL
 
@@ -658,7 +729,7 @@ in a log, as in [Pipeline log](PIPELINE-LOG.md).
 | S3 | Structure and lens: `<<`, `before`, `within`, `between`, `where(context =)`, connection to the nearest kept ancestor | A golden of part of a `shop` run. A new span between two kept spans does not change it. |
 | S4 | Near misses | Golden tests of failure output. Each failure about a span has a near miss or "no candidate". |
 | S5 | Cases: `case`, check scope, shared checks, runner of trace-based testing | The trace-based testing scenarios S1 to S5 in declarative form. |
-| S6 | Properties: `gen.*`, `property`, rapid, verdict cache, target check, `confirm`, budget, repro file | The probe of "Verdict cache" as a test with a fake command. `shop -card` and `-qty` for real. Binary size before and after. |
+| S6 | Properties: choice sequence, `gen.*`, `property`, shrink passes, verdict cache, target check, `confirm`, budget, repro file | The probe of "Alternatives considered" as a test with a fake command: minimal example `gift`, `4` in 16 calls or fewer. A list property shrinks to one element. A `gen.map` value shrinks. A flaky fake command gives no failure. `shop -card` and `-qty` for real. |
 | S7 | REPL: `:` prompt, typed results, `:w`, completion, refusal of `and`, `or`, `not` | TUI tests for each result type. `:w` output passes `praytel test`. |
 
 S1 to S4 do not need trace-based testing. S5 and S6 need its runner. S7
@@ -673,11 +744,11 @@ needs S1 only, and `:w` needs S5.
   `praytel query convert`? It needs a parser, but only for import.
 - **Q3.** What are the defaults for `examples` and `budget`? This design
   uses 30 and `5m`.
-- **Q4.** rapid is MPL-2.0. The repository has no licence file. MPL-2.0
-  applies to the files of rapid only, and praytel does not change them. Is
-  this dependency acceptable?
+- **Q4.** This design writes an own engine (estimate: 500 to 800 lines with
+  tests). The alternative is gopter, with no shrinking through `gen.map`.
+  Is the own engine acceptable? Refer to "Alternatives considered".
 - **Q5.** Scenario 3 needs a `-qty` flag in `shop`. Trace-based testing
   adds `-card` (its assumption A5). Is `-qty` acceptable too?
-- **Q6.** rapid has state machine tests (`T.Repeat`). A property could
-  generate a sequence of commands for a long-running server. Do we want
-  this later?
+- **Q6.** A property could generate a sequence of commands for a
+  long-running server, as the state machine tests of rapid (`T.Repeat`) do.
+  The choice sequence supports this. Do we want it later?
